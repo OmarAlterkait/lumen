@@ -43,8 +43,11 @@ ignore = ["N806"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/lumen/_env.py" = ["TID251"]
-"tests/**" = ["D", "T20", "PLR0913", "PLR0915"]
-"tools/**" = ["D", "T20", "TID251", "PLR0912", "PLR0913", "PLR0915", "C901"]
+# B023: the tests and tools build closures over loop variables and call them at once, inside the loop
+"tests/**" = ["D", "T20", "B023", "N803", "PLR0913", "PLR0915"]
+"tools/**" = ["D", "T20", "TID251", "B023", "PLR0912", "PLR0913", "PLR0915", "C901"]
+# imports the baseline's modules under the baseline's own short names, so the case code reads like the baseline's
+"tools/port/leaf_goldens.py" = ["N812"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"

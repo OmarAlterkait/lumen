@@ -21,11 +21,13 @@ repos:
         entry: ruff format
         language: system
         types: [python]
+        stages: [pre-commit]
       - id: ruff
         name: ruff check
         entry: ruff check
         language: system
         types: [python]
+        stages: [pre-commit]
       - id: mypy
         name: mypy (host-side code)
         entry: mypy
@@ -33,13 +35,16 @@ repos:
         pass_filenames: false
         files: ^src/lumen/
         types: [python]
+        stages: [pre-commit]
       - id: jargon
         name: plain words in user-facing text (style rule 10)
         entry: python tools/hooks/jargon.py
         language: system
         files: ^(src/lumen/(errors|api)\.py|docs/tutorials/.*\.md)$
+        stages: [pre-commit]
       - id: no-site-paths
         name: no absolute site paths in src/ or tests/ (style rule 9)
         entry: '(/sdf/|/lscratch|/fs/ddn|/fs/gpfs|/afs/|/home/)'
         language: pygrep
         files: ^(src|tests)/
+        stages: [pre-commit]
