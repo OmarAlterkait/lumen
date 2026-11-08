@@ -1,0 +1,9 @@
+# lumen documentation
+
+The documentation follows the Diátaxis layout:
+
+- `tutorials/`: learning by doing (to be written).
+- `how-to/`: recipes for a task (to be written).
+- `reference/`: the API (to be written).
+- `explanation/`: background and design. Start with the [glossary](explanation/glossary.md).
+- `dev/`: for people working on lumen itself.

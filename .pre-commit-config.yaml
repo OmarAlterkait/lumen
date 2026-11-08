@@ -1,0 +1,45 @@
+# Every hook is local and runs from the environment made by cluster/s3df/make_env.sh, so nothing is fetched at
+# commit time. Install with:  pre-commit install --hook-type pre-commit --hook-type commit-msg
+default_install_hook_types: [pre-commit, commit-msg]
+repos:
+  - repo: local
+    hooks:
+      - id: privacy-guard
+        name: privacy guard (staged content and paths)
+        entry: python tools/hooks/privacy_guard.py staged
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+      - id: privacy-guard-message
+        name: privacy guard (commit message)
+        entry: python tools/hooks/privacy_guard.py message
+        language: system
+        stages: [commit-msg]
+      - id: ruff-format
+        name: ruff format
+        entry: ruff format
+        language: system
+        types: [python]
+      - id: ruff
+        name: ruff check
+        entry: ruff check
+        language: system
+        types: [python]
+      - id: mypy
+        name: mypy (host-side code)
+        entry: mypy
+        language: system
+        pass_filenames: false
+        files: ^src/lumen/
+        types: [python]
+      - id: jargon
+        name: plain words in user-facing text (style rule 10)
+        entry: python tools/hooks/jargon.py
+        language: system
+        files: ^(src/lumen/(errors|api)\.py|docs/tutorials/.*\.md)$
+      - id: no-site-paths
+        name: no absolute site paths in src/ or tests/ (style rule 9)
+        entry: '(/sdf/|/lscratch|/fs/ddn|/fs/gpfs|/afs/|/home/)'
+        language: pygrep
+        files: ^(src|tests)/

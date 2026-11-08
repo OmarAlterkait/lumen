@@ -1,0 +1,75 @@
+[build-system]
+requires = ["hatchling>=1.25", "hatch-vcs>=0.4"]
+build-backend = "hatchling.build"
+
+[project]
+name = "lumen"
+dynamic = ["version"]
+description = "Differentiable optical-photon simulation for neutrino detectors, in JAX"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [{ name = "Omar Alterkait" }]
+classifiers = ["Private :: Do Not Upload"]
+dependencies = [
+    "numpy>=1.24",
+    "jax>=0.5.3,<0.6",
+    # The photon loop. The exact commit is pinned in cluster/s3df/constraints-develop.txt.
+    "tallymap>=0.5,<0.6",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+dev = ["pytest>=8", "ruff>=0.8,<0.9", "mypy>=1.13,<2", "pre-commit>=4,<5"]
+
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0.0.0"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lumen"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+src = ["src", "tests", "tools"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "N", "ICN", "D", "C901", "PLR0912", "PLR0913", "PLR0915", "TID251", "T20",
+          "PGH004", "RUF100"]
+# N806: short uppercase math names (R, T, Es) are allowed inside a function whose docstring has a Notation line
+# (style rule 1); ruff cannot see the Notation line, so review enforces it.
+ignore = ["N806"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/lumen/_env.py" = ["TID251"]
+"tests/**" = ["D", "T20", "PLR0913", "PLR0915"]
+"tools/**" = ["D", "T20", "TID251", "PLR0912", "PLR0913", "PLR0915", "C901"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.mccabe]
+max-complexity = 12
+
+[tool.ruff.lint.pylint]
+max-args = 6
+max-branches = 12
+max-statements = 50
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"os.environ".msg = "Read the environment only in lumen._env (style rule 8)."
+"os.getenv".msg = "Read the environment only in lumen._env (style rule 8)."
+
+[tool.ruff.lint.isort]
+known-first-party = ["lumen"]
+
+[tool.mypy]
+# Host-side code only (style guide): device code is annotated with jax.Array and checked by its tests.
+python_version = "3.10"
+files = ["src/lumen/_env.py", "src/lumen/_cache.py"]
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
