@@ -226,7 +226,8 @@ def hits_nll(e: ExpectedHits, data: Hits, t_window: float = T_WINDOW):
     charge = -_charge_logp(e, data.q)
     qpe = data.q / s
     shift, extra = m.time_walk.at(v["time_walk"], qpe) if m.time_walk is not None else (0.0, 0.0)
-    pt = m.tts.widened(v["tts"], jnp.reshape(jnp.asarray(extra, jnp.float32) * jnp.ones_like(qpe), (-1, 1)))
+    spread = jnp.asarray(extra) * jnp.ones_like(qpe)  # the parameter's own precision (float64 in the reference test)
+    pt = m.tts.widened(v["tts"], jnp.reshape(spread, (-1, 1)))
 
     def cdf(x):
         return m.tts.cdf(pt, x, h.profile)
