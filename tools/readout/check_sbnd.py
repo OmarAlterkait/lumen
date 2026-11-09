@@ -48,6 +48,7 @@ GATE = (-1000.0, 9000.0)  # ns: the fixed 10 us window from -1 us (make_fcl.sh)
 BASELINE = 14250.0
 SUB = 32  # staircase knots per sample
 PRE = slice(0, 400)  # samples before any light (photons arrive after 0 ns)
+LOCAL = slice(440, 495)  # just before the light (-120 to -10 ns): the baseline the main lobe is measured from
 
 
 def value_set(ser_len, tpb):
@@ -154,6 +155,12 @@ def main():
                     area_l = float(np.sum((mean - mean[PRE].mean())[win]))
                     area_r = float(np.sum((m_ref - m_ref[PRE].mean())[win]))
                     area_err = float(np.sqrt(np.sum(v_ref[win]) / nev))
+                    # the main lobe (expected pulse below 20 % of its peak), against the local baseline
+                    sl = mean - mean[LOCAL].mean()
+                    lobe = sl < 0.2 * sl.min() if sl.min() < 0 else np.zeros(len(sl), bool)
+                    lobe_l, lobe_r = float(sl[lobe].sum()), float((m_ref - m_ref[LOCAL].mean())[lobe].sum())
+                    lobe_err = float(np.sqrt(np.sum(v_ref[lobe]) / nev + lobe.sum() ** 2 * v_ref[LOCAL].mean() / nev
+                                             / (LOCAL.stop - LOCAL.start)))  # fmt: skip
                     vsig_l = float(np.sum((var - var[PRE].mean())[win]))
                     vsig_r = float(np.sum((v_ref - v_ref[PRE].mean())[win]))
                     vp = 0.0
@@ -163,11 +170,13 @@ def main():
                     rows.append(dict(channel=int(ch), type=pd, n_photons=int(len(t)), on=bool(on[k]), var_pull_rms=vp,
                                      chi2_mean=float(np.sum((m_ref - mean)[win] ** 2 / err2[win])),
                                      ndf=int(win.sum()), area_lumen=area_l, area_ref=area_r, area_err=area_err,
+                                     lobe_lumen=lobe_l, lobe_ref=lobe_r, lobe_err=lobe_err,
                                      var_signal_lumen=vsig_l, var_signal_ref=vsig_r,
                                      var_signal_err=float(np.sqrt(np.sum(2 * v_ref[win] ** 2) / nev)),
                                      peak_sample_lumen=int(np.argmax(np.abs(mean - mean[PRE].mean()))),
                                      peak_sample_ref=int(np.argmax(np.abs(m_ref - m_ref[PRE].mean())))))  # fmt: skip
                 res[cfg][f"L{L}_s{int(s)}"] = rows
+                Path(a.out).write_text(json.dumps(res, indent=1))  # after each case: a stopped job keeps its part
                 lit = [r for r in rows if r["n_photons"] > 0 and r["on"]]
                 c2, nd = sum(r["chi2_mean"] for r in lit), sum(r["ndf"] for r in lit)
                 ar = np.array([(r["area_lumen"] - r["area_ref"]) / max(r["area_err"], 1e-9) for r in lit])
