@@ -9,6 +9,10 @@ reported (``truncated``, ``n_truncated``), never dropped silently. ``backend="au
 "cpu" elsewhere (plain JAX, inexact sums, ~2.5e-4 from the GPU). Photon ``i`` uses the key ``fold_in(key, first_id +
 i)``; replicas split the photons into contiguous blocks with their own cells. tallymap's own names stay in this file.
 
+On the GPU the item is one top-level loop, so tallymap refills a lane per step (``SCHEDULE``): a photon's start
+(``spec.init``, which locates it) is its first iteration's work, inside the kernel. ``kernel_schedules`` reports the
+schedule each CUDA kernel was built for. ``init`` returns a live photon at vertex 0 (``max_vertices`` >= 1).
+
 Notes
 -----
 Ported from the baseline's lumen.engine_tallymap.run; its environment switches and diagnostics options are gone
@@ -54,9 +58,25 @@ def run(  # noqa: PLR0913 -- SPEC section 5's signature
     float array is refused (``ClosedOverValues``). ``form="closure"``: the baseline's eager form, values baked in
     (comparisons only).
     """
+    if int(max_vertices) < 1:
+        raise ValueError(f"max_vertices must be >= 1, got {max_vertices}")
     static = (spec, model, int(max_vertices), int(replicas), tuple(diagnostics), backend, form)
+    if form == "memory":  # loop_memory: the compiled loop's memory analysis, not a run
+        m = _LOOP.lower(static[:-1] + ("operands",), ops, rows, key, jnp.asarray(first_id, jnp.int32), n_active)
+        m = m.compile().memory_analysis()
+        return dict(temp=int(m.temp_size_in_bytes), argument=int(m.argument_size_in_bytes),
+                    output=int(m.output_size_in_bytes))  # fmt: skip
     loop = _loop if form == "closure" else _LOOP
     return loop(static, ops, rows, key, jnp.asarray(first_id, jnp.int32), n_active)
+
+
+def loop_memory(spec, model, ops, rows, key, **kw) -> dict:
+    """Return XLA's memory analysis of the compiled loop, in bytes ("temp", "argument", "output"), without running it.
+
+    The arguments are ``run``'s. tallymap's per-thread memory is its own (outside XLA's pool); "temp" is what XLA adds
+    around the kernel.
+    """
+    return run(spec, model, ops, rows, key, **kw, form="memory")
 
 
 class ClosedOverValues(ValueError):  # noqa: N818 -- the documented error catalogue's name
@@ -85,12 +105,17 @@ def _loop(static, ops, rows, key, first_id, n_active):
 
     def item(tl, x, *b):
         o, k, fid = b[0] if b else (ops, key, first_id)
-        ph = spec.init(model, o, x["row"])
         pkey = rng.photon_key(k, fid + x["id"])
         slot = x["id"] * replicas // n
 
+        def begin():  # the photon's start (it locates it: a loop of its own), once, as the first iteration's work
+            ph = spec.init(model, o, x["row"])
+            return ph, tuple(dg.init(ph) for dg in diagnostics)
+
         def body(c):
-            p, tl, mem = c
+            p, tl, mem, started = c
+            if cuda:  # the CPU backend vmaps the item: a cond there would run both branches at every step
+                p, mem = jax.lax.cond(started, lambda: (p, mem), begin)
             p2, dep = step(model, o, p, pkey)
             adds, mem2 = list(spec.emits(dep, slot, o.grid)), []
             for dg, m in zip(diagnostics, mem, strict=True):
@@ -98,10 +123,13 @@ def _loop(static, ops, rows, key, first_id, n_active):
                 adds, mem2 = adds + a, mem2 + [m2]
             for name, cell, value in adds:
                 tl = tl.add(name, cell, value)
-            return p2, tl, tuple(mem2)
+            return p2, tl, tuple(mem2), jnp.bool_(True)
 
-        mem0 = tuple(dg.init(ph) for dg in diagnostics)
-        ph, tl, _ = jax.lax.while_loop(lambda c: spec.alive(c[0]) & (c[0].vertex < max_vertices), body, (ph, tl, mem0))
+        # one top-level loop (tallymap's step schedule needs it): the carry starts as a placeholder of the photon
+        ph0, mem0 = jax.tree_util.tree_map(lambda s: jnp.zeros(s.shape, s.dtype), jax.eval_shape(begin)) if cuda \
+            else begin()  # fmt: skip
+        live = lambda c: ~c[3] | (spec.alive(c[0]) & (c[0].vertex < max_vertices))  # noqa: E731
+        ph, tl, _, _ = jax.lax.while_loop(live, body, (ph0, tl, mem0, jnp.bool_(False)))
         tl = tl.add("truncated", jnp.int32(0), jnp.where(ph.alive, ph.w, 0.0))  # stopped by the guard: reported
         tl = tl.add("n_truncated", jnp.int32(0), jnp.where(ph.alive, 1.0, 0.0))
         return tl, spec.per_item(ph)
@@ -118,3 +146,13 @@ def _loop(static, ops, rows, key, first_id, n_active):
 
 
 _LOOP = jax.jit(_loop, static_argnums=0)
+
+
+def kernel_schedules() -> list[str]:
+    """Return the schedule of each CUDA kernel tallymap built or reused in this process (its last 16), oldest first.
+
+    "step": a lane is refilled per step; "item": per photon (tallymap's fallback when the item is not one loop).
+    """
+    from tallymap import _diagnostics
+
+    return [k["mode"] for k in _diagnostics.KERNELS]
