@@ -18,6 +18,9 @@ package so that ``lumen.validate.geometry`` can make its Geant4 input; ``refs/gd
                             definitions are deleted (the first kept)
     constant_property       a <property> whose ref names a define that is not a <matrix> is deleted
     undefined_matrix_property  a <property> whose ref names no define is deleted
+    constant_surface_table  an opticalsurface <property> of a key G4OpBoundaryProcess reads only as a table
+                            (REFLECTIVITY, TRANSMITTANCE, EFFICIENCY, the unified constants) naming a coldim 1 matrix is
+                            deleted: Geant4 stores it as a constant property it never reads, so its default applies
 
 Prints one line per edit.
 """
@@ -34,7 +37,10 @@ REPAIRS = (
     "identical_redefinition",
     "constant_property",
     "undefined_matrix_property",
+    "constant_surface_table",
 )
+TABLE_ONLY_SURFACE_KEYS = ("REFLECTIVITY", "TRANSMITTANCE", "EFFICIENCY", "SPECULARLOBECONSTANT",
+                           "SPECULARSPIKECONSTANT", "BACKSCATTERCONSTANT")  # fmt: skip
 TINY = sys.float_info.min
 SKIP = {"name", "ref", "formula", "state", "surfaceproperty", "auxtype", "auxvalue", "auxunit", "version"}
 NUMBER = re.compile(r"(?<![\w.])(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?(?![\w.])")
@@ -121,6 +127,30 @@ def _matrix_values(el, piece, repairs, out):
                   count=1, flags=re.S)  # fmt: skip
 
 
+def _property_repair(el, kind, coldim, on_surface, repairs):
+    """Return the line of a <property> the repairs delete (its ref names no matrix, or a constant on a surface)."""
+    nm, ref = el.get("name"), el.get("ref")
+    if kind != "matrix" and ("undefined_matrix_property" if kind is None else "constant_property") in repairs:
+        return f"property {nm} -> {kind or 'nothing'} {ref!r} deleted"
+    if (kind == "matrix" and on_surface and "constant_surface_table" in repairs and coldim.get(ref) == 1
+            and nm.split("0x")[0] in TABLE_ONLY_SURFACE_KEYS):  # fmt: skip
+        return f"surface property {nm} -> the constant matrix {ref!r} deleted"
+    return None
+
+
+def _facts(root):
+    """Return (each define's first kind, each matrix's first coldim, the ids of the opticalsurfaces' properties)."""
+    kinds: dict = {}
+    coldim: dict = {}
+    for el in root.iter():
+        if _tag(el) in DEFINES:
+            kinds.setdefault(el.get("name"), _tag(el))
+        if _tag(el) == "matrix":
+            coldim.setdefault(el.get("name"), int(round(float(el.get("coldim", "1")))))
+    on_surface = {id(p) for s in root.iter() if _tag(s) == "opticalsurface" for p in s if _tag(p) == "property"}
+    return kinds, coldim, on_surface
+
+
 def repair(text, repairs):
     """Return (the repaired text, one line per edit)."""
     bad = set(repairs) - set(REPAIRS)
@@ -130,10 +160,7 @@ def repair(text, repairs):
     if "denormal" in repairs:
         text = _denormals(text, out)
     root = ET.fromstring(text.encode("utf-8"))
-    kinds: dict = {}
-    for el in root.iter():
-        if _tag(el) in DEFINES:
-            kinds.setdefault(el.get("name"), _tag(el))
+    kinds, coldim, on_surface = _facts(root)
     els = [el for el in root.iter() if _tag(el) in ("constant", "variable", "quantity", "expression", "matrix",
                                                     "property")]  # fmt: skip
     matches = list(ELEMENT.finditer(_mask(text)))
@@ -144,10 +171,10 @@ def repair(text, repairs):
     for el, m in zip(els, matches, strict=True):
         piece, tg, nm = text[m.start() : m.end()], _tag(el), el.get("name")
         if tg == "property":
-            kind = kinds.get(el.get("ref"))
-            if ("undefined_matrix_property" if kind is None else "constant_property") in repairs and kind != "matrix":
+            line = _property_repair(el, kinds.get(el.get("ref")), coldim, id(el) in on_surface, repairs)
+            if line:
                 edits.append((m.start(), m.end(), ""))
-                out.append(f"property {nm} -> {kind or 'nothing'} {el.get('ref')!r} deleted")
+                out.append(line)
             continue
         key = (tg, tuple(sorted(el.attrib.items())), (el.text or "").strip())
         if nm in seen and seen[nm] == key and "identical_redefinition" in repairs:

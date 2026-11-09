@@ -15,9 +15,10 @@ every construct lumen does not support -- ``<loop>``, replicavol, divisionvol, p
 GDMLError.
 
 Exporter defects (``REPAIRS``) are constructs stock Geant4 (10.7.4 and 11.2.2, measured: tests/data/gdml_repairs)
-refuses. Each raises GDMLDefectError (``.kind``) unless the recipe opts into its repair (``Recipe.repairs``); an
-applied repair is a ``repaired (<kind>): ...`` line of ``doc.report``. ``refs/gdml_repair.py`` applies the same
-repairs to the GDML a Geant4 reference loads, so both sides read the same file. A matrix's values are counted as
+refuses, or loads but reads otherwise than the file says (a constant surface table: ``IGNORED_BY_GEANT4``). Each
+raises GDMLDefectError (``.kind``) unless the recipe opts into its repair (``Recipe.repairs``); an applied repair is a
+``repaired (<kind>): ...`` line of ``doc.report``. ``refs/gdml_repair.py`` applies the same repairs to the GDML a
+Geant4 reference loads, so both sides read the same file. A matrix's values are counted as
 Geant4 counts them: a values attribute that ends in whitespace (or is empty) has one more value, 0 (G4GDMLReadDefine
 reads with ``while (!eof) stream >> token``). A conflicting re-definition is a GDMLError, as are an overflowing literal
 and a matrix with a value that does not evaluate (a NaN, an unknown name), used or not, as in Geant4.
@@ -62,23 +63,38 @@ REPAIRS = {
     "undefined_matrix_property": ("a <property> whose ref names no define at all",
                                   "G4GDMLReadDefine::GetMatrix: ReadError, 'Matrix ... was not found!'",
                                   "the property is dropped"),
+    "constant_surface_table": ("an opticalsurface REFLECTIVITY, TRANSMITTANCE, EFFICIENCY or unified constant given "
+                               "as a constant (a coldim 1 matrix)", "G4GDMLReadSolids.cc:3556 adds it as a constant "
+                               "property; G4OpBoundaryProcess reads these only as tables, GetProperty, "
+                               "G4OpBoundaryProcess.cc:381-413", "the property is dropped, so Geant4's default "
+                               "applies, as in Geant4"),
     "denormal": ("a nonzero number literal below the smallest normal double (strtod sets ERANGE)",
                  "G4GDMLEvaluator::Evaluate: InvalidExpression, 'Error in expression'", "the literal is written 0"),
     "non_finite": ("an inf or -inf <matrix> value", "G4GDMLEvaluator::Evaluate: InvalidExpression, 'Error in "
                    "expression: inf'", "the value is written +-1e30, as the importer stores a non-finite table value"),
 }  # fmt: skip
+IGNORED_BY_GEANT4 = {"constant_surface_table"}  # a defect Geant4 loads but reads differently from what it says
+TABLE_ONLY_SURFACE_KEYS = (
+    "REFLECTIVITY",
+    "TRANSMITTANCE",
+    "EFFICIENCY",
+    "SPECULARLOBECONSTANT",
+    "SPECULARSPIKECONSTANT",
+    "BACKSCATTERCONSTANT",
+)  # G4OpBoundaryProcess reads them with GetProperty (tables)
 SKIP_LITERALS = {"name", "ref", "formula", "state", "surfaceproperty", "auxtype", "auxvalue", "auxunit", "version"}
 LITERAL_NUMBER = re.compile(r"(?<![\w.])(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?(?![\w.])")
 _BIG_EXPONENT = re.compile(r"\d[eE][-+]?\d{3}")  # a literal out of range has one (or > 300 digits)
 
 
 class GDMLDefectError(GDMLError):
-    """An exporter defect Geant4 refuses (``kind``: a key of REPAIRS); the recipe may opt into its repair."""
+    """An exporter defect Geant4 refuses or reads otherwise (``kind``: a key of REPAIRS); the recipe may repair it."""
 
     def __init__(self, kind, where):
         self.kind = kind
         case, g4, fix = REPAIRS[kind]
-        super().__init__(f"{where}: exporter defect {kind!r}, {case}. Stock Geant4 refuses it ({g4}). To read it, "
+        verb = "loads it and ignores the value" if kind in IGNORED_BY_GEANT4 else "refuses it"
+        super().__init__(f"{where}: exporter defect {kind!r}, {case}. Stock Geant4 {verb} ({g4}). To read it, "
                          f"opt into the repair (Recipe(repairs={{{kind!r}}}): {fix}) and give any Geant4 reference the "
                          f"same repair: python refs/gdml_repair.py SRC DST {kind}")  # fmt: skip
 
@@ -550,6 +566,10 @@ class GDMLDocument:
                 elif self._defs[ref][0] != "matrix":
                     what = f"{owner}: property {name} names {self._defs[ref][0]} {ref!r}"
                     self.defect("constant_property", what, "dropped")
+                elif (owner.startswith("opticalsurface") and g4_strip(name) in TABLE_ONLY_SURFACE_KEYS
+                      and self.ev.matrices.get(ref, (2,))[0] == 1):  # fmt: skip
+                    what = f"{owner}: property {name} names the constant (coldim 1) matrix {ref!r}"
+                    self.defect("constant_surface_table", what, "dropped: Geant4's default applies")
                 else:
                     continue
                 props.remove((name, ref))

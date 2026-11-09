@@ -35,6 +35,7 @@ DEFINE = """ <define>
   <matrix name="REF" coldim="2" values="1.5*eV 0.9 4.5*eV 0.85"/>
   <matrix name="EFF" coldim="2" values="1.5*eV 0.2 4.5*eV 0.3"/>
   <matrix name="C1" coldim="1" values="0.25"/>
+  <matrix name="LOBE" coldim="2" values="1*eV 0.25 20*eV 0.25"/>
   <matrix name="LEN1" coldim="1" values="12.5"/>
 {define}
  </define>
@@ -81,7 +82,7 @@ def pv(lv, name=None, pos=None, rot=None, scale=None, copy=None):
 SURFACES = """  <opticalsurface name="Glisur" model="glisur" finish="ground" type="dielectric_metal" value="0.7">
    <property name="REFLECTIVITY" ref="REF"/></opticalsurface>
   <opticalsurface name="Unified" model="unified" finish="ground" type="dielectric_dielectric" value="0.2">
-   <property name="REFLECTIVITY" ref="REF"/><property name="SPECULARLOBECONSTANT" ref="C1"/></opticalsurface>
+   <property name="REFLECTIVITY" ref="REF"/><property name="SPECULARLOBECONSTANT" ref="LOBE"/></opticalsurface>
   <opticalsurface name="Sensor" model="1" finish="0" type="0" value="1">
    <property name="EFFICIENCY" ref="EFF"/><property name="REFLECTIVITY" ref="REF"/></opticalsurface>"""
 

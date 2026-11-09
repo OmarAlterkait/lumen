@@ -36,8 +36,8 @@ Surfaces (G4OpBoundaryProcess::PostStepDoIt, DielectricMetal, DoReflection; no t
 
 The type does not depend on whether R or T is present on a polished surface: Geant4 reads them at their defaults (R
 1, T 0) when the surface omits them (``surface_defaults``), so an omitted one is a parameter at that default
-(docs/explanation/parameters.md). Still open: a frontpainted surface without TRANSMITTANCE (PAINTED; Geant4 reads its
-T 0 too) and a WLS film's backing (no transmitting backing is modelled: a TRANSMITTANCE on it is refused).
+(docs/explanation/parameters.md). Open, deferred to B4: a frontpainted surface without TRANSMITTANCE (PAINTED;
+Geant4 reads its T 0 too). A WLS film's backing models no transmission: a TRANSMITTANCE on it is refused.
 
 Refused: the LUT, DAVIS and dichroic models and surface types, backpainted finishes, a ground dielectric_dielectric,
 a complex index, SURFACEROUGHNESS, a coated surface's keys, a nonzero EFFICIENCY outside DIELECTRIC_RT (a detecting
@@ -429,8 +429,8 @@ def _dielectric(s: schema.Surface, finish: str, what: str, refl, transmits: bool
             if not transmits:
                 raise OpticsRefused(f"{what}: TRANSMITTANCE on a WLS film's backing (no transmitting backing)")
             return SurfaceEntry(legacy.PAINTED_T, {"R": refl, "T": t, "f_spec": fs})
-        # OPEN (port/REPORT.md): Geant4 reads T here too, but a painted surface faces an opaque medium in SK, WCTE
-        # and ANNIE, where the class compiler refuses a transmission; until that is decided, no T without the key
+        # OPEN, deferred to B4 (the surface lookup's rule 4; port/REPORT.md): Geant4 reads T here too, but a painted
+        # surface faces an opaque medium in SK, WCTE and ANNIE, where the class compiler refuses a transmission
         return SurfaceEntry(legacy.PAINTED, {"R": refl, "f_spec": fs})
     if finish == "polished":  # absorption (detected with EFFICIENCY on a sensor) and transmission before Fresnel
         return SurfaceEntry(legacy.DIELECTRIC_RT, {"R": refl, "T": t}, ignored_between_same_material=True)

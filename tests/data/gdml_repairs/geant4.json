@@ -83,6 +83,28 @@
     }
    }
   },
+  "constant_surface_table": {
+   "case": "constant_surface_table",
+   "geant4": {
+    "10.7.4": {
+     "loads": true
+    },
+    "11.2.2": {
+     "loads": true
+    }
+   },
+   "repaired": {
+    "repairs": [
+     "constant_surface_table"
+    ],
+    "sha256": "88aae60dd90fd4406217fad5df1087271febbdfb98b69b47b24a1bd7a3066122",
+    "geant4": {
+     "10.7.4": true,
+     "11.2.2": true
+    }
+   },
+   "geant4_ignores": "loads; G4GDMLReadSolids.cc:3556 stores the coldim 1 TRANSMITTANCE as a constant property, which G4OpBoundaryProcess never reads (GetProperty(kTRANSMITTANCE), G4OpBoundaryProcess.cc:394): T stays at its default 0 (l. 310)"
+  },
   "denormal_attribute": {
    "case": "denormal",
    "geant4": {

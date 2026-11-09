@@ -32,6 +32,9 @@ Other structural cases:
 A Geant4 default is a calibration key too. Params lists a property the file omits whose default the model reads,
 with that default and its source line, for example `surfaces/<S>/TRANSMITTANCE`, "default 0,
 G4OpBoundaryProcess.cc:310", on a polished dielectric_dielectric surface (`lumen.rules.optics.surface_defaults`).
-Setting it adds the property (`lumen.format.apply`); any other added property is refused. The exporter writes the
+Setting it adds the property (`lumen.format.apply`); any other added property is refused. An omitted ABSLENGTH has
+no key. Geant4 reads it as DBL_MAX, but that value means "no absorption process": calibrating it would add a
+process, not set a value. TRANSMITTANCE is different: the boundary process always runs and always reads T, so its
+default 0 is a value like any other. The exporter writes the
 property only when a calibration has set it, as the flat table Geant4 reads, so an uncalibrated detector exports as
 before.

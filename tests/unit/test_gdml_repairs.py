@@ -34,7 +34,7 @@ def test_the_toys_and_both_geant4_versions_agree():
     for name, t in G4.items():
         a, b = t["geant4"]["10.7.4"], t["geant4"]["11.2.2"]
         assert a == b, name  # the same verdict and message in both versions
-        assert a["loads"] == (t["case"] == "accepted"), name
+        assert a["loads"] == (t["case"] == "accepted" or "geant4_ignores" in t), name  # loads, reads it otherwise
         assert t.get("repaired", {}).get("geant4", {"10.7.4": True, "11.2.2": True}) == {"10.7.4": True, "11.2.2": True}
     assert set(gdml_repair.REPAIRS) == set(reader.REPAIRS) == {t["case"] for t in G4.values() if "repaired" in t}
 
@@ -84,6 +84,8 @@ def test_what_each_repair_reads():
                                   [1.0, 0.0])  # fmt: skip
     rix = read("neg_inf_matrix", "non_finite").materials["Water"].properties["RINDEX"].value
     np.testing.assert_array_equal(rix, [1.33, -1e30])
+    win = read("constant_surface_table", "constant_surface_table").surfaces["Win"]
+    assert "TRANSMITTANCE" not in win.properties and "REFLECTIVITY" in win.properties  # Geant4's T: its default 0
 
 
 def test_geant4s_value_count_and_redefinitions_it_accepts():
