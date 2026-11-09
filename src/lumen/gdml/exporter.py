@@ -57,7 +57,7 @@ from pathlib import Path
 import numpy as np
 
 from lumen.format import io, schema, sensorsets
-from lumen.format.apply import SENSOR_PREFIX, apply
+from lumen.format.apply import GEANT4_DEFAULT, SENSOR_PREFIX, apply
 from lumen.format.sensorsets import SensorSet
 from lumen.gdml import geant4_forms, importer, reader, tokens
 from lumen.gdml import solids_schema as ss
@@ -400,6 +400,21 @@ def _column(values: list, toks, decode, canonical) -> list:
     ]
 
 
+FLAT_EV = (1.0, 20.0)  # eV: the knots of the flat table a calibrated Geant4-default constant is written as
+
+
+def _vector_form(p: schema.Property) -> schema.Property:
+    """Return a Geant4-default constant a calibration set (``lumen.format.apply``) as the flat table Geant4 reads.
+
+    G4OpBoundaryProcess reads REFLECTIVITY, TRANSMITTANCE and the unified constants with GetProperty, a table: a
+    constant (a coldim 1 matrix) would be a constant property it ignores. Geant4 clamps the table outside its knots.
+    """
+    if p.origin != GEANT4_DEFAULT or p.energy is not None:
+        return p
+    v = float(p.value)
+    return dataclasses.replace(p, value=np.array([v, v]), energy=np.array(FLAT_EV))
+
+
 def _table_text(key: str, p: schema.Property, tok: dict | None = None) -> tuple[int, str, str | None]:
     """Return a property's (coldim, values, matrix unit): energies in MeV, lengths in mm, source tokens where unchanged.
 
@@ -422,6 +437,17 @@ def _sha10(coldim: int, text: str) -> str:
     return hashlib.sha256(f"{coldim}:{text}".encode()).hexdigest()[:10]
 
 
+def _surface_users(df: schema.DetectorFile, sel: _Selection) -> list:
+    out = []
+    for name in sel.surfaces:
+        s = df.surfaces[name]
+        toks = df.tokens.get("surfaces", {}).get(name, {})
+        for key in sorted(s.properties):
+            p = _vector_form(s.properties[key])
+            out.append(("surfaces", name, key, p.matrix, *_table_text(key, p, toks.get(key))))
+    return out
+
+
 def _matrices(df: schema.DetectorFile, sel: _Selection) -> tuple[dict, dict, list]:
     """Name the matrices (gdml_export.md section 4.1, step 3).
 
@@ -441,11 +467,7 @@ def _matrices(df: schema.DetectorFile, sel: _Selection) -> tuple[dict, dict, lis
             a = np.asarray(m.inert[key], np.float64)
             if a.size:
                 users.append(("inert", name, key, "", a.shape[1], " ".join(_bare(x) for x in a.ravel().tolist()), None))
-    for name in sel.surfaces:
-        s = df.surfaces[name]
-        toks = df.tokens.get("surfaces", {}).get(name, {})
-        users += [("surfaces", name, key, s.properties[key].matrix, *_table_text(key, s.properties[key], toks.get(key)))
-                  for key in sorted(s.properties)]  # fmt: skip
+    users += _surface_users(df, sel)
     contents: dict = {}
     for _, _, _, stored, cd, text, unit in users:
         if stored:

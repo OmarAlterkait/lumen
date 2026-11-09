@@ -94,6 +94,25 @@ def detector_values(df: fmt.DetectorFile) -> tuple[dict, dict]:
     return values, spec
 
 
+def default_values(df: fmt.DetectorFile) -> tuple[dict, dict]:
+    """Return (values, spec) of the surface properties the file omits whose Geant4 default the model reads.
+
+    ``lumen.rules.optics.detector_defaults``: each key at Geant4's default, its ParamInfo naming the default and the
+    source line; ``lumen.format.apply`` adds the property when a value is set.
+    """
+    from lumen.rules import optics
+
+    values, spec = {}, {}
+    for name, keys in optics.detector_defaults(df).items():
+        for prop, (v, src) in keys.items():
+            key = f"surfaces/{name}/{prop}"
+            values[key] = float(v)
+            info = _info(key, prop, False)
+            spec[key] = ParamInfo(key, info.unit, info.range, info.method, info.available, False,
+                                  f"default {v:g}, {src}")  # fmt: skip
+    return values, spec
+
+
 def param_spec_and_values(df: fmt.DetectorFile, sensor_defaults: dict | None = None) -> Params:
     """Return the detector's Params at its own values, then each sensor group's model defaults.
 
@@ -101,6 +120,9 @@ def param_spec_and_values(df: fmt.DetectorFile, sensor_defaults: dict | None = N
     """
     values, spec = detector_values(df)
     layers = dict.fromkeys(values, "detector file")
+    dv, ds = default_values(df)
+    values, spec = {**values, **dv}, {**spec, **ds}
+    layers.update({k: f"Geant4 {ds[k].default}" for k in dv})
     for key, (v, info) in (sensor_defaults or {}).items():
         values[key], spec[key], layers[key] = v, info, "sensor model defaults"
     return Params(values, spec, layers)

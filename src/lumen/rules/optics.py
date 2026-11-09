@@ -28,10 +28,16 @@ Surfaces (G4OpBoundaryProcess::PostStepDoIt, DielectricMetal, DoReflection; no t
     dielectric_metal, glisur (other finish, polish 1)   SPECULAR_METAL: R mirror
     dielectric_metal, unified, polished                 SPECULAR_METAL
     dielectric_metal, unified, ground                   UNIFIED_METAL: spike / lobe / back / Lambert, Geant4's cuts
-    dielectric_dielectric, polishedfrontpainted         PAINTED (f_spec 1): R mirror, T straight, rest absorbed
-    dielectric_dielectric, groundfrontpainted           PAINTED (f_spec 0): R Lambert about the normal
-    dielectric_dielectric, polished, no R / T table     DIELECTRIC (Fresnel), skipped between one material
-    dielectric_dielectric, polished, R and / or T       DIELECTRIC_RT: absorbed 1 - R - T, T straight, R to Fresnel
+    dielectric_dielectric, polishedfrontpainted         PAINTED (f_spec 1): R mirror, rest absorbed (PAINTED_T: T
+                                                        straight, with TRANSMITTANCE)
+    dielectric_dielectric, groundfrontpainted           PAINTED (f_spec 0): R Lambert about the normal (PAINTED_T)
+    dielectric_dielectric, polished                     DIELECTRIC_RT: absorbed 1 - R - T, T straight, R to Fresnel,
+                                                        skipped between one material
+
+The type does not depend on whether R or T is present on a polished surface: Geant4 reads them at their defaults (R
+1, T 0) when the surface omits them (``surface_defaults``), so an omitted one is a parameter at that default
+(docs/explanation/parameters.md). Still open: a frontpainted surface without TRANSMITTANCE (PAINTED; Geant4 reads its
+T 0 too) and a WLS film's backing (no transmitting backing is modelled: a TRANSMITTANCE on it is refused).
 
 Refused: the LUT, DAVIS and dichroic models and surface types, backpainted finishes, a ground dielectric_dielectric,
 a complex index, SURFACEROUGHNESS, a coated surface's keys, a nonzero EFFICIENCY outside DIELECTRIC_RT (a detecting
@@ -47,9 +53,9 @@ of that form). Not the sensor model (``lumen.plugins.sensor_models``): that is w
         (absent: the complex index REALRINDEX + i IMAGINARYRINDEX, CalculateReflectivity, a PHOTOCATHODE; neither:
         R = 1), the absorbed 1 - R detected with EFFICIENCY (default 0); the reflection by model and finish: polished
         (glisur or unified) a mirror (SENSOR, f_spec 1), glisur ground the facet chain (GLISUR_METAL_EFF), unified
-        ground spike / lobe / back / Lambert (DIELECTRIC_METAL). dielectric_dielectric, polished, with R / T tables:
-        DIELECTRIC_RT_SENSOR, eff = EFFICIENCY. Keys no stock process reads on a surface (RINDEX, KINDEX, THICKNESS on
-        a dielectric_metal) are ignored, as Geant4 ignores them.
+        ground spike / lobe / back / Lambert (DIELECTRIC_METAL). dielectric_dielectric, polished (R / T at Geant4's
+        defaults if absent): DIELECTRIC_RT_SENSOR, eff = EFFICIENCY. Keys no stock process reads on a surface (RINDEX,
+        KINDEX, THICKNESS on a dielectric_metal) are ignored, as Geant4 ignores them.
     lumen:complex_index
         a thin-film photocathode's tables some experiment software writes on the surface (RINDEX, KINDEX), read as a
         semi-infinite absorber of index RINDEX + i KINDEX (PHOTOCATHODE, specular, detected with EFFICIENCY): not the
@@ -414,30 +420,71 @@ def _metal(s: schema.Surface, model: str, finish: str, what: str, refl):
                                                "sigma_alpha": float(s.value)})  # fmt: skip
 
 
-def _dielectric(s: schema.Surface, finish: str, what: str, refl, rt: bool):
-    pr = s.properties
+def _dielectric(s: schema.Surface, finish: str, what: str, refl, transmits: bool):
+    # Geant4 reads T at its default 0 when the surface gives none (G4OpBoundaryProcess.cc:310, 463): a parameter
+    t = flat_fraction(s, "TRANSMITTANCE", 0.0)
     if finish in ("polishedfrontpainted", "groundfrontpainted"):
         fs = 1.0 if finish == "polishedfrontpainted" else 0.0
-        if "TRANSMITTANCE" in pr:
-            return SurfaceEntry(legacy.PAINTED_T, {"R": refl, "T": fraction(pr, "TRANSMITTANCE", 0.0), "f_spec": fs})
+        if "TRANSMITTANCE" in s.properties:
+            if not transmits:
+                raise OpticsRefused(f"{what}: TRANSMITTANCE on a WLS film's backing (no transmitting backing)")
+            return SurfaceEntry(legacy.PAINTED_T, {"R": refl, "T": t, "f_spec": fs})
+        # OPEN (port/REPORT.md): Geant4 reads T here too, but a painted surface faces an opaque medium in SK, WCTE
+        # and ANNIE, where the class compiler refuses a transmission; until that is decided, no T without the key
         return SurfaceEntry(legacy.PAINTED, {"R": refl, "f_spec": fs})
-    if finish == "polished":
-        if rt:  # absorption (detected with EFFICIENCY on a sensor) and transmission before Fresnel
-            return SurfaceEntry(legacy.DIELECTRIC_RT, {"R": refl, "T": fraction(pr, "TRANSMITTANCE", 0.0)},
-                                ignored_between_same_material=True)  # fmt: skip
-        return SurfaceEntry(legacy.DIELECTRIC, {}, ignored_between_same_material=True)
+    if finish == "polished":  # absorption (detected with EFFICIENCY on a sensor) and transmission before Fresnel
+        return SurfaceEntry(legacy.DIELECTRIC_RT, {"R": refl, "T": t}, ignored_between_same_material=True)
     raise OpticsRefused(f"{what}: ground dielectric_dielectric (facet refraction) is not supported")
 
 
-def surface(s: schema.Surface) -> SurfaceEntry:
-    """Return the SurfaceEntry of an optical surface with Geant4 11 semantics (see the module docstring)."""
+# Geant4's value of a surface property the model reads when the surface omits it (G4OpBoundaryProcess.cc, 11.2.2)
+DEFAULT_R = (1.0, "G4OpBoundaryProcess.cc:308")
+DEFAULT_T = (0.0, "G4OpBoundaryProcess.cc:310")
+DEFAULT_UNIFIED = {"SPECULARLOBECONSTANT": (0.0, "G4OpBoundaryProcess.cc:405-407"),
+                   "SPECULARSPIKECONSTANT": (0.0, "G4OpBoundaryProcess.cc:408-410"),
+                   "BACKSCATTERCONSTANT": (0.0, "G4OpBoundaryProcess.cc:411-413")}  # fmt: skip
+
+
+def surface_defaults(s: schema.Surface, backing: bool = False) -> dict:
+    """Return {KEY: (Geant4's default, its source line)} of the properties ``s`` omits that its model reads.
+
+    dielectric_dielectric: REFLECTIVITY, and TRANSMITTANCE when polished (not on a WLS film's ``backing``);
+    dielectric_metal without a complex index: REFLECTIVITY, and with unified and a ground finish the
+    three unified constants. EFFICIENCY is not offered: a nonzero one makes a surface a sensor, whose efficiency is its
+    sensor model's. A surface another optics model reads has none.
+    """
+    if s.optics.name != "geant4":
+        return {}
+    model, finish, type_ = surface_names(s)
+    pr, out = s.properties, {}
+    if type_ == "dielectric_dielectric" and finish in ("polished", "polishedfrontpainted", "groundfrontpainted"):
+        # T only where the type carries it without the key: polished (frontpainted: open, see the module docstring)
+        out = {"REFLECTIVITY": DEFAULT_R} | (
+            {"TRANSMITTANCE": DEFAULT_T} if finish == "polished" and not backing else {}
+        )
+    elif type_ == "dielectric_metal" and not ("REALRINDEX" in pr and "IMAGINARYRINDEX" in pr):
+        out = {"REFLECTIVITY": DEFAULT_R} | (DEFAULT_UNIFIED if (model, finish) == ("unified", "ground") else {})
+    return {k: v for k, v in out.items() if k not in pr}
+
+
+def detector_defaults(df: schema.DetectorFile) -> dict:
+    """Return {surface: surface_defaults(...)} of every surface of a detector file (a WLS film's backing marked)."""
+    backings = {s.optics.settings.get("backing") for s in df.surfaces.values() if s.optics.name == "lumen:wls_film"}
+    return {n: d for n, s in df.surfaces.items() if (d := surface_defaults(s, n in backings))}
+
+
+def surface(s: schema.Surface, transmits: bool = True) -> SurfaceEntry:
+    """Return the SurfaceEntry of an optical surface with Geant4 11 semantics (see the module docstring).
+
+    ``transmits=False``: a WLS film's backing (frontpainted only), whose T stays at Geant4's 0 (``wls_film``).
+    """
     model, finish, type_ = surface_names(s)
     what = f"opticalsurface {s.name!r} ({model} {finish} {type_})"
     pr = s.properties
     for k in REFUSED_SURFACE:
         if k in pr:
             raise OpticsRefused(f"{what}: {k} is not supported")
-    rt = type_ == "dielectric_dielectric" and finish == "polished" and ("REFLECTIVITY" in pr or "TRANSMITTANCE" in pr)
+    rt = type_ == "dielectric_dielectric" and finish == "polished"
     if nonzero(pr, "EFFICIENCY") and not rt:
         raise OpticsRefused(f"{what}: EFFICIENCY > 0 makes it a detecting surface; bind a sensor instead")
     if model not in ("glisur", "unified"):
@@ -448,7 +495,7 @@ def surface(s: schema.Surface) -> SurfaceEntry:
     if type_ == "dielectric_metal":
         return _metal(s, model, finish, what, refl)
     if type_ == "dielectric_dielectric":
-        return _dielectric(s, finish, what, refl, rt)
+        return _dielectric(s, finish, what, refl, transmits)
     raise OpticsRefused(f"{what}: surface type {type_} is not supported")
 
 
@@ -505,7 +552,7 @@ def geant4_sensor(s: schema.Surface, lam_domain) -> SensorEntry:
         e = surface(s)
         if e.kind is not legacy.DIELECTRIC_RT:
             raise OpticsRefused(f"{what}: {e.kind.name} does not detect (Geant4: only a polished "
-                                "dielectric_dielectric with R / T tables reaches DoAbsorption)")  # fmt: skip
+                                "dielectric_dielectric reaches DoAbsorption)")  # fmt: skip
         return SensorEntry(legacy.DIELECTRIC_RT_SENSOR, dict(e.params, eff=eff))
     if type_ != "dielectric_metal":
         raise OpticsRefused(f"{what}: surface type {type_} is not supported as a sensor")
@@ -566,15 +613,14 @@ def sensor(s: schema.Surface, lam_domain=None, model=None, eff: float | None = N
 
 
 def rt_sensor(s: schema.Surface, eff: float | None = None) -> SensorEntry:
-    """Return the sensor form of a polished dielectric_dielectric surface with tables (DIELECTRIC_RT_SENSOR).
+    """Return the sensor form of a polished dielectric_dielectric surface (DIELECTRIC_RT_SENSOR).
 
     Its absorbed share is detected with ``eff``: by default the surface's EFFICIENCY (Geant4's Detection status); a
     sensitive detector that counts every absorption (WCSim's) passes 1.
     """
     e = sensor(s, eff=eff)
     if e.kind is not legacy.DIELECTRIC_RT_SENSOR:
-        raise OpticsRefused(f"opticalsurface {s.name!r}: {e.kind.name}, not a polished dielectric_dielectric with "
-                            "tables")  # fmt: skip
+        raise OpticsRefused(f"opticalsurface {s.name!r}: {e.kind.name}, not a polished dielectric_dielectric")
     return e
 
 
@@ -675,7 +721,7 @@ def wls_film(film: schema.Material, front: schema.Material, backing: schema.Surf
     worst = float(np.max(d / np.interp(grid, wla.energy, wla.value)))
     if worst > FILM_SELF_ABSORPTION:
         raise OpticsRefused(f"{what}: absorbs its own emission (d / L up to {worst:.1e})")
-    b = surface(backing)
+    b = surface(backing, transmits=False)
     types = {} if types is None else types
     key = (film.name, b.kind.name)
     if key not in types:

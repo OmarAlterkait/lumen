@@ -57,8 +57,9 @@ def test_geant4_finishes_and_types():
     assert rt.kind is legacy.DIELECTRIC_RT_SENSOR and rt.params["eff"] == 0.7
     enum = rules.geant4_sensor(surf(model="1", finish="0", type_="1", REFLECTIVITY=prop("REFLECTIVITY", 0.1)), LAM)
     assert enum.kind is legacy.DIELECTRIC_RT_SENSOR  # Geant4's enum values: unified, polished, dielectric_dielectric
-    with pytest.raises(rules.OpticsRefused):  # a polished dielectric without tables: no detection
-        rules.geant4_sensor(surf(type_="dielectric_dielectric"), LAM)
+    # without tables Geant4 reads R 1 and T 0 (its defaults): the same type, absorbing nothing at those values
+    bare = rules.geant4_sensor(surf(type_="dielectric_dielectric"), LAM)
+    assert bare.kind is legacy.DIELECTRIC_RT_SENSOR and (bare.params["R"], bare.params["T"]) == (1.0, 0.0)
 
 
 def test_complex_index_model_and_its_flatness_rule():

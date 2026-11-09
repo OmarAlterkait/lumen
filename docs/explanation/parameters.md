@@ -15,7 +15,9 @@ dielectric_dielectric surface without TRANSMITTANCE has the parameter T = 0. Its
 MicroBooNE's steel shows the rule. Its surface follows LArSoft's OpBoundaryProcessSimple (`lumen:larsoft_reflector`),
 which reflects specularly about the global normal or Lambertian, and never samples a facet or a lobe. So its facet
 width sigma_alpha (0.1) and its lobe fraction f_glossy (0) are OUT. The reason is that no code path reads them, not
-that 0.1 or 0 are special values. On a unified dielectric_metal surface with a ground finish, Geant4 reads sigma_alpha
+that 0.1 or 0 are special values. The export writes this surface as a unified, ground dielectric_metal with
+sigma_alpha 0 and no lobe (`lumen.gdml.geant4_forms`). That form is a translation that makes Geant4 do what
+LArSoft's process does, not the model, so it does not make sigma_alpha a parameter. On a unified dielectric_metal surface with a ground finish, Geant4 reads sigma_alpha
 in GetFacetNormal for every lobe reflection, so there sigma_alpha stays a parameter even where every lobe fraction is
 0. Its zero derivative is then a measured fact, not a reason to drop it.
 
@@ -26,3 +28,10 @@ Other structural cases:
 - a WLS film's yield when the material has no WLSMEANNUMBERPHOTONS: G4OpWLS then emits exactly one photon and
   reads no mean;
 - the film's thickness and side, which are geometry.
+
+A Geant4 default is a calibration key too. Params lists a property the file omits whose default the model reads,
+with that default and its source line, for example `surfaces/<S>/TRANSMITTANCE`, "default 0,
+G4OpBoundaryProcess.cc:310", on a polished dielectric_dielectric surface (`lumen.rules.optics.surface_defaults`).
+Setting it adds the property (`lumen.format.apply`); any other added property is refused. The exporter writes the
+property only when a calibration has set it, as the flat table Geant4 reads, so an uncalibrated detector exports as
+before.

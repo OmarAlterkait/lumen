@@ -26,7 +26,11 @@ METHODS = ("reweight", "moving_paths", "moving_paths+reweight", "after_tracking"
 
 @dataclass(frozen=True)
 class ParamInfo:
-    """What a parameter declares: its unit, allowed range, gradient method and whether that method is available."""
+    """What a parameter declares: its unit, allowed range, gradient method and whether that method is available.
+
+    ``default``: for a property the file omits whose Geant4 default the model reads, that default and its source
+    (e.g. "default 0, G4OpBoundaryProcess.cc:310"); else empty.
+    """
 
     key: str
     unit: str
@@ -34,6 +38,7 @@ class ParamInfo:
     method: str
     available: bool = True
     table: bool = False
+    default: str = ""
 
 
 class UnknownParamKey(KeyError):  # noqa: N818 (the name of the documented error catalogue)

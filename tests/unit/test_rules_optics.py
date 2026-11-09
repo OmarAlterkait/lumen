@@ -206,7 +206,8 @@ def test_groupvel_export_is_accepted_a_user_table_refused(df):
 
 SUPPORTED = {"glis": legacy.GLISUR_METAL, "glispol": legacy.SPECULAR_METAL, "glis1": legacy.SPECULAR_METAL,
              "uni": legacy.UNIFIED_METAL, "paint": legacy.PAINTED, "paintT": legacy.PAINTED_T,
-             "die": legacy.DIELECTRIC, "pdieR": legacy.DIELECTRIC_RT}  # fmt: skip
+             "die": legacy.DIELECTRIC_RT, "pdieR": legacy.DIELECTRIC_RT}  # fmt: skip
+# a polished surface's type never depends on whether R or T is present: Geant4 reads them at its defaults (R 1, T 0)
 REFUSED = {"lut": "model", "dich": "model", "back": "finish", "gdie": "ground dielectric", "eff": "EFFICIENCY",
            "mT": "TRANSMITTANCE", "cplx": "REALRINDEX", "usig": "sigma_alpha", "neg": "polish"}  # fmt: skip
 

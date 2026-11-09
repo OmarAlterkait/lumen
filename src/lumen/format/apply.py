@@ -8,9 +8,12 @@ the opticalsurface's value (sigma_alpha or polish); a replaced value loses its s
 so an export writes it canonically. ``sensors/<group>/<setting>`` keys are values after tracking: they leave the
 detector file as it is (``sensor_set`` applies them to a sensor set's settings).
 
-A table keeps its knot count: a new knot count is a new detector file. Fails closed (ValueError): an unknown material,
-surface or property, a table given for a constant or a number for a table, a new knot count, energies that are not
-strictly ascending, and any other kind of key.
+A table keeps its knot count: a new knot count is a new detector file. One property may be added: a surface property
+the file omits whose Geant4 default the model reads (``lumen.rules.optics.surface_defaults``: TRANSMITTANCE on a
+polished dielectric_dielectric surface, ...), set to a number; it is a constant of origin ``GEANT4_DEFAULT``, which the
+exporter writes as the flat table Geant4 reads (an uncalibrated detector file never has one). Fails closed
+(ValueError): an unknown material, surface or property (any other added one), a table given for a constant or a number
+for a table, a new knot count, energies that are not strictly ascending, and any other kind of key.
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ from lumen.format import schema
 from lumen.format.calibrations import Table
 
 SENSOR_PREFIX = "sensors/"
+GEANT4_DEFAULT = "geant4_default"  # the origin of a property a parameter value added at a Geant4 default key
 
 
 def check(key: str, old, new) -> None:
@@ -52,6 +56,7 @@ def _property(p: schema.Property, v, key: str) -> schema.Property:
 def _changes(df: schema.DetectorFile, values) -> dict:
     """Return {kind: {name: {key: value}}} of the material and surface keys of ``values``, checked."""
     out: dict = {"materials": {}, "surfaces": {}}
+    defaults = None
     for key, v in values.items():
         if key.startswith(SENSOR_PREFIX):
             continue
@@ -66,8 +71,15 @@ def _changes(df: schema.DetectorFile, values) -> dict:
             if np.ndim(v) or isinstance(v, Table):
                 raise ValueError(f"{key}: the opticalsurface value is a number")
         elif prop not in rec.properties:
-            raise ValueError(f"parameter key {key!r}: {name!r} has no property {prop} (adding one is a new detector "
-                             "file)")  # fmt: skip
+            if defaults is None:
+                from lumen.rules.optics import detector_defaults
+
+                defaults = detector_defaults(df)
+            if kind != "surfaces" or prop not in defaults.get(name, {}):
+                raise ValueError(f"parameter key {key!r}: {name!r} has no property {prop} (adding one is a new "
+                                 "detector file, except a Geant4 default the model reads)")  # fmt: skip
+            if np.ndim(v) or isinstance(v, Table):
+                raise ValueError(f"{key}: a Geant4 default property is set to a number")
         out[kind].setdefault(name, {})[prop] = v
     return out
 
@@ -80,7 +92,10 @@ def apply(df: schema.DetectorFile, values) -> schema.DetectorFile:
         for name, props in changes.items():
             rec, keys = recs[name], set(props)
             extra = {"value": float(props.pop("value"))} if kind == "surfaces" and "value" in props else {}
-            reps = {k: _property(rec.properties[k], v, f"{kind}/{name}/{k}") for k, v in props.items()}
+            reps = {k: _property(rec.properties[k], v, f"{kind}/{name}/{k}") if k in rec.properties else
+                    schema.Property(k, np.asarray(float(v), np.float64), origin=GEANT4_DEFAULT,
+                                    note="a Geant4 default key set by a parameter value")
+                    for k, v in props.items()}  # fmt: skip
             recs[name] = dataclasses.replace(rec, properties={**rec.properties, **reps}, **extra)
             if name in toks.get(kind, {}):
                 toks[kind][name] = {k: t for k, t in toks[kind][name].items() if k not in keys}
