@@ -22,6 +22,15 @@ fixed-reference difference (the same weighted estimator on the same draws). A fa
 resolution is reported, not gated; a family that moves no random draw is gated on the exactness comparison only.
 Reverse mode is compared with forward mode on a fixed random weighting of the outputs.
 
+The fixed-reference difference is itself a float32 computation, and its rounding is not always small against the
+observable. On surfaces with a facet chain (unified and GLISUR lobes) it evaluates the chain's log density at
+σ(1 ± h); those terms (−2 log σ, −α²/2σ², log F, log ζ) round the same way on every photon, so the difference carries
+a bias of one sign, about 2.5e-4 per lobe reflection at h = 1/1024 and scaling as 1/h, which adds up along a path
+and does not average down. Found on ANNIE's inner-structure steel σ_α (1.2 % at h = 1/1024): the float64 difference
+equals the automatic derivative to 1e-10, so the derivative is right. The exactness test therefore estimates the
+difference's own error from the difference at h/4 (a 1/h error gives |FDX(h/4) − FDX(h)| / 3) and allows three times
+it; an automatic derivative that misses a term still disagrees at every h.
+
 ## References
 
 Every reference product is listed with its sha256, its producer (binary, flags, seed, chunking) and any patch, in
