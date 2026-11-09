@@ -188,6 +188,39 @@ def check(path, gdml, g4ref, out, n_uniform=20000, n_surface=20000) -> dict:
     return res
 
 
+def validate(name, *, detector=None, g4ref=None, extra=()) -> list:
+    """Run the geometry check named ``name`` (a manifest entry); return its record rows (``lumen.validate.records``).
+
+    The GDML is the manifest's dataset, refused unless its sha256 is the one the detector file was converted from.
+    It passes when every point outside the opaque meshes agrees (100 %).
+    """
+    import hashlib
+    import tempfile
+
+    from lumen import _env, api
+    from lumen.format import io
+    from lumen.validate import records, references
+
+    spec = references.spec("geometry", name, extra)
+    if g4ref is None:
+        raise ValueError("the geometry check needs Geant4's answers: give the g4ref binary (--g4ref)")
+    gdml = references.product(spec["reference"], spec, extra) / spec["gdml"]
+    path = api._resolve(detector or spec["detector"])
+    want = io.read(path).provenance["source"]["sha256"]
+    if "sha256:" + hashlib.sha256(gdml.read_bytes()).hexdigest() != want:
+        raise ValueError(f"{gdml} is not the GDML {path} was converted from ({want})")
+    work = _env.cache_dir() / "validate" / "geometry"
+    work.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=work) as tmp:
+        g4 = Precomputed(g4ref) if str(g4ref).endswith(".csv") else g4ref
+        r = check(path, gdml, g4, tmp)
+    bad = r["mismatch_outside_meshes"]
+    keep = {k: r[k] for k in ("points", "material_mismatch", "material_mismatch_in_mesh", "placement_compared",
+                              "placement_mismatch", "as_used_compared", "as_used_mismatch", "seconds")}  # fmt: skip
+    return [records.row("geometry", name, "points located as Geant4 locates them (outside opaque meshes)",
+                        1.0 - bad / r["points"], passed=bad == 0, reference=spec["reference"], **keep)]  # fmt: skip
+
+
 def main(argv=None) -> int:
     """Run the check from the command line; exit 1 when any point disagrees outside the opaque meshes.
 

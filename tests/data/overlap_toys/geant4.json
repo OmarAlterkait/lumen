@@ -1,0 +1,27 @@
+{
+ "_source": "g4ref-overlap-toys-041ce02c (Geant4 10.7.4, g4ref sha256 041ce02c..., pencil beam along +x from x = -800 mm, 2.95 eV)",
+ "coinT_AB": {
+  "fraction": 0.961656,
+  "fraction_error": 0.0001920253568256027,
+  "mean_time_error_ns": 0.00013614344800087416,
+  "mean_time_ns": 5.175574566823561,
+  "photons": 1000000,
+  "wavelength_nm": 420.2854183050847
+ },
+ "partT_BA": {
+  "fraction": 0.9211,
+  "fraction_error": 0.0019062369999556716,
+  "mean_time_error_ns": 0.0014161808186278976,
+  "mean_time_ns": 5.348324306675645,
+  "photons": 20000,
+  "wavelength_nm": 420.2854183050847
+ },
+ "vx3_ABC": {
+  "fraction": 0.800442,
+  "fraction_error": 0.0003996681181130164,
+  "mean_time_error_ns": 0.0005300590242450973,
+  "mean_time_ns": 5.721106298781406,
+  "photons": 1000000,
+  "wavelength_nm": 420.2854183050847
+ }
+}

@@ -165,6 +165,31 @@ def annie_qe(df, sensor_set, inputs) -> dict:
     }
 
 
+WCSIM_HC = 2.0 * np.pi * 197.3  # eV nm: WCSim's photon wavelength is 2 pi 197.3 / E, not hc / E
+WCSIM_QE_RANGE = (280.0, 660.0)  # nm: WCSimPMTQE.cc's GetPMTQE is 0 outside it
+
+
+def annie_wcsim_detection(det, energy_ev: float) -> np.ndarray:
+    """Return each sensor's probability that ANNIE's WCSim records a photon of this energy absorbed at its cathode.
+
+    Multi_Tank_Types for primary photons: min(QE_type(lambda) QEratio, maxQE_all QEratio), the stacking cut and the
+    sensitive detector's cut together (PMTwiseQE off, collection efficiency off), with lambda WCSim's own wavelength
+    of the photon and QE_type the tube type's 20-point table interpolated linearly. The charge check of ANNIE against
+    its WCSim applies it; the tube types and tables come from the detector file (``annie_qe``).
+    """
+    import json
+
+    data = json.loads((Path(det.path) / "data" / "annie_wcsim_qe.json").read_text())
+    lam = WCSIM_HC / energy_ev
+    types = det.sensors["tube_type"]
+    if not WCSIM_QE_RANGE[0] < lam < WCSIM_QE_RANGE[1]:
+        return np.zeros(len(types))
+    ratio, tabs = data["qe_ratio"], data["tables"]
+    max_all = max(t["max_qe"] for t in tabs.values())
+    qe = {ty: float(np.interp(lam, t["wavelength_nm"], t["qe"])) for ty, t in tabs.items()}
+    return np.array([min(qe[ty] * ratio, max_all * ratio) for ty in types])
+
+
 SK = recipe("sk")
 WCTE = recipe("wcte")
 ANNIE = recipe("annie", inputs=("wcsim_source", "wcsim_tuning"), sensor_columns=annie_columns, calibrations=annie_qe)

@@ -3,12 +3,20 @@
 The loop runs once to compile, then again with each kind of value changed: materials, surfaces, sensors, a
 calibration, source fields, controls, the grid's positions, the seed and the number of samples. No new XLA
 compilation and no new trace may happen. A loop that closes over a float array is refused.
+
+The physics tier (one GPU, ``backend="auto"``): on a CPU the loop's first compile alone takes minutes. The toy is the
+unit tier's (tests/unit/test_api.py: a tank and two tubes).
 """
+
+import sys
+from pathlib import Path
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "unit"))  # the unit tier's toy
 from test_api import RECIPE, _toy
 from test_importer import write
 
@@ -18,6 +26,7 @@ from lumen.geometry import _legacy_tracked as tracked
 from lumen.transport import item, state
 from lumen.transport import step as steps
 
+pytestmark = pytest.mark.skipif(jax.default_backend() != "gpu", reason="the physics tier runs on a GPU")
 N = 64
 EVENTS = ("/jax/core/compile/backend_compile_duration", "/jax/core/compile/jaxpr_trace_duration")
 
@@ -49,7 +58,7 @@ def test_no_value_recompiles(setup):
             model, det.pack(params), None, controls or steps.Controls(), {"lam_edges": jnp.asarray(edges, jnp.float32)}
         )
         key = jax.random.key_data(jax.random.PRNGKey(seed))
-        t = runner.run(spec, model, ops, rows() if r is None else r, key, max_vertices=500, backend="cpu",
+        t = runner.run(spec, model, ops, rows() if r is None else r, key, max_vertices=500, backend="auto",
                        n_active=n_active)  # fmt: skip
         return float(np.asarray(t.outputs["Q"]).sum())
 
@@ -80,4 +89,4 @@ def test_a_loop_closing_over_a_float_array_is_refused(setup):
     ops = steps.Operands(det.pack(), None, steps.Controls(), None, None, item.grid(tally))  # the model's own arrays
     with pytest.raises(runner.ClosedOverValues, match="closes over"):
         runner.run(spec, model, ops, rows(), jax.random.key_data(jax.random.PRNGKey(0)), max_vertices=50,
-                   backend="cpu")  # fmt: skip
+                   backend="auto")  # fmt: skip

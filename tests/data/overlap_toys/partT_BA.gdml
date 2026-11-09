@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gdml xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+ <define><matrix name="RIX1" coldim="2" values="1.5*eV 1.0 4.0*eV 1.0"/><matrix name="RIX15" coldim="2" values="1.5*eV 1.5 4.0*eV 1.5"/></define>
+ <materials>
+  <element name="H" formula="H" Z="1"><atom value="1.008"/></element>
+  <material name="Vac"><D value="1e-6" unit="g/cm3"/><fraction n="1" ref="H"/><property name="RINDEX" ref="RIX1"/></material>
+  <material name="Vac2"><D value="2e-6" unit="g/cm3"/><fraction n="1" ref="H"/><property name="RINDEX" ref="RIX1"/></material>
+  <material name="Gls"><D value="2.2" unit="g/cm3"/><fraction n="1" ref="H"/><property name="RINDEX" ref="RIX15"/></material>
+ </materials>
+ <solids>
+  <box name="sWorld" x="4000" y="4000" z="4000" lunit="mm"/>
+  <box name="sA" x="400" y="400" z="400" lunit="mm"/>
+  <box name="sB" x="400" y="400" z="400" lunit="mm"/>
+  <box name="sS" x="100" y="1000" z="1000" lunit="mm"/>
+ </solids>
+ <structure>
+  <volume name="volA"><materialref ref="Vac2"/><solidref ref="sA"/></volume>
+  <volume name="volB"><materialref ref="Gls"/><solidref ref="sB"/></volume>
+  <volume name="volS"><materialref ref="Vac"/><solidref ref="sS"/></volume>
+  <volume name="volWorld"><materialref ref="Vac"/><solidref ref="sWorld"/>
+   <physvol name="pB"><volumeref ref="volB"/><position name="pBp" x="100" y="0" z="0" unit="mm"/></physvol>
+   <physvol name="pA"><volumeref ref="volA"/></physvol>
+   <physvol name="pS"><volumeref ref="volS"/><position name="pSp" x="800" y="0" z="0" unit="mm"/></physvol>
+  </volume>
+ </structure>
+ <setup name="Default" version="1.0"><world ref="volWorld"/></setup>
+</gdml>

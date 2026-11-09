@@ -23,15 +23,17 @@ class NotRegistered(KeyError):  # noqa: N818 (the name of the documented error c
 
 @dataclass(frozen=True)
 class DetectorPackage:
-    """What a registered detector provides: its recipe and the dataset ids of its sources.
+    """What a registered detector provides: its recipe, the dataset ids of its sources, its validation references.
 
-    ``source_dataset`` is the GDML's path under ``LUMEN_DATA``; ``inputs`` the recipe's extra inputs, likewise.
+    ``source_dataset`` is the GDML's path under ``LUMEN_DATA``; ``inputs`` the recipe's extra inputs, likewise;
+    ``references`` the path of its reference manifest (``lumen.validate.references``; None: lumen's own lists it).
     """
 
     name: str
     recipe: object
     source_dataset: str
     inputs: dict = field(default_factory=dict)
+    references: str | None = None
 
 
 class Registry:

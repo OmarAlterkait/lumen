@@ -1,0 +1,789 @@
+{
+ "checks": {
+  "charge": [
+   {
+    "detector": "sk",
+    "dt": 1.0,
+    "name": "sk",
+    "nt": 700,
+    "reference": "wcsim-sk-e2dc7a48"
+   },
+   {
+    "detector": "wcte",
+    "dt": 0.25,
+    "name": "wcte",
+    "nt": 280,
+    "reference": "wcsim-wcte-e2dc7a48"
+   },
+   {
+    "detector": "wcte",
+    "dt": 0.25,
+    "name": "wcte_g4",
+    "nt": 280,
+    "reference": "g4ref-wcte-9fd555c0"
+   },
+   {
+    "detection": "lumen.detectors.wcsim:annie_wcsim_detection",
+    "detector": "annie",
+    "dt": 0.25,
+    "group_column": "tube_type",
+    "name": "annie",
+    "note": "ANNIE's WCSim (Geant4 10.1.3) loses 18.18 % of the light reflected off the inner-structure frame (a navigation difference from 10.7.4, measured with g4min); folded into the frame's reflectivity, and WCSim's quantum efficiency (Multi_Tank_Types) applied after tracking",
+    "nt": 320,
+    "reference": "wcsim-annie-e88314b",
+    "scale": {
+     "surfaces/SteelInnerStructureSurface0x2b24a20/REFLECTIVITY": 0.8182
+    }
+   },
+   {
+    "detector": "annie",
+    "dt": 0.25,
+    "group_column": "tube_type",
+    "name": "annie_g4",
+    "nt": 320,
+    "reference": "g4ref-annie-9fd555c0"
+   },
+   {
+    "detector": "sbnd",
+    "dt": 1.0,
+    "name": "sbnd",
+    "nt": 1000,
+    "photons_factor": 1.0,
+    "reference": "g4ref-sbnd-9fd555c0",
+    "split_ev": 6.19
+   },
+   {
+    "detector": "microboone",
+    "dt": 1.0,
+    "name": "microboone",
+    "nt": 1000,
+    "photons_factor": 1.0,
+    "reference": "g4ref-microboone-9fd555c0"
+   }
+  ],
+  "geometry": [
+   {
+    "detector": "sk",
+    "gdml": "sk.gdml",
+    "name": "sk",
+    "reference": "gdml"
+   },
+   {
+    "detector": "wcte",
+    "gdml": "wcte.gdml",
+    "name": "wcte",
+    "reference": "gdml"
+   },
+   {
+    "detector": "annie",
+    "gdml": "annie_v2.gdml",
+    "name": "annie",
+    "reference": "gdml"
+   },
+   {
+    "detector": "sbnd",
+    "gdml": "sbnd_v02_00_full_simulation.gdml",
+    "name": "sbnd",
+    "reference": "gdml"
+   },
+   {
+    "detector": "microboone",
+    "gdml": "microboone.gdml",
+    "name": "microboone",
+    "reference": "gdml"
+   }
+  ],
+  "gradients": [
+   {
+    "detector": "sk",
+    "name": "sk",
+    "reverse": true,
+    "sources": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      8.0,
+      3.0,
+      -5.0
+     ],
+     [
+      12.0,
+      0.0,
+      12.0
+     ]
+    ],
+    "wavelength": 400.0
+   },
+   {
+    "detector": "wcte",
+    "name": "wcte",
+    "sources": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.4,
+      0.2,
+      -0.3
+     ],
+     [
+      -0.5,
+      0.0,
+      0.4
+     ]
+    ],
+    "wavelength": 400.0
+   },
+   {
+    "detector": "annie",
+    "name": "annie",
+    "sources": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.4,
+      0.0,
+      0.3
+     ],
+     [
+      -0.3,
+      0.3,
+      -0.4
+     ]
+    ],
+    "volume": "WCBarrel",
+    "wavelength": 400.0
+   },
+   {
+    "detector": "sbnd",
+    "name": "sbnd",
+    "reverse": true,
+    "sources": [
+     [
+      1.0,
+      0.0,
+      2.5
+     ],
+     [
+      -1.0,
+      0.5,
+      1.5
+     ]
+    ],
+    "wavelength": 128.0
+   },
+   {
+    "detector": "microboone",
+    "name": "microboone",
+    "sources": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.5,
+      0.3,
+      2.0
+     ],
+     [
+      -0.5,
+      -0.3,
+      -3.0
+     ]
+    ],
+    "volume": "volTPCActive",
+    "wavelength": 128.0
+   }
+  ],
+  "overlaps": [
+   {
+    "direction": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "energy_ev": 2.95,
+    "isotropic": [
+     "cs_A",
+     "cs_AB",
+     "cs_B",
+     "cs_BA"
+    ],
+    "name": "coinc_sib",
+    "reference": "g4ref-overlap-toys-9fd555c0",
+    "sensor_lv": "volS",
+    "source_mm": [
+     -800.0,
+     0.0,
+     0.0
+    ],
+    "toys": [
+     "coinT_AB",
+     "coinT_BA",
+     "cs_A",
+     "cs_AB",
+     "cs_B",
+     "cs_BA",
+     "partT_AB",
+     "partT_BA",
+     "partTm_AB",
+     "partTm_BA",
+     "single_B",
+     "single_B3",
+     "vx3_ABC",
+     "vx3_ACB",
+     "vxc_AB",
+     "vxc_BA",
+     "xl_AS",
+     "xl_SA"
+    ],
+    "world": "volWorld"
+   }
+  ]
+ },
+ "products": {
+  "g4ref-annie-041ce02c": {
+   "chunks": 16,
+   "files": {
+    "annie_v2_g4clean.gdml": "sha256:4aba633fd61a55889f654ecf323cf28586034b5c11222f1940822b3d4838ad92",
+    "hits.npz": "sha256:113b9e2922b14a02801eaec529851fcec51ddceaaa535b6b29bbb8e487ea3b8d",
+    "launched.json": "sha256:69a83ac3ab8a58c62a7ae54277fd5bbe61088f723a154a5bcdac33c8ff3b3385",
+    "sensors.csv": "sha256:93c2ed5b5d3dff81e377f92cf61c4a814ea6cc228e5a5a7635442c43d3fd9fc8",
+    "sources.cfg": "sha256:59efabe7eb9a30d3f09f5c9dafe4b05dec7d1c3efe642f565cb0b5f8ae92f86b"
+   },
+   "hits": 1937791,
+   "id": "g4ref-annie-041ce02c",
+   "inputs": {
+    "annie_v2_g4clean.gdml": "annie_v2_g4clean.gdml"
+   },
+   "producer": {
+    "binary": "g4ref",
+    "binary_sha256": "041ce02c55fe9d88c66eba42e55def6ff23f8d66d6ec1b9e916c6fe9392d9a08",
+    "config": "annie_main.cfg",
+    "config_sha256": "59efabe7eb9a30d3f09f5c9dafe4b05dec7d1c3efe642f565cb0b5f8ae92f86b",
+    "flags": [
+     "--wcsim-hits"
+    ],
+    "gdml": "annie_v2_g4clean.gdml",
+    "gdml_sha256": "4aba633fd61a55889f654ecf323cf28586034b5c11222f1940822b3d4838ad92",
+    "geant4": "10.7.4",
+    "image": "develop.sif",
+    "nchunks": 16,
+    "pencil": null,
+    "physics": "G4OpticalPhysics, photons as primaries",
+    "seed": 20261106,
+    "sens_regex": "^InteriorWCPMT",
+    "source": "g4ref.cc",
+    "source_sha256": "24fca19d3967319fced52dcca7f974a55d8499007ac36fd429f18a20aa17a589",
+    "tool": "g4ref"
+   },
+   "reduced": "2026-11-09",
+   "sensors": 132,
+   "sources": 4
+  },
+  "g4ref-annie-9fd555c0": {
+   "chunks": 16,
+   "files": {
+    "annie_v2_g4clean.gdml": "sha256:4aba633fd61a55889f654ecf323cf28586034b5c11222f1940822b3d4838ad92",
+    "hits.npz": "sha256:113b9e2922b14a02801eaec529851fcec51ddceaaa535b6b29bbb8e487ea3b8d",
+    "launched.json": "sha256:69a83ac3ab8a58c62a7ae54277fd5bbe61088f723a154a5bcdac33c8ff3b3385",
+    "sensors.csv": "sha256:93c2ed5b5d3dff81e377f92cf61c4a814ea6cc228e5a5a7635442c43d3fd9fc8",
+    "sources.cfg": "sha256:59efabe7eb9a30d3f09f5c9dafe4b05dec7d1c3efe642f565cb0b5f8ae92f86b"
+   },
+   "hits": 1937791,
+   "id": "g4ref-annie-9fd555c0",
+   "inputs": {
+    "annie_v2_g4clean.gdml": "annie_v2_g4clean.gdml"
+   },
+   "producer": {
+    "binary": "g4ref",
+    "binary_sha256": "9fd555c0c4982458834db9800bfcd7e5c7a4815de5c1e4005f4910018a24fd84",
+    "config": "annie_main.cfg",
+    "config_sha256": "59efabe7eb9a30d3f09f5c9dafe4b05dec7d1c3efe642f565cb0b5f8ae92f86b",
+    "flags": [
+     "--wcsim-hits"
+    ],
+    "gdml": "annie_v2_g4clean.gdml",
+    "gdml_sha256": "4aba633fd61a55889f654ecf323cf28586034b5c11222f1940822b3d4838ad92",
+    "geant4": "10.7.4",
+    "image": "develop.sif",
+    "nchunks": 16,
+    "patch": "refs/g4ref/velocity_after_relocation.patch (the photon speed after a reflection at a relocation: the medium of the volume it continues in)",
+    "pencil": null,
+    "physics": "G4OpticalPhysics, photons as primaries",
+    "seed": 20261106,
+    "sens_regex": "^InteriorWCPMT",
+    "source": "g4ref.cc",
+    "source_sha256": "50ca6bdd08af3a082399778e86a1b260dae39a89a6d5131e7093f27b046528a1",
+    "tool": "g4ref"
+   },
+   "reduced": "2026-11-09",
+   "sensors": 132,
+   "sources": 4
+  },
+  "g4ref-microboone-041ce02c": {
+   "chunks": 100,
+   "files": {
+    "hits.npz": "sha256:023c6e963f642e20179fd14f2b3709c88f4dba95cad23b9ef6493df9fd99ebc7",
+    "launched.json": "sha256:4a26b76636dd608bd84b8fdf5622dcd16f1099960c372f312682f0a49d70ed63",
+    "microboone_optics.gdml": "sha256:2268bca0b7180cfbcddd15b8f70e7260281e68eff3723d83097583068fdd9065",
+    "sensors.csv": "sha256:937a4c8e057e434b15dbbcfb54e7ccc04a4398bbdc1aa7db37a8e7560fb09809",
+    "sources.cfg": "sha256:d2a905f068bd148106f1498ea7df0707ad9e0966cbe5ce09454ade0a008929fa"
+   },
+   "hits": 2436386,
+   "id": "g4ref-microboone-041ce02c",
+   "inputs": {
+    "microboone_optics.gdml": "microboone_optics.gdml"
+   },
+   "producer": {
+    "binary": "g4ref",
+    "binary_sha256": "041ce02c55fe9d88c66eba42e55def6ff23f8d66d6ec1b9e916c6fe9392d9a08",
+    "config": "microboone_sources_2e7.cfg",
+    "config_sha256": "d2a905f068bd148106f1498ea7df0707ad9e0966cbe5ce09454ade0a008929fa",
+    "flags": [],
+    "gdml": "microboone_optics.gdml",
+    "gdml_sha256": "2268bca0b7180cfbcddd15b8f70e7260281e68eff3723d83097583068fdd9065",
+    "geant4": "10.7.4",
+    "image": "develop.sif",
+    "nchunks": 100,
+    "pencil": null,
+    "physics": "G4OpticalPhysics, photons as primaries",
+    "seed": 20261101,
+    "sens_regex": "^volOpDetSensitive",
+    "source": "g4ref.cc",
+    "source_sha256": "24fca19d3967319fced52dcca7f974a55d8499007ac36fd429f18a20aa17a589",
+    "tool": "g4ref"
+   },
+   "reduced": "2026-11-09",
+   "sensors": 30,
+   "sources": 5
+  },
+  "g4ref-microboone-9fd555c0": {
+   "chunks": 100,
+   "files": {
+    "hits.npz": "sha256:023c6e963f642e20179fd14f2b3709c88f4dba95cad23b9ef6493df9fd99ebc7",
+    "launched.json": "sha256:4a26b76636dd608bd84b8fdf5622dcd16f1099960c372f312682f0a49d70ed63",
+    "microboone_optics.gdml": "sha256:2268bca0b7180cfbcddd15b8f70e7260281e68eff3723d83097583068fdd9065",
+    "sensors.csv": "sha256:937a4c8e057e434b15dbbcfb54e7ccc04a4398bbdc1aa7db37a8e7560fb09809",
+    "sources.cfg": "sha256:d2a905f068bd148106f1498ea7df0707ad9e0966cbe5ce09454ade0a008929fa"
+   },
+   "hits": 2436386,
+   "id": "g4ref-microboone-9fd555c0",
+   "inputs": {
+    "microboone_optics.gdml": "microboone_optics.gdml"
+   },
+   "producer": {
+    "binary": "g4ref",
+    "binary_sha256": "9fd555c0c4982458834db9800bfcd7e5c7a4815de5c1e4005f4910018a24fd84",
+    "config": "microboone_sources_2e7.cfg",
+    "config_sha256": "d2a905f068bd148106f1498ea7df0707ad9e0966cbe5ce09454ade0a008929fa",
+    "flags": [],
+    "gdml": "microboone_optics.gdml",
+    "gdml_sha256": "2268bca0b7180cfbcddd15b8f70e7260281e68eff3723d83097583068fdd9065",
+    "geant4": "10.7.4",
+    "image": "develop.sif",
+    "nchunks": 100,
+    "patch": "refs/g4ref/velocity_after_relocation.patch (the photon speed after a reflection at a relocation: the medium of the volume it continues in)",
+    "pencil": null,
+    "physics": "G4OpticalPhysics, photons as primaries",
+    "seed": 20261101,
+    "sens_regex": "^volOpDetSensitive",
+    "source": "g4ref.cc",
+    "source_sha256": "50ca6bdd08af3a082399778e86a1b260dae39a89a6d5131e7093f27b046528a1",
+    "tool": "g4ref"
+   },
+   "reduced": "2026-11-09",
+   "sensors": 30,
+   "sources": 5
+  },
+  "g4ref-overlap-toys-041ce02c": {
+   "files": {
+    "coinT_AB.gdml": "sha256:7c121a3764f6acbed57d1777ae804f93a3fe4fb6460864c0c97ed19c3bbe3a2c",
+    "coinT_AB.npz": "sha256:c3e544b7cbff1dc8ace656d1b2a7bb13a643c2a8c4757e4e1f93b388c2933c9c",
+    "coinT_BA.gdml": "sha256:d2d61e9a75bf7468bd53a42d5db16f07a0ffff2732ea90fdc1a7892a39d35b83",
+    "coinT_BA.npz": "sha256:906abb83ffbd49c073f66c86f0c00d497ed17c3362d9023dbb54f74dc4efc5ad",
+    "cs_A.gdml": "sha256:54678f547a8bab2bf4602262d3a77cc9e49eae8fc3e9768a0af8b9ec2a8067d1",
+    "cs_A.npz": "sha256:ef12454a807300631351ed161d4b870f59a4259e1637305f7c21320e9968d339",
+    "cs_AB.gdml": "sha256:161291cb2f7444db43380daeb6c133a3369e38a196214338338c17f60c109a7b",
+    "cs_AB.npz": "sha256:3cf1a75d2dbde8a1eea976f37aa549bff9095340995d71d557aef6a13338a607",
+    "cs_B.gdml": "sha256:aaf327aefa1c58c8ecfc0be8dbf9b708d0237b49baf1f49b36d514813fa96f78",
+    "cs_B.npz": "sha256:3cf1a75d2dbde8a1eea976f37aa549bff9095340995d71d557aef6a13338a607",
+    "cs_BA.gdml": "sha256:b119a51bfd5a2efa0e9cf7a035ee889826fa8e7ff2cc98d535052e8d1bc7c348",
+    "cs_BA.npz": "sha256:3cf1a75d2dbde8a1eea976f37aa549bff9095340995d71d557aef6a13338a607",
+    "launched.json": "sha256:de56a9d239a8a8d38a8b26b539da18ae0baff1c6744da2a79e418b8adf82584b",
+    "partT_AB.gdml": "sha256:ed54f710551dc12d1dced7fb19de60a0acd104f5532370a2e824e5a95f6f15e3",
+    "partT_AB.npz": "sha256:b8456821b67110cfa0e9ba8a368cb5fa136a62a1d527b62032ab37fe850d1d16",
+    "partT_BA.gdml": "sha256:066517b7395a21d278ba4ab126a35ada527938b91248836ca263fa9c4119e085",
+    "partT_BA.npz": "sha256:741105f34aa2cf90239acae382eeee793a6c4c73510ceee532dfc2cb69e5b700",
+    "partTm_AB.gdml": "sha256:2b395f7f84d3320dd5c2bf3f07d4504ca61b1ba81f47e59d26e82171234ae469",
+    "partTm_AB.npz": "sha256:43f3b1972b5e5df7f70fb2efcf18ec82451e1a4c5c634c8c5e3b260e1c6066ec",
+    "partTm_BA.gdml": "sha256:f81aa7fe3328a80cf24aa4f9f391590799c7c628a5d8580425771770ac289199",
+    "partTm_BA.npz": "sha256:8e3dc0c0aed3c658ba885de5393d3c69ea66543c159daf23d7dbdcf043f5bb2c",
+    "single_B.gdml": "sha256:f5e6b94a562be8c76ee6d500628179ddf00e06feb01e4942c290651cb2f08081",
+    "single_B.npz": "sha256:7f06dc4fd529b4bb3b9c2d77918a47b9323b419ff65b78283777c280fbafb068",
+    "single_B3.gdml": "sha256:4e814ea00dc845920364c63087c9189fa2812b85076ffadcfb8508ef019144c8",
+    "single_B3.npz": "sha256:8e33a61458ac62e9e4079f3371bbac082439bad21546c471faf695b1a0949220",
+    "vx3_ABC.gdml": "sha256:a13bc10f33fc9e9546499840d6f398c60a99ec2c4d3a77964b914e14b588858b",
+    "vx3_ABC.npz": "sha256:98ff680ab4c16b7d04b388144feb89a0cb1ff3fcdb5b172c4336d9ecdca08be9",
+    "vx3_ACB.gdml": "sha256:4a46f9742c9bb10531de68adfcc3b19c7c9c02355e93b63c2c790c4fb49a7127",
+    "vx3_ACB.npz": "sha256:786caed651080aa55bc5dbe1912e33619b969b2650f02c498a7e286c36822c9a",
+    "vxc_AB.gdml": "sha256:9d2337191a355330ad934232cdead5d04e62a32c73e06fd94dfcf06ddd4c1f66",
+    "vxc_AB.npz": "sha256:5e7375a325074a8be95befad867978c5db1205a5ca91607c3f9d9ad1643b5ed6",
+    "vxc_BA.gdml": "sha256:68cdd520f2ffd868e5b57a3c96143c549017a953119466954f5a152861e155b3",
+    "vxc_BA.npz": "sha256:17ccd32269df77c0dce052d1f26cc8e10da30089d8ed03fdbda9819266e0f3dc",
+    "xl_AS.gdml": "sha256:5101a67eb04c0ea53d5d84b2ceeec1733f64ba652515c64c33151b6ba5a15461",
+    "xl_AS.npz": "sha256:f56c2832c368428cd74235a596c684aeb487cdbed26941c8bea7b023ab774a08",
+    "xl_SA.gdml": "sha256:d31964b4ee4beffd9313949192a23775a6aed167184e0254446d966d923bac1c",
+    "xl_SA.npz": "sha256:e640faa68f0c0b4799749494c6122792eb089439acb5f85392bb799cc8b92669"
+   },
+   "id": "g4ref-overlap-toys-041ce02c",
+   "inputs": {},
+   "producer": {
+    "binary": "g4ref",
+    "binary_sha256": "041ce02c55fe9d88c66eba42e55def6ff23f8d66d6ec1b9e916c6fe9392d9a08",
+    "flags": [
+     "--no-rayleigh",
+     "--no-absorption",
+     "--no-wls",
+     "--no-mie"
+    ],
+    "geant4": "10.7.4",
+    "image": "develop.sif",
+    "seed": 1,
+    "sens_regex": "^volS",
+    "source_sha256": "24fca19d3967319fced52dcca7f974a55d8499007ac36fd429f18a20aa17a589",
+    "sources": "the cs_ toys: isotropic photons (coinc_sib/src.cfg); the others a pencil beam along +x (G4REF_PENCIL=1,0,0), from x = -800 mm, 2.95 eV, the photon count of each toy's config",
+    "tool": "g4ref"
+   },
+   "reduced": "2026-11-09",
+   "toys": 18
+  },
+  "g4ref-overlap-toys-9fd555c0": {
+   "files": {
+    "coinT_AB.gdml": "sha256:7c121a3764f6acbed57d1777ae804f93a3fe4fb6460864c0c97ed19c3bbe3a2c",
+    "coinT_AB.npz": "sha256:c3e544b7cbff1dc8ace656d1b2a7bb13a643c2a8c4757e4e1f93b388c2933c9c",
+    "coinT_BA.gdml": "sha256:d2d61e9a75bf7468bd53a42d5db16f07a0ffff2732ea90fdc1a7892a39d35b83",
+    "coinT_BA.npz": "sha256:906abb83ffbd49c073f66c86f0c00d497ed17c3362d9023dbb54f74dc4efc5ad",
+    "cs_A.gdml": "sha256:54678f547a8bab2bf4602262d3a77cc9e49eae8fc3e9768a0af8b9ec2a8067d1",
+    "cs_A.npz": "sha256:ef12454a807300631351ed161d4b870f59a4259e1637305f7c21320e9968d339",
+    "cs_AB.gdml": "sha256:161291cb2f7444db43380daeb6c133a3369e38a196214338338c17f60c109a7b",
+    "cs_AB.npz": "sha256:3cf1a75d2dbde8a1eea976f37aa549bff9095340995d71d557aef6a13338a607",
+    "cs_B.gdml": "sha256:aaf327aefa1c58c8ecfc0be8dbf9b708d0237b49baf1f49b36d514813fa96f78",
+    "cs_B.npz": "sha256:3cf1a75d2dbde8a1eea976f37aa549bff9095340995d71d557aef6a13338a607",
+    "cs_BA.gdml": "sha256:b119a51bfd5a2efa0e9cf7a035ee889826fa8e7ff2cc98d535052e8d1bc7c348",
+    "cs_BA.npz": "sha256:3cf1a75d2dbde8a1eea976f37aa549bff9095340995d71d557aef6a13338a607",
+    "launched.json": "sha256:de56a9d239a8a8d38a8b26b539da18ae0baff1c6744da2a79e418b8adf82584b",
+    "partT_AB.gdml": "sha256:ed54f710551dc12d1dced7fb19de60a0acd104f5532370a2e824e5a95f6f15e3",
+    "partT_AB.npz": "sha256:337ac3c04b4912672439931ebe5b108acce3abcc245d7f8fb010b70eca31f541",
+    "partT_BA.gdml": "sha256:066517b7395a21d278ba4ab126a35ada527938b91248836ca263fa9c4119e085",
+    "partT_BA.npz": "sha256:63c893255a3682a7073d26d39bb73f402fc56711ef1a370bfcfbc40463ee6444",
+    "partTm_AB.gdml": "sha256:2b395f7f84d3320dd5c2bf3f07d4504ca61b1ba81f47e59d26e82171234ae469",
+    "partTm_AB.npz": "sha256:56f300b874fad045fe943fb301c56ea3324f85cb0890184d19221f58ac1955b0",
+    "partTm_BA.gdml": "sha256:f81aa7fe3328a80cf24aa4f9f391590799c7c628a5d8580425771770ac289199",
+    "partTm_BA.npz": "sha256:73ef0f759f31affcd93e22ca2250b6777cc78a457b1ad0c28d2b4dfa6f262231",
+    "single_B.gdml": "sha256:f5e6b94a562be8c76ee6d500628179ddf00e06feb01e4942c290651cb2f08081",
+    "single_B.npz": "sha256:7f06dc4fd529b4bb3b9c2d77918a47b9323b419ff65b78283777c280fbafb068",
+    "single_B3.gdml": "sha256:4e814ea00dc845920364c63087c9189fa2812b85076ffadcfb8508ef019144c8",
+    "single_B3.npz": "sha256:8e33a61458ac62e9e4079f3371bbac082439bad21546c471faf695b1a0949220",
+    "vx3_ABC.gdml": "sha256:a13bc10f33fc9e9546499840d6f398c60a99ec2c4d3a77964b914e14b588858b",
+    "vx3_ABC.npz": "sha256:26670652ce1ee3ce192515c825e5dad594fe9f4a95bf9dd6fa0580ced34d1de9",
+    "vx3_ACB.gdml": "sha256:4a46f9742c9bb10531de68adfcc3b19c7c9c02355e93b63c2c790c4fb49a7127",
+    "vx3_ACB.npz": "sha256:9241b6eabc93e8f067d2a2fe61b3c4041e1c42f53ae54f0fa9714ed2ee068994",
+    "vxc_AB.gdml": "sha256:9d2337191a355330ad934232cdead5d04e62a32c73e06fd94dfcf06ddd4c1f66",
+    "vxc_AB.npz": "sha256:5e7375a325074a8be95befad867978c5db1205a5ca91607c3f9d9ad1643b5ed6",
+    "vxc_BA.gdml": "sha256:68cdd520f2ffd868e5b57a3c96143c549017a953119466954f5a152861e155b3",
+    "vxc_BA.npz": "sha256:17ccd32269df77c0dce052d1f26cc8e10da30089d8ed03fdbda9819266e0f3dc",
+    "xl_AS.gdml": "sha256:5101a67eb04c0ea53d5d84b2ceeec1733f64ba652515c64c33151b6ba5a15461",
+    "xl_AS.npz": "sha256:54ac18fa72246471806301c922580fe35676e67fcd0669d077e4e5cc32d56af1",
+    "xl_SA.gdml": "sha256:d31964b4ee4beffd9313949192a23775a6aed167184e0254446d966d923bac1c",
+    "xl_SA.npz": "sha256:0312ddddd2988ff186c0ca52ae6db570bd9ed6241b905a6ef7f7aa311b4c4560"
+   },
+   "id": "g4ref-overlap-toys-9fd555c0",
+   "inputs": {},
+   "producer": {
+    "binary": "g4ref",
+    "binary_sha256": "9fd555c0c4982458834db9800bfcd7e5c7a4815de5c1e4005f4910018a24fd84",
+    "flags": [
+     "--no-rayleigh",
+     "--no-absorption",
+     "--no-wls",
+     "--no-mie"
+    ],
+    "geant4": "10.7.4",
+    "image": "develop.sif",
+    "patch": "refs/g4ref/velocity_after_relocation.patch (the photon speed after a reflection at a relocation: the medium of the volume it continues in)",
+    "seed": 1,
+    "sens_regex": "^volS",
+    "source_sha256": "50ca6bdd08af3a082399778e86a1b260dae39a89a6d5131e7093f27b046528a1",
+    "sources": "the cs_ toys: isotropic photons (coinc_sib/src.cfg); the others a pencil beam along +x (G4REF_PENCIL=1,0,0), from x = -800 mm, 2.95 eV, the photon count of each toy's config",
+    "tool": "g4ref"
+   },
+   "reduced": "2026-11-09",
+   "toys": 18
+  },
+  "g4ref-sbnd-041ce02c": {
+   "chunks": 60,
+   "files": {
+    "hits.npz": "sha256:08faa55d1afea70debc2ebb9842615c8c2aab301aed5e13506e08ed1b8983240",
+    "launched.json": "sha256:aa1b59accdac9b6b35c61c83ec71ef1594f18f950aa65b1636049dee8439e426",
+    "sensors.csv": "sha256:d5d9abc7c03ee15dd8f033709ae1c28aabf6457bfe0153abce81e8fcdb33553e",
+    "sources.cfg": "sha256:573ef33fac8223ebc36dedfe9fc16cd0f1603d284351d635ee80d55dcd7e756f"
+   },
+   "hits": 3865571,
+   "id": "g4ref-sbnd-041ce02c",
+   "inputs": {},
+   "producer": {
+    "binary": "g4ref",
+    "binary_sha256": "041ce02c55fe9d88c66eba42e55def6ff23f8d66d6ec1b9e916c6fe9392d9a08",
+    "config": "sbnd_sources_1e7.cfg",
+    "config_sha256": "573ef33fac8223ebc36dedfe9fc16cd0f1603d284351d635ee80d55dcd7e756f",
+    "flags": [],
+    "gdml": "sbnd_v02_00_full_simulation.gdml",
+    "gdml_sha256": "c60ee8dc491b3c9bda78ee193cece862ce80602a06434c29ae4a1646c476bf34",
+    "geant4": "10.7.4",
+    "image": "develop.sif",
+    "nchunks": 60,
+    "pencil": null,
+    "physics": "G4OpticalPhysics, photons as primaries",
+    "seed": 20261029,
+    "sens_regex": "^volOpDetSensitive",
+    "source": "g4ref.cc",
+    "source_sha256": "24fca19d3967319fced52dcca7f974a55d8499007ac36fd429f18a20aa17a589",
+    "tool": "g4ref"
+   },
+   "reduced": "2026-11-09",
+   "sensors": 312,
+   "sources": 6
+  },
+  "g4ref-sbnd-9fd555c0": {
+   "chunks": 60,
+   "files": {
+    "hits.npz": "sha256:08faa55d1afea70debc2ebb9842615c8c2aab301aed5e13506e08ed1b8983240",
+    "launched.json": "sha256:aa1b59accdac9b6b35c61c83ec71ef1594f18f950aa65b1636049dee8439e426",
+    "sensors.csv": "sha256:d5d9abc7c03ee15dd8f033709ae1c28aabf6457bfe0153abce81e8fcdb33553e",
+    "sources.cfg": "sha256:573ef33fac8223ebc36dedfe9fc16cd0f1603d284351d635ee80d55dcd7e756f"
+   },
+   "hits": 3865571,
+   "id": "g4ref-sbnd-9fd555c0",
+   "inputs": {},
+   "producer": {
+    "binary": "g4ref",
+    "binary_sha256": "9fd555c0c4982458834db9800bfcd7e5c7a4815de5c1e4005f4910018a24fd84",
+    "config": "sbnd_sources_1e7.cfg",
+    "config_sha256": "573ef33fac8223ebc36dedfe9fc16cd0f1603d284351d635ee80d55dcd7e756f",
+    "flags": [],
+    "gdml": "sbnd_v02_00_full_simulation.gdml",
+    "gdml_sha256": "c60ee8dc491b3c9bda78ee193cece862ce80602a06434c29ae4a1646c476bf34",
+    "geant4": "10.7.4",
+    "image": "develop.sif",
+    "nchunks": 60,
+    "patch": "refs/g4ref/velocity_after_relocation.patch (the photon speed after a reflection at a relocation: the medium of the volume it continues in)",
+    "pencil": null,
+    "physics": "G4OpticalPhysics, photons as primaries",
+    "seed": 20261029,
+    "sens_regex": "^volOpDetSensitive",
+    "source": "g4ref.cc",
+    "source_sha256": "50ca6bdd08af3a082399778e86a1b260dae39a89a6d5131e7093f27b046528a1",
+    "tool": "g4ref"
+   },
+   "reduced": "2026-11-09",
+   "sensors": 312,
+   "sources": 6
+  },
+  "g4ref-wcte-041ce02c": {
+   "chunks": 100,
+   "files": {
+    "hits.npz": "sha256:8b3ded6036750d50d38ad2cccdd7194da9d32c19596bb1defd6bc22cf8122a10",
+    "launched.json": "sha256:07f70b96e4ac5258b835e06d0a4203b64c077436e7a6434d3053705f02af959c",
+    "sensors.csv": "sha256:537f41234814d6d999e5ab53124d034ca77b454a609df8ff64ac3f698db3a1ef",
+    "sources.cfg": "sha256:3248fbe3891d105dc9770a8e2c12d3a49c4b7fdefbef4356091f3420d8c601b7",
+    "wcte_probe.gdml": "sha256:3fb956572fa9e7a939b4c9d69bfcb910ecf05c1cb7c047282025611844b1adba"
+   },
+   "hits": 2527819,
+   "id": "g4ref-wcte-041ce02c",
+   "inputs": {
+    "wcte_probe.gdml": "wcte_probe.gdml"
+   },
+   "producer": {
+    "binary": "g4ref",
+    "binary_sha256": "041ce02c55fe9d88c66eba42e55def6ff23f8d66d6ec1b9e916c6fe9392d9a08",
+    "config": "wcte_main.cfg",
+    "config_sha256": "3248fbe3891d105dc9770a8e2c12d3a49c4b7fdefbef4356091f3420d8c601b7",
+    "flags": [
+     "--wcsim-hits"
+    ],
+    "gdml": "wcte_probe.gdml",
+    "gdml_sha256": "3fb956572fa9e7a939b4c9d69bfcb910ecf05c1cb7c047282025611844b1adba",
+    "geant4": "10.7.4",
+    "image": "develop.sif",
+    "nchunks": 100,
+    "pencil": null,
+    "physics": "G4OpticalPhysics, photons as primaries",
+    "seed": 20261102,
+    "sens_regex": "^InteriorWCPMT",
+    "source": "g4ref.cc",
+    "source_sha256": "24fca19d3967319fced52dcca7f974a55d8499007ac36fd429f18a20aa17a589",
+    "tool": "g4ref"
+   },
+   "reduced": "2026-11-09",
+   "sensors": 1995,
+   "sources": 7
+  },
+  "g4ref-wcte-9fd555c0": {
+   "chunks": 100,
+   "files": {
+    "hits.npz": "sha256:8b3ded6036750d50d38ad2cccdd7194da9d32c19596bb1defd6bc22cf8122a10",
+    "launched.json": "sha256:07f70b96e4ac5258b835e06d0a4203b64c077436e7a6434d3053705f02af959c",
+    "sensors.csv": "sha256:537f41234814d6d999e5ab53124d034ca77b454a609df8ff64ac3f698db3a1ef",
+    "sources.cfg": "sha256:3248fbe3891d105dc9770a8e2c12d3a49c4b7fdefbef4356091f3420d8c601b7",
+    "wcte_probe.gdml": "sha256:3fb956572fa9e7a939b4c9d69bfcb910ecf05c1cb7c047282025611844b1adba"
+   },
+   "hits": 2527819,
+   "id": "g4ref-wcte-9fd555c0",
+   "inputs": {
+    "wcte_probe.gdml": "wcte_probe.gdml"
+   },
+   "producer": {
+    "binary": "g4ref",
+    "binary_sha256": "9fd555c0c4982458834db9800bfcd7e5c7a4815de5c1e4005f4910018a24fd84",
+    "config": "wcte_main.cfg",
+    "config_sha256": "3248fbe3891d105dc9770a8e2c12d3a49c4b7fdefbef4356091f3420d8c601b7",
+    "flags": [
+     "--wcsim-hits"
+    ],
+    "gdml": "wcte_probe.gdml",
+    "gdml_sha256": "3fb956572fa9e7a939b4c9d69bfcb910ecf05c1cb7c047282025611844b1adba",
+    "geant4": "10.7.4",
+    "image": "develop.sif",
+    "nchunks": 100,
+    "patch": "refs/g4ref/velocity_after_relocation.patch (the photon speed after a reflection at a relocation: the medium of the volume it continues in)",
+    "pencil": null,
+    "physics": "G4OpticalPhysics, photons as primaries",
+    "seed": 20261102,
+    "sens_regex": "^InteriorWCPMT",
+    "source": "g4ref.cc",
+    "source_sha256": "50ca6bdd08af3a082399778e86a1b260dae39a89a6d5131e7093f27b046528a1",
+    "tool": "g4ref"
+   },
+   "reduced": "2026-11-09",
+   "sensors": 1995,
+   "sources": 7
+  },
+  "gdml": {
+   "files": {
+    "annie_v2.gdml": "sha256:d7c5eb142b1b7a61e6397ed4b96a581da4bae997f77c205d3f118ace0cb3b138",
+    "microboone.gdml": "sha256:f18c8e60aefb445b335598727ebd879b9c740cc608a3c85736eae3c4f849e970",
+    "sbnd_pds_mapping.json": "sha256:e95c4ed3dd56e5b2f271a07e3f631bd51c27960ca04022788b51def881108d7a",
+    "sbnd_v02_00_full_simulation.gdml": "sha256:c60ee8dc491b3c9bda78ee193cece862ce80602a06434c29ae4a1646c476bf34",
+    "sk.gdml": "sha256:1f58c50127110e168e6546d2bfbf993104b3dd9f09a9d0e1b335bbc048d7e169",
+    "wcte.gdml": "sha256:ce6123ed68da113896981e55d6c864c330aaf98f8aee71a212c3d9fe595fc3da"
+   },
+   "id": "gdml",
+   "producer": {
+    "tool": "the GDMLs the public detector files were converted from (WCSim's exports, sbndcode, ubcode)"
+   }
+  },
+  "wcsim-annie-e88314b": {
+   "chunks": 8,
+   "files": {
+    "annie_v2.gdml": "sha256:d7c5eb142b1b7a61e6397ed4b96a581da4bae997f77c205d3f118ace0cb3b138",
+    "hits.npz": "sha256:9ee2b2d44792c541eadd83920f81a1cd822db824d56fa2d06626aa534bd97de1",
+    "launched.json": "sha256:69a83ac3ab8a58c62a7ae54277fd5bbe61088f723a154a5bcdac33c8ff3b3385",
+    "sensors.csv": "sha256:7a9ccaf1ecbb2abf438223eb2a141d13aed52be5108e6e8554712b9536908e98",
+    "sources.cfg": "sha256:59efabe7eb9a30d3f09f5c9dafe4b05dec7d1c3efe642f565cb0b5f8ae92f86b",
+    "tuning_parameters.mac": "sha256:434ce219f2d3de9a6850a2b21c443511feaf8b0ec9b42697af244921155555d3"
+   },
+   "hits": 530649,
+   "id": "wcsim-annie-e88314b",
+   "inputs": {
+    "annie_v2.gdml": "annie_v2.gdml",
+    "tuning_parameters.mac": "tuning_parameters.mac"
+   },
+   "producer": {
+    "commit": "e88314b31266255ed02a95ce87677f92d4c2db22",
+    "geant4": "10.1.3",
+    "harness": "refs/wcsim/run.sh hits (lumen-b1)",
+    "hit": "a photon absorbed at WCSim's photocathode boundary (glass to InteriorWCPMT), true hits of trigger 0",
+    "image": "anniesoft_wcsim_latest.sif",
+    "image_sha256": "e9aa1b236d096ce0796724a40bddfc82e5a2f17cb88682c1922bd055e5bfe56a",
+    "macro": "refs/wcsim/macros/annie.mac (lumen-b1)",
+    "repository": "ANNIEsoft/WCSim",
+    "response": "QE kept (Multi_Tank_Types: no DoNotApplyQE in ANNIE's WCSim), collection efficiency off",
+    "tool": "WCSim"
+   },
+   "reduced": "2026-11-09",
+   "sensors": 132,
+   "sources": 4
+  },
+  "wcsim-sk-e2dc7a48": {
+   "chunks": 100,
+   "files": {
+    "hits.npz": "sha256:7eb46c8e1f8fcf81b43a34dcdddb80b92fb78b6129c2adf2e508952bb262d664",
+    "launched.json": "sha256:f91b321be4fcd7135c1a07ca5997f3f1ae8cd3645f0c339a41f21b2028d39587",
+    "sensors.csv": "sha256:a811771825c36e504c061cc3d39d483ac763359095db526c2d740a1c433391ea",
+    "sk.gdml": "sha256:1f58c50127110e168e6546d2bfbf993104b3dd9f09a9d0e1b335bbc048d7e169",
+    "sources.cfg": "sha256:4222914727081691880b8df8dcf3648e2226c35050315b6a91a2a74d010039df"
+   },
+   "hits": 3226716,
+   "id": "wcsim-sk-e2dc7a48",
+   "inputs": {
+    "sk.gdml": "sk.gdml"
+   },
+   "producer": {
+    "commit": "e2dc7a48b1f83c74a541123542606a90d7b67a6f",
+    "geant4": "10.3.3",
+    "harness": "refs/wcsim/run.sh hits (lumen-b1)",
+    "hit": "a photon absorbed at WCSim's photocathode boundary (glass to InteriorWCPMT), true hits of trigger 0",
+    "image": "hk-software_main.sif",
+    "image_sha256": "53e28b7df7c1681eae8f8247c450874b3628e929716c8414846ccd7b082ae46f",
+    "macro": "refs/wcsim/macros/sk.mac (lumen-b1)",
+    "repository": "WCSim/WCSim",
+    "response": "DoNotApplyQE, collection efficiency off, no dark noise",
+    "tool": "WCSim"
+   },
+   "reduced": "2026-11-09",
+   "sensors": 11096,
+   "sources": 5
+  },
+  "wcsim-wcte-e2dc7a48": {
+   "chunks": 100,
+   "files": {
+    "hits.npz": "sha256:659f8055c6c0619e28ac7880a5ed827867aef2478d301604bd66458f8025748d",
+    "launched.json": "sha256:07f70b96e4ac5258b835e06d0a4203b64c077436e7a6434d3053705f02af959c",
+    "sensors.csv": "sha256:90960adb32429767e46523309d64ab79252f6672d83901a072cec8dab3cb2d77",
+    "sources.cfg": "sha256:3248fbe3891d105dc9770a8e2c12d3a49c4b7fdefbef4356091f3420d8c601b7",
+    "wcte.gdml": "sha256:ce6123ed68da113896981e55d6c864c330aaf98f8aee71a212c3d9fe595fc3da"
+   },
+   "hits": 2529262,
+   "id": "wcsim-wcte-e2dc7a48",
+   "inputs": {
+    "wcte.gdml": "wcte.gdml"
+   },
+   "producer": {
+    "commit": "e2dc7a48b1f83c74a541123542606a90d7b67a6f",
+    "geant4": "10.3.3",
+    "harness": "refs/wcsim/run.sh hits (lumen-b1)",
+    "hit": "a photon absorbed at WCSim's photocathode boundary (glass to InteriorWCPMT), true hits of trigger 0",
+    "image": "hk-software_main.sif",
+    "image_sha256": "53e28b7df7c1681eae8f8247c450874b3628e929716c8414846ccd7b082ae46f",
+    "macro": "refs/wcsim/macros/wcte.mac (lumen-b1)",
+    "repository": "WCSim/WCSim",
+    "response": "DoNotApplyQE, collection efficiency off, no dark noise",
+    "tool": "WCSim"
+   },
+   "reduced": "2026-11-09",
+   "sensors": 1995,
+   "sources": 7
+  }
+ },
+ "schema": "lumen-references/1"
+}

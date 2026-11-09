@@ -1,0 +1,19 @@
+--- a/g4ref.cc	2026-11-02 22:28:09.484914271 -0800
++++ b/g4ref.cc	2026-11-09 06:01:41.823201661 -0800
+@@ -860,8 +860,14 @@
+       if (st == FresnelRefraction || st == Transmission || st == SameMaterial || st == StepTooSmall)
+         cont = post->GetMaterial();
+       else if ((st >= FresnelReflection && st <= BackScattering) ||
+-               (st >= PolishedLumirrorAirReflection && st != Dichroic))
+-        cont = pre->GetMaterial();
++               (st >= PolishedLumirrorAirReflection && st != Dichroic)) {
++        // A reflection where Geant4 relocated the photon into a volume that holds the point inside it (an
++        // overlapping sibling, at the exit of the one it was in): no zero-length step takes it back, it continues
++        // in that volume, so in its medium. A point on the post-step volume's own surface: the usual return.
++        const G4VTouchable* th = post->GetTouchable();
++        G4ThreeVector local = th->GetHistory()->GetTopTransform().TransformPoint(post->GetPosition());
++        cont = th->GetSolid()->Inside(local) == kInside ? post->GetMaterial() : pre->GetMaterial();
++      }
+     }
+     if (cont) {
+       auto mpt = cont->GetMaterialPropertiesTable();

@@ -141,3 +141,21 @@ def test_the_runner_passes_tallymap_its_schedule(monkeypatch):
     with pytest.raises(RuntimeError, match="stop"):
         run.run(spec, None, None, _row(2), jnp.zeros(2, jnp.uint32), backend="cpu")
     assert seen["_schedule"] == run.SCHEDULE == "step" and seen["backend"] == run.TALLYMAP_BACKEND["cpu"]
+
+
+def test_auto_is_the_cpu_backend_without_a_gpu(monkeypatch):
+    """backend="auto": tallymap's CPU backend (inexact float sums) when JAX has no GPU, CUDA when it has one."""
+    from lumen import run
+
+    seen = {}
+
+    def vmap(fn, **kw):
+        seen.update(kw)
+        raise RuntimeError("stop")
+
+    monkeypatch.setattr(run.tm, "vmap", vmap)
+    monkeypatch.setattr(run.jax, "default_backend", lambda: "cpu")
+    spec = item.photons(item.TallyShape(1, (300.0, 500.0)))
+    with pytest.raises(RuntimeError, match="stop"):
+        run.run(spec, None, None, _row(2), jnp.zeros(2, jnp.uint32), backend="auto")
+    assert seen["backend"] == run.TALLYMAP_BACKEND["cpu"]

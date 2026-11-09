@@ -19,6 +19,9 @@ dependencies = [
     "tallymap>=0.5,<0.6",
 ]
 
+[project.scripts]
+lumen = "lumen.cli:main"
+
 [project.optional-dependencies]
 test = ["pytest>=8"]
 dev = ["pytest>=8", "ruff>=0.8,<0.9", "mypy>=1.13,<2", "pre-commit>=4,<5"]
