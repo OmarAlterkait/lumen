@@ -4,8 +4,9 @@
 
 Pure: returns a new detector file. The keys are those of ``lumen.Params``: ``materials/<M>/<KEY>`` and
 ``surfaces/<S>/<KEY>`` replace a property (a ``Table`` replaces a table, its knot count free; a number replaces a
-constant), ``surfaces/<S>/value`` the opticalsurface's value (sigma_alpha or polish). ``sensors/...`` keys are
-values after tracking: they do not change the detector file and are returned by ``sensor_values``.
+constant), ``surfaces/<S>/value`` the opticalsurface's value (sigma_alpha or polish); a replaced property loses
+its source tokens (``lumen.gdml.tokens``), so an export writes it canonically. ``sensors/...`` keys are values after
+tracking: they do not change the detector file and are returned by ``sensor_values``.
 
 Fails closed (ValueError): an unknown material, surface or property, a table given for a constant or a number for a
 table (a change of structure is a new detector file), and any other kind of key.
@@ -61,11 +62,16 @@ def _one(key: str, v, mats: dict, surfs: dict) -> None:
 def apply(df: schema.DetectorFile, calibrations) -> schema.DetectorFile:
     """Return the detector file with every material and surface value of the calibrations (oldest first) applied."""
     mats, surfs = dict(df.materials), dict(df.surfaces)
+    toks = {k: dict(v) for k, v in df.tokens.items()}
     for c in calibrations:
         for key in sorted(c.values):
             if not key.startswith(SENSOR_PREFIX):
                 _one(key, c.values[key], mats, surfs)
-    return dataclasses.replace(df, materials=mats, surfaces=surfs)
+                kind, name, prop = key.split("/")
+                if prop in toks.get(kind, {}).get(name, {}):  # a replaced table is written canonically
+                    toks[kind][name] = {k: v for k, v in toks[kind][name].items() if k != prop}
+    toks = {k: {n: v for n, v in d.items() if v} for k, d in toks.items()}
+    return dataclasses.replace(df, materials=mats, surfaces=surfs, tokens={k: d for k, d in toks.items() if d})
 
 
 def sensor_values(calibrations) -> dict:

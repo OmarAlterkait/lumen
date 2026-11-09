@@ -236,6 +236,8 @@ def to_files(df: schema.DetectorFile) -> dict[str, bytes]:
         ),
         "userinfo.json": dict(userinfo=[_aux(a) for a in df.userinfo]),
     }
+    if df.tokens:  # optional (schema 1.1): written only when the GDML has tokens to keep
+        docs["tokens.json"] = dict(df.tokens)
     files = dict(w.files)
     files.update({k: dumps(v).encode() for k, v in docs.items()})
     manifest = {k: sha256_bytes(files[k]) for k in sorted(files)}
@@ -320,7 +322,7 @@ def read(path) -> schema.DetectorFile:
     head = json.loads((root / "detector.json").read_text())
     found = head.get("schema", "")
     major = found.rsplit("/", 1)[-1].split(".")[0] if "/" in found else ""
-    if not found.startswith("lumen-detector/") or major != schema.SCHEMA.rsplit("/", 1)[-1]:
+    if not found.startswith("lumen-detector/") or major != schema.SCHEMA.rsplit("/", 1)[-1].split(".")[0]:
         raise FormatError(
             f"{root} is schema {found!r}; this lumen reads {schema.SCHEMA}. Upgrade lumen, or open it "
             "with the version that wrote it."
@@ -334,6 +336,7 @@ def read(path) -> schema.DetectorFile:
         return json.loads(data)
 
     d = {name: doc(name) for name in CONTENT}
+    tokens = doc("tokens.json") if "tokens.json" in man else {}
     materials = {}
     for n, m in d["materials.json"]["materials"].items():
         c = m["composition"]
@@ -433,6 +436,7 @@ def read(path) -> schema.DetectorFile:
         provenance=head["provenance"],
         report=tuple(head["report"]),
         schema=found,
+        tokens=tokens,
     )
 
 

@@ -1,4 +1,7 @@
-"""The Geant4 traps of gdml_export.md section 5: one assertion each, on the written GDML, and the refusals."""
+"""The Geant4 traps of gdml_export.md section 5: one assertion each, on the written GDML, and the refusals.
+
+The traps are checked on the canonical writer (the toys' source tokens dropped); test_gdml_export checks the tokens.
+"""
 
 import dataclasses
 import xml.etree.ElementTree as ET
@@ -18,7 +21,7 @@ def written(tmp_path):
     out = {}
     for name, text in {**TOYS, "importer": GDML}.items():
         (tmp_path / f"{name}.gdml").write_text(text)
-        df = importer.read_gdml(tmp_path / f"{name}.gdml")
+        df = dataclasses.replace(importer.read_gdml(tmp_path / f"{name}.gdml"), tokens={})
         exporter.export(df, tmp_path / f"x_{name}.gdml", scope="full")
         t = (tmp_path / f"x_{name}.gdml").read_text()
         out[name] = (df, ET.fromstring(t), t)
@@ -178,7 +181,7 @@ def test_non_finite_and_denormal_values_are_refused(tmp_path, value):
 
 def test_a_lossy_surface_raises_or_is_omitted(tmp_path):
     df = _df(tmp_path)
-    s = dataclasses.replace(df.surfaces["Liner"], optics=schema.OpticsModel("lumen:larsoft_reflector"))
+    s = dataclasses.replace(df.surfaces["Liner"], optics=schema.OpticsModel("acme:brdf"))
     df = dataclasses.replace(df, surfaces={**df.surfaces, "Liner": s})
     _refused(tmp_path, df, "no Geant4 form", on_lossy="error")
     rep = exporter.export(df, tmp_path / "o.gdml", scope="full", on_lossy="omit")

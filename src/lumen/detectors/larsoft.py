@@ -18,7 +18,8 @@ optical simulation gives Geant4. The recipe's decisions, each checked against th
 MicroBooNE (microboone.gdml): only LAr carries optical properties in LArSoft's MicroBooNE simulation (LArSoft's
 tables, ``lumen.detectors.larsoft_optics``); every other material kills a photon at its boundary, except the
 stainless steel, which carries LArSoft's reflector table. Photons are counted on entering the volOpDetSensitive
-discs.
+discs. The tables keep their source tokens (the numbers in eV and cm, as LArSoft hands them to Geant4), so a GDML
+export makes Geant4 read the doubles LArSoft's Geant4 reads.
 """
 
 from __future__ import annotations
@@ -196,8 +197,13 @@ def microboone_optics(df: schema.DetectorFile, inputs: dict) -> schema.DetectorF
                   for lv, v in df.volumes.items() if v.material == STEEL)  # fmt: skip
     rep = list(df.report) + ["recipe: LAr from LArSoft's tables; the steel carries LArSoft's reflector; every other "
                              "material is opaque"]  # fmt: skip
+    toks = {
+        **df.tokens,
+        "materials": {**df.tokens.get("materials", {}), LAR: larsoft_optics.lar_tokens()},
+        "surfaces": {**df.tokens.get("surfaces", {}), STEEL_SURFACE: larsoft_optics.reflector_tokens(STEEL)},
+    }
     return dataclasses.replace(df, materials=mats, surfaces={**df.surfaces, STEEL_SURFACE: steel}, skins=skins,
-                               report=tuple(rep))  # fmt: skip
+                               report=tuple(rep), tokens=toks)  # fmt: skip
 
 
 MICROBOONE = Recipe(

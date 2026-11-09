@@ -58,7 +58,7 @@ import numpy as np
 from lumen.format import io, schema, sensorsets
 from lumen.format import overlay as _overlay
 from lumen.format.sensorsets import SensorSet
-from lumen.gdml import importer, reader
+from lumen.gdml import geant4_forms, importer, reader, tokens
 from lumen.gdml import solids_schema as ss
 from lumen.gdml.units import shift
 
@@ -199,6 +199,16 @@ def _el(tag: str, pairs=(), inner: str = "") -> str:
     return f"{head}>{inner}</{tag}>" if inner else f"{head}/>"
 
 
+def _pos(tag: str, v, tok=None, checked: bool = False) -> str:
+    """Return a position element: its source token while every value decodes from it, else canonical in mm.
+
+    ``tok`` is [unit, texts]; ``checked``: a tet's points, already checked against its vertices over its lunit.
+    """
+    if tok and (checked or all(tokens.same(tokens.length(t, tok[0]), x) for t, x in zip(tok[1], v, strict=True))):
+        return _el(tag, [("unit", tok[0]), *zip("xyz", tok[1], strict=True)])
+    return _vec(tag, v, "mm", _mm)
+
+
 def _vec(tag: str, v, unit: str | None, fmt) -> str:
     pairs = ([("unit", unit)] if unit else []) + [(c, fmt(x)) for c, x in zip("xyz", v, strict=True)]
     return _el(tag, pairs)
@@ -258,7 +268,8 @@ class _Selection:
     surfaces: list = field(default_factory=list)  # written, sorted by name
     skins: list = field(default_factory=list)  # indices into df.skins written
     borders: list = field(default_factory=list)  # indices into df.borders written
-    sidecar_surfaces: dict = field(default_factory=dict)  # name -> "lowered" | "omitted"
+    sidecar_surfaces: dict = field(default_factory=dict)  # name -> "lowered" | "omitted" | "geant4_form"
+    originals: dict = field(default_factory=dict)  # surfaces written as their Geant4 form: name -> the record
     sidecar_props: dict = field(default_factory=dict)  # material -> keys kept in the sidecar only
     warnings: list = field(default_factory=list)
     annotations: list = field(default_factory=list)
@@ -268,7 +279,7 @@ class _Selection:
 def _select_surfaces(df: schema.DetectorFile, on_lossy: str, sel: _Selection) -> None:
     for name in sorted(df.surfaces):
         model = df.surfaces[name].optics.name
-        if model in NATIVE_MODELS:
+        if model in NATIVE_MODELS:  # a Geant4 form (``_forms``) is one
             sel.surfaces.append(name)
         elif model in LOWERED_MODELS:
             sel.sidecar_surfaces[name] = "lowered"
@@ -376,12 +387,33 @@ def _check_structure(df: schema.DetectorFile, sel: _Selection) -> None:
 
 
 # ----------------------------------------------------------------------------------------------------- matrices
-def _table_text(key: str, p: schema.Property) -> tuple[int, str]:
-    vf = _mm if key in importer.LENGTH_KEYS else _bare
+def _column(values: list, toks, decode, canonical) -> list:
+    """Return a matrix column's texts: a source token where its value is unchanged, else the canonical literal.
+
+    Unchanged: the token decodes (as the importer reads it) to the stored value, bit for bit.
+    """
+    toks = toks if toks is not None and len(toks) == len(values) else [None] * len(values)
+    return [
+        t if t is not None and tokens.same(decode(t), v) else canonical(v) for t, v in zip(toks, values, strict=True)
+    ]
+
+
+def _table_text(key: str, p: schema.Property, tok: dict | None = None) -> tuple[int, str, str | None]:
+    """Return a property's (coldim, values, matrix unit): energies in MeV, lengths in mm, source tokens where unchanged.
+
+    The source matrix's ``unit`` attribute travels with the tokens: Geant4 does not read it
+    (G4GDMLReadDefine::MatrixRead), and it is written back only beside them, so the file reads back as it was.
+    """
+    tok = tok or {}
+    length = key in importer.LENGTH_KEYS
+    vf = _mm if length else _bare
+    vals = np.asarray(p.value, np.float64).reshape(-1).tolist()
+    vt = _column(vals, tok.get("value"), tokens.length_value, vf) if length else [vf(x) for x in vals]
+    unit = tok.get("matrix_unit")
     if p.energy is None:
-        return 1, vf(np.asarray(p.value).reshape(()))
-    e, v = np.asarray(p.energy, np.float64).tolist(), np.asarray(p.value, np.float64).tolist()
-    return 2, " ".join(f"{_mev(a)} {vf(b)}" for a, b in zip(e, v, strict=True))
+        return 1, vt[0], unit
+    et = _column(np.asarray(p.energy, np.float64).tolist(), tok.get("energy"), tokens.energy, _mev)
+    return 2, " ".join(f"{a} {b}" for a, b in zip(et, vt, strict=True)), unit
 
 
 def _sha10(coldim: int, text: str) -> str:
@@ -395,30 +427,33 @@ def _matrices(df: schema.DetectorFile, sel: _Selection) -> tuple[dict, dict, lis
     A property keeps its stored matrix name when every property stored under that name has the same table; any other
     gets ``<KEY>_<sha10>`` of its content (deterministic), and its stored name goes to the sidecar.
     """
-    users = []  # (kind, owner, key, stored name, coldim, text)
+    users = []  # (kind, owner, key, stored name, coldim, text, matrix unit)
     for name in sorted(df.materials):
         m = df.materials[name]
         for key in sorted(m.properties):
             if key not in sel.sidecar_props.get(name, ()):
-                users.append(("materials", name, key, m.properties[key].matrix, *_table_text(key, m.properties[key])))
+                tok = df.tokens.get("materials", {}).get(name, {}).get(key)
+                users.append(("materials", name, key, m.properties[key].matrix,
+                              *_table_text(key, m.properties[key], tok)))  # fmt: skip
         for key in sorted(m.inert):
             a = np.asarray(m.inert[key], np.float64)
             if a.size:
-                users.append(("inert", name, key, "", a.shape[1], " ".join(_bare(x) for x in a.ravel().tolist())))
+                users.append(("inert", name, key, "", a.shape[1], " ".join(_bare(x) for x in a.ravel().tolist()), None))
     for name in sel.surfaces:
         s = df.surfaces[name]
-        users += [("surfaces", name, key, s.properties[key].matrix, *_table_text(key, s.properties[key]))
+        toks = df.tokens.get("surfaces", {}).get(name, {})
+        users += [("surfaces", name, key, s.properties[key].matrix, *_table_text(key, s.properties[key], toks.get(key)))
                   for key in sorted(s.properties)]  # fmt: skip
     contents: dict = {}
-    for _, _, _, stored, cd, text in users:
+    for _, _, _, stored, cd, text, unit in users:
         if stored:
-            contents.setdefault(stored, set()).add((cd, text))
+            contents.setdefault(stored, set()).add((cd, text, unit))
     defines: dict = {}
     refs: dict = {}
     renamed: list = []
-    for kind, owner, key, stored, cd, text in users:
-        name = stored if stored and len(contents[stored]) == 1 else f"{key}_{_sha10(cd, text)}"
-        if defines.setdefault(name, (cd, text)) != (cd, text):
+    for kind, owner, key, stored, cd, text, unit in users:
+        name = stored if stored and len(contents[stored]) == 1 else f"{key}_{_sha10(cd, text + (unit or ''))}"
+        if defines.setdefault(name, (cd, text, unit)) != (cd, text, unit):
             raise ExportError(f"matrix name {name!r} would name two tables")
         refs[(kind, owner, key)] = name
         if name != stored and kind != "inert":
@@ -428,10 +463,10 @@ def _matrices(df: schema.DetectorFile, sel: _Selection) -> tuple[dict, dict, lis
 
 def _check_constants(defines: dict, positions: list) -> None:
     """Refuse a name Geant4's DefineMatrix would define twice (it defines ``<name>_<i>`` and ``<name>_<i>_<j>``)."""
-    seen = set(defines) | {n for n, _ in positions}
+    seen = set(defines) | {p[0] for p in positions}
     if len(seen) != len(defines) + len(positions):
         raise ExportError("a matrix and a position share a name")
-    for name, (cd, text) in defines.items():
+    for name, (cd, text, _) in defines.items():
         n = text.count(" ") + 1
         rows = n // cd
         consts = [f"{name}_{i}" for i in range(n)] if (n == cd or cd == 1) else \
@@ -492,13 +527,28 @@ def _volume_order(df: schema.DetectorFile) -> list:
 
 
 # ------------------------------------------------------------------------------------------------------ the writer
+def _tet_points(s: schema.Solid, tok) -> tuple[str, list]:
+    """Return a tet's (lunit, point tokens) while its vertices decode from them (Geant4 scales by lunit twice)."""
+    if tok and "points" in tok:
+        lunit = tokens.evaluate(tok["unit"])  # in mm, as the reader's TetRead reads it
+        if lunit is not None and all(tokens.same(None if (d := tokens.length(t, u)) is None else d * lunit, v)
+                                     for (u, tx), vx in zip(tok["points"], s.vertices, strict=True)
+                                     for t, v in zip(tx, vx, strict=True)):  # fmt: skip
+            return tok["unit"], tok["points"]
+    return "mm", [None] * 4
+
+
 def _vertices(df: schema.DetectorFile, solid_order: list) -> tuple[list, dict]:
-    """Return the vertex defines [(name, (x, y, z) m)] and each tessellated solid's facet vertex names."""
+    """Return the vertex defines and each tessellated solid's facet vertex names (a tet's lunit).
+
+    A define is (name, (x, y, z) m, token, checked); see ``_pos``.
+    """
     defines, facets = [], {}
     for name in solid_order:
         s = df.solids[name]
         if s.type == "tet":
-            defines += [(f"{name}__v{i + 1}", tuple(v)) for i, v in enumerate(s.vertices)]
+            facets[name], pts = _tet_points(s, df.tokens.get("solids", {}).get(name))
+            defines += [(f"{name}__v{i + 1}", tuple(v), pts[i], True) for i, v in enumerate(s.vertices)]
         elif s.type == "tessellated":
             v = np.ascontiguousarray(np.asarray(df.meshes[str(s.mesh)], np.float64).reshape(-1, 3))
             key = v.view(np.dtype((np.void, v.dtype.itemsize * 3))).ravel()  # by bits: -0.0 is not +0.0
@@ -507,12 +557,39 @@ def _vertices(df: schema.DetectorFile, solid_order: list) -> tuple[list, dict]:
             rank = np.empty_like(order)
             rank[order] = np.arange(len(order))
             ids = rank[inv.ravel()].reshape(-1, 3)
-            defines += [(f"{name}__v{k}", tuple(row)) for k, row in enumerate(v[first[order]].tolist())]
+            toks = {(t, c): [u, x] for t, c, u, x in df.tokens.get("meshes", {}).get(name, [])}
+            at = first[order]
+            defines += [(f"{name}__v{k}", tuple(row), toks.get((int(at[k]) // 3, int(at[k]) % 3)), False)
+                        for k, row in enumerate(v[at].tolist())]  # fmt: skip
             facets[name] = ids
     return defines, facets
 
 
-def _solid_params(s: schema.Solid) -> list:
+def _solid_lengths(s: schema.Solid, tok) -> tuple[str, dict]:
+    """Return (lunit, texts) of every length a solid holds: its token while every value decodes from it, else mm.
+
+    ``texts``: params {name: text}, planes, vertices and sections (rows of length texts).
+    """
+    spell = ss.spelling(s.type) if s.type in ss.ATTRIBUTES else {}
+    lengths = [k for k, (_, dim) in spell.items() if dim == ss.L and k in s.params]
+    rows = dict(planes=[list(p) for p in s.planes], vertices=[list(v) for v in s.vertices] if s.type == "xtru" else [],
+                sections=[list(x[:3]) for x in s.sections])  # fmt: skip
+    canon = dict(params={k: _mm(s.params[k]) for k in lengths}, **{k: [[_mm(x) for x in r] for r in v]
+                                                                  for k, v in rows.items()})  # fmt: skip
+    if not tok or "points" in tok or sorted(tok.get("params", {})) != sorted(lengths):
+        return "mm", canon
+    pairs = [(tok["params"][k], s.params[k]) for k in lengths]
+    for key, stored in rows.items():
+        given = tok.get(key, [])
+        if [len(r) for r in given] != [len(r) for r in stored]:
+            return "mm", canon
+        pairs += [(t, v) for r, sr in zip(given, stored, strict=True) for t, v in zip(r, sr, strict=True)]
+    if not all(tokens.same(tokens.length(t, tok["unit"]), v) for t, v in pairs):
+        return "mm", canon
+    return tok["unit"], dict(params=dict(tok["params"]), **{k: tok.get(k, []) for k in rows})
+
+
+def _solid_params(s: schema.Solid, lunit: str = "mm", texts: dict | None = None) -> list:
     try:
         spell = ss.spelling(s.type)
     except KeyError:
@@ -521,39 +598,43 @@ def _solid_params(s: schema.Solid) -> list:
     unknown = sorted(set(s.params) - set(spell))
     if unknown:
         raise ExportError(f"solid {s.name!r} ({s.type}): attributes {unknown} are not {s.type} attributes")
-    fmts = {ss.L: _mm, ss.A: _bare, ss.U: _bare}
+    lt = (texts or {}).get("params", {})
     pairs = [("name", s.name)]
-    pairs += [(gdml, fmts[dim](s.params[low])) for low, (gdml, dim) in spell.items() if low in s.params]
+    pairs += [(gdml, lt[low] if dim == ss.L and low in lt else (_mm if dim == ss.L else _bare)(s.params[low]))
+              for low, (gdml, dim) in spell.items() if low in s.params]  # fmt: skip
     dims = {dim for _, dim in spell.values()}
     if ss.L in dims or s.type in ("polycone", "polyhedra", "genericPolycone", "genericPolyhedra", "xtru"):
-        pairs.append(("lunit", "mm"))
+        pairs.append(("lunit", lunit))
     if ss.A in dims:
         pairs.append(("aunit", "rad"))
     return pairs
 
 
-def _transform_lines(tr: schema.Transform, pos: str, rot: str) -> str:
+def _transform_lines(tr: schema.Transform, pos: str, rot: str, tok=None) -> str:
     out = ""
     if not _plus_zero(tr.position):
-        out += _vec(pos, tr.position, "mm", _mm)
+        out += _pos(pos, tr.position, tok)
     if not _plus_zero(tr.rotation):
         out += _vec(rot, tr.rotation, "rad", _bare)
     return out
 
 
-def _solid_children(s: schema.Solid, facets: dict) -> list:
+def _solid_children(s: schema.Solid, facets: dict, texts: dict, ttok: dict) -> list:
     kind = ss.CHILDREN.get(s.type)
     if kind in ("zplane", "rzpoint"):
-        return [_el(kind, [(a, _mm(x)) for a, x in zip(ss.PLANE_ATTRIBUTES[kind], p, strict=True)]) for p in s.planes]
+        return [_el(kind, list(zip(ss.PLANE_ATTRIBUTES[kind], p, strict=True))) for p in texts["planes"]]
     if kind == "xtru":
-        out = [_el("twoDimVertex", [("x", _mm(x)), ("y", _mm(y))]) for x, y in s.vertices]
+        out = [_el("twoDimVertex", [("x", x), ("y", y)]) for x, y in texts["vertices"]]
         out += [
             _el(
                 "section",
-                [("zOrder", str(i))]
-                + [(a, f(x)) for a, f, x in zip(ss.SECTION_ATTRIBUTES, (_mm, _mm, _mm, _bare), sec, strict=True)],
+                [
+                    ("zOrder", str(i)),
+                    *zip(ss.SECTION_ATTRIBUTES[:3], t, strict=True),
+                    (ss.SECTION_ATTRIBUTES[3], _bare(sec[3])),
+                ],
             )
-            for i, sec in enumerate(s.sections)
+            for i, (t, sec) in enumerate(zip(texts["sections"], s.sections, strict=True))
         ]
         return out  # fmt: skip
     if kind == "facets":
@@ -563,22 +644,24 @@ def _solid_children(s: schema.Solid, facets: dict) -> list:
     if kind == "boolean":
         first, second = s.transforms
         return [_el("first", [("ref", s.refs[0])]), _el("second", [("ref", s.refs[1])]),
-                _transform_lines(second, "position", "rotation") + _transform_lines(first, "firstposition",
-                                                                                    "firstrotation")]  # fmt: skip
+                _transform_lines(second, "position", "rotation", ttok.get("1"))
+                + _transform_lines(first, "firstposition", "firstrotation", ttok.get("0"))]  # fmt: skip
     if kind == "nodes":
         return [_el("multiUnionNode", [("name", f"{s.name}__n{k}")], _el("solid", [("ref", r)])
-                    + _transform_lines(tr, "position", "rotation"))
+                    + _transform_lines(tr, "position", "rotation", ttok.get(str(k))))
                 for k, (r, tr) in enumerate(zip(s.refs, s.transforms, strict=True))]  # fmt: skip
     if kind == "scaled":
         return [_el("solidref", [("ref", s.refs[0])]), _vec("scale", s.scale, None, _bare)]
     return []
 
 
-def _solid(s: schema.Solid, facets: dict) -> list:
-    pairs = _solid_params(s)
+def _solid(s: schema.Solid, facets: dict, toks: dict) -> list:
+    _solid_params(s)  # refuses an unknown type or attribute
+    lunit, texts = _solid_lengths(s, toks.get("solids", {}).get(s.name))
+    pairs = _solid_params(s, lunit, texts)
     if s.type == "tet":
-        pairs = [pairs[0]] + [(f"vertex{i}", f"{s.name}__v{i}") for i in range(1, 5)] + [("lunit", "mm")]
-    kids = [k for k in _solid_children(s, facets) if k]
+        pairs = [pairs[0]] + [(f"vertex{i}", f"{s.name}__v{i}") for i in range(1, 5)] + [("lunit", facets[s.name])]
+    kids = [k for k in _solid_children(s, facets, texts, toks.get("transforms", {}).get(s.name, {})) if k]
     if not kids:
         return ["  " + _el(s.type, pairs)]
     return ["  " + f"<{s.type} {_attrs(pairs)}>", *("   " + k for k in kids), f"  </{s.type}>"]
@@ -640,11 +723,11 @@ def _aux_lines(a: schema.Aux, depth: int) -> list:
     return out + [" " * depth + "</auxiliary>"]
 
 
-def _physvol(p: schema.Placement) -> str:
+def _physvol(p: schema.Placement, tok=None) -> str:
     pairs = [("name", p.name)] + ([("copynumber", str(int(p.copy)))] if p.copy is not None else [])
     inner = _el("volumeref", [("ref", p.volume)])
     if not _plus_zero(p.position):
-        inner += _vec("position", p.position, "mm", _mm)
+        inner += _pos("position", p.position, tok)
     if not _plus_zero(p.rotation):
         inner += _vec("rotation", p.rotation, "rad", _bare)
     if p.scale is not None:
@@ -660,7 +743,8 @@ def _structure(df: schema.DetectorFile, sel: _Selection) -> list:
         out.append("  " + f"<{tag} {_attrs([('name', name)])}>")
         if not v.assembly:
             out += ["   " + _el("materialref", [("ref", v.material)]), "   " + _el("solidref", [("ref", v.solid)])]
-        out += ["   " + _physvol(df.placements[i]) for i in v.daughters]
+        ptok = df.tokens.get("placements", {})
+        out += ["   " + _physvol(df.placements[i], ptok.get(str(i))) for i in v.daughters]
         for a in v.aux:
             out += _aux_lines(a, 3)
         out.append(f"  </{tag}>")
@@ -693,13 +777,14 @@ def _gdml_text(df: schema.DetectorFile, sel: _Selection, digest: str) -> tuple[s
            '<gdml xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
            f'xsi:noNamespaceSchemaLocation="{SCHEMA_LOCATION}">',
            " <define>"]  # fmt: skip
-    out += ["  " + _el("matrix", [("name", n), ("coldim", str(cd)), ("values", t)]) for n, (cd, t) in
+    out += ["  " + _el("matrix", [("name", n), ("coldim", str(cd)), ("values", t), *([("unit", u)] if u else [])])
+            for n, (cd, t, u) in
             sorted(defines.items())]  # fmt: skip
-    out += ["  " + _vec("position", v, "mm", _mm).replace("<position ", f'<position name="{_q(n)}" ', 1)
-            for n, v in positions]  # fmt: skip
+    out += ["  " + _pos("position", v, tok, checked).replace("<position ", f'<position name="{_q(n)}" ', 1)
+            for n, v, tok, checked in positions]  # fmt: skip
     out += [" </define>"] + _materials(df, refs, sel) + [" <solids>"]
     for name in solid_order:
-        out += _solid(df.solids[name], facets)
+        out += _solid(df.solids[name], facets, df.tokens)
     for name in sel.surfaces:
         s = df.surfaces[name]
         model, finish, typ = _enum_names(s)
@@ -829,7 +914,25 @@ def _active(df: schema.DetectorFile) -> tuple[schema.DetectorFile, list]:
     return dataclasses.replace(df, world=world, solids=sols, volumes=vols, placements=tuple(pls), materials=mats,
                                elements=els, surfaces={n: s for n, s in df.surfaces.items() if n in used},
                                skins=tuple(skins), borders=tuple(borders),
-                               meshes={s.mesh: df.meshes[s.mesh] for s in sols.values() if s.mesh}), notes  # fmt: skip
+                               meshes={s.mesh: df.meshes[s.mesh] for s in sols.values() if s.mesh},
+                               tokens=_retoken(df.tokens, {str(o): str(k) for k, o in enumerate(old)}, sols, mats,
+                                               df.surfaces)), notes  # fmt: skip
+
+
+def _retoken(toks: dict, placements: dict, solids, materials, surfaces, names: dict | None = None) -> dict:
+    """Return the tokens of a cut or renamed detector file: placements renumbered, others kept by (renamed) name."""
+    names = names or {}
+    keep = {"solids": solids, "transforms": solids, "meshes": solids, "materials": materials, "surfaces": surfaces}
+    out: dict = {}
+    for kind, d in toks.items():
+        if kind == "placements":
+            new = {placements[i]: v for i, v in d.items() if i in placements}
+        else:
+            ren = names.get(kind, {})
+            new = {ren.get(n, n): v for n, v in d.items() if ren.get(n, n) in keep.get(kind, ())}
+        if new:
+            out[kind] = new
+    return out
 
 
 def _solids_closure(df: schema.DetectorFile, names: set) -> dict:
@@ -896,7 +999,9 @@ def _geant4_names(df: schema.DetectorFile) -> schema.DetectorFile:
         elements={el[n]: dataclasses.replace(e, name=el[n]) for n, e in df.elements.items()},
         skins=tuple(dataclasses.replace(k, volume=vo[k.volume]) for k in df.skins),
         borders=tuple(dataclasses.replace(b, pv1=pv[b.pv1], pv2=pv[b.pv2]) for b in df.borders),
-        meshes={so[n]: a for n, a in df.meshes.items()})  # fmt: skip
+        meshes={so[n]: a for n, a in df.meshes.items()},
+        tokens=_retoken(df.tokens, {str(i): str(i) for i in range(len(pls))}, set(so.values()), set(ma.values()),
+                        df.surfaces, dict(solids=so, transforms=so, meshes=so, materials=ma)))  # fmt: skip
 
 
 # ------------------------------------------------------------------------------------------------------ the sidecar
@@ -1024,6 +1129,7 @@ class _Run:
     sensor_values: dict
     options: dict
     digest: str = ""
+    surface_tokens: dict = field(default_factory=dict)  # the surfaces' tokens before their Geant4 forms
     renamed: list = field(default_factory=list)
 
 
@@ -1056,7 +1162,8 @@ def _sidecar(run: _Run, gdml: Path, sha: str, args: list) -> dict:
     return dict(schema=SIDECAR_SCHEMA, exporter_version=EXPORTER_VERSION, gdml=dict(file=gdml.name, sha256=sha),
                 lossless=not sel.omitted, options=run.options, detector=head, materials=mats,
                 surfaces=_surface_restore(df, sel),
-                recipe_surfaces={n: dict(kind=k, record=_surface_record(df.surfaces[n]))
+                recipe_surfaces={n: dict(kind=k, record=_surface_record(sel.originals.get(n, df.surfaces[n])),
+                                         tokens=run.surface_tokens.get(n))
                                  for n, k in sorted(sel.sidecar_surfaces.items())},
                 matrices=run.renamed, skins=skins, borders=borders, read=dict(material_keys=keys), sensor_sets=sets,
                 data=run.data, calibration=cal, omitted=sel.omitted, warnings=sel.warnings,
@@ -1082,7 +1189,9 @@ def _prepare(df_or_path, calibration, sensors, options: dict) -> _Run:
         df, notes = _active(df)
     if options["names"] == "geant4":
         df = _geant4_names(df)
+    digest, surface_tokens = io.content_digest(io.to_files(df)), dict(df.tokens.get("surfaces", {}))
     sel = _Selection(annotations=list(notes))
+    df = _forms(df, sel)
     _select_surfaces(df, options["on_lossy"], sel)
     _select_materials(df, sel)
     _check(df, sel, tuple(options["target"]))
@@ -1097,7 +1206,51 @@ def _prepare(df_or_path, calibration, sensors, options: dict) -> _Run:
         sset = None
         sel.annotations.append("no sensor set: the detector file was given without one")
     cols = inp.columns.get(sset.name, {}) if sset is not None else {}
-    return _Run(df, sel, sset, cols, inp.data, chain, values, options)
+    if options["names"] == "geant4" and sset is not None:
+        sset, cols = _geant4_sensors(sset, cols)
+    return _Run(df, sel, sset, cols, inp.data, chain, values, options, digest, surface_tokens)
+
+
+def _forms(df: schema.DetectorFile, sel: _Selection) -> schema.DetectorFile:
+    """Return the detector file to write: each surface whose model has a Geant4 form (``geant4_forms``) as that form.
+
+    The surface's own record and tokens go to the sidecar (``sel.originals``), which ``read_export`` restores.
+    """
+    surfs, toks = dict(df.surfaces), {k: dict(v) for k, v in df.tokens.items()}
+    for name in sorted(df.surfaces):
+        form = geant4_forms.FORMS.get(df.surfaces[name].optics.name)
+        if form is None:
+            continue
+        try:
+            surfs[name], t = form(df.surfaces[name], toks.get("surfaces", {}).get(name))
+        except ValueError as err:
+            raise ExportError(str(err)) from None
+        sel.originals[name] = df.surfaces[name]
+        sel.sidecar_surfaces[name] = "geant4_form"
+        sel.annotations.append(f"surface {name!r} ({df.surfaces[name].optics.name}) is written as its Geant4 form")
+        toks.setdefault("surfaces", {}).pop(name, None)
+        if t:
+            toks["surfaces"][name] = t
+    return dataclasses.replace(df, surfaces=surfs, tokens={k: v for k, v in toks.items() if v})
+
+
+def _strip_path(path: str) -> str:
+    """Return a sensor path (placement names joined by "/", an unnamed one as ``<lv>#<k>``) with Geant4's names."""
+    out = []
+    for part in path.split("/"):
+        base, hash_, k = part.partition("#")
+        out.append(reader.g4_strip(base) + hash_ + k)
+    return "/".join(out)
+
+
+def _geant4_sensors(sset: SensorSet, cols: dict) -> tuple[SensorSet, dict]:
+    """Return a sensor set and its id-map columns with Geant4's names (``names="geant4"``).
+
+    The paths, the groups' exact logical-volume names and an ``lv`` column are stripped at '0x'; patterns are kept.
+    """
+    groups = tuple(dataclasses.replace(g, lv=reader.g4_strip(g.lv)) for g in sset.groups)
+    cols = {k: [reader.g4_strip(x) for x in v] if k == "lv" else v for k, v in cols.items()}
+    return dataclasses.replace(sset, groups=groups, ids=tuple(_strip_path(p) for p in sset.ids)), cols
 
 
 def export(df_or_path, path, *, calibration=None, sensors="default", scope="active", names="as_stored",  # noqa: PLR0913 -- the documented signature (DESIGN.md 4.7)
@@ -1118,7 +1271,6 @@ def export(df_or_path, path, *, calibration=None, sensors="default", scope="acti
         if options[k] not in allowed:
             raise ValueError(f"{k}={options[k]!r}: one of {allowed}")
     run = _prepare(df_or_path, calibration, sensors, options)
-    run.digest = io.content_digest(io.to_files(run.df))
     text, run.renamed = _gdml_text(run.df, run.sel, run.digest)
     path = Path(path)
     data = text.encode()
@@ -1181,16 +1333,23 @@ def _merge(read: tuple, entries: list, make) -> tuple:
 def _restore(df: schema.DetectorFile, side: dict) -> schema.DetectorFile:
     mats, surfs = _restore_materials(df, side), _restore_surfaces(df, side)
     for kind, owner, key, stored in side["matrices"]:
+        if kind == "surfaces" and owner in side["recipe_surfaces"]:
+            continue  # restored whole from the sidecar
         table = mats if kind == "materials" else surfs
         rec = table[owner]
         table[owner] = dataclasses.replace(rec, properties={**rec.properties, key: dataclasses.replace(
             rec.properties[key], matrix=stored)})  # fmt: skip
+    toks = {k: dict(v) for k, v in df.tokens.items()}
+    for name, d in side["recipe_surfaces"].items():
+        toks.setdefault("surfaces", {}).pop(name, None)
+        if d.get("tokens"):
+            toks["surfaces"][name] = d["tokens"]
     h = side["detector"]
     return dataclasses.replace(
         df, name=h["name"], world=h["world"], detector_volume=h["detector_volume"],
         wavelength_range=tuple(h["wavelength_range_nm"]), outside=h["outside"], outside_surface=h["outside_surface"],
         build_options=h["build_options"], provenance=h["provenance"], report=tuple(h["report"]), materials=mats,
-        surfaces=surfs, skins=_merge(df.skins, side["skins"], schema.Skin),
+        surfaces=surfs, skins=_merge(df.skins, side["skins"], schema.Skin), tokens={k: v for k, v in toks.items() if v},
         borders=_merge(df.borders, side["borders"], schema.Border))  # fmt: skip
 
 

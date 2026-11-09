@@ -28,15 +28,16 @@ from pathlib import Path
 import numpy as np
 
 from lumen.format import schema
+from lumen.gdml.units import exact
 from lumen.media import bulk, laws, phase, spectra
 from lumen.surfaces import _legacy as legacy
-from lumen.units import CM, HC
+from lumen.units import HC
 
 DATA = Path(__file__).parent / "data" / "lartpc_optics_public.json"
 STANDARD = "larsoft_standard"
 LAR_LINE = 128.0  # nm: LAr's scintillation line, where LArSoft's reflector tables are read
 REFLECTOR_SIGMA_ALPHA = 0.1  # rad: the facet width the REFLECTOR type carries (unused: f_glossy is 0)
-LENGTH_UNITS = {"cm": CM}  # the length units the tables are given in, in m
+LENGTH_UNITS = {"cm": "0.01"}  # the length units the tables are given in: m per unit, exact decimals
 REFLECTIVITY, DIFFUSE_FRACTION = "REFLECTIVITY", "DIFFUSE_FRACTION"  # the reflector's property keys
 
 
@@ -46,12 +47,29 @@ def data() -> dict:
     return json.loads(DATA.read_text())
 
 
-def _sorted_table(entry, scale=1.0):
-    """Return (energies ascending, values) of a {energy (eV), values} entry, values times ``scale``."""
+def _sorted_table(entry, factor: str | None = None):
+    """Return (energies ascending, values) of a {energy (eV), values} entry.
+
+    ``factor``: the decimal m per unit of a length table, applied exactly (one rounding), as the GDML importer converts
+    a literal (``lumen.gdml.units``), so the value decodes from its source token ``"<v>*cm"`` bit for bit.
+    """
     e = np.asarray(entry["energy"], np.float64)
-    v = np.asarray(entry["values"], np.float64) * scale
-    o = np.argsort(e)
+    vals = [float(x) for x in entry["values"]]
+    v = np.asarray([exact(repr(x), factor) for x in vals] if factor else vals, np.float64)
+    o = np.argsort(e, kind="stable")
     return e[o], v[o]
+
+
+def _tokens(entry, length_unit: str | None = None) -> dict:
+    """Return a table's source tokens (``lumen.gdml.tokens``), in the order of ``_sorted_table``.
+
+    Its numbers with their units, as LArSoft hands them to Geant4: the value times the CLHEP unit.
+    """
+    o = np.argsort(np.asarray(entry["energy"], np.float64), kind="stable")
+    eu = entry.get("energy_unit", "eV")
+    e = [f"{float(entry['energy'][i])!r}*{eu}" for i in o]
+    v = [f"{float(entry['values'][i])!r}*{length_unit}" for i in o] if length_unit else None
+    return {"energy": e, "value": v, "matrix_unit": None}
 
 
 def _length_scale(entry, key):
@@ -68,10 +86,18 @@ def lar_tables(table: str = STANDARD) -> dict[str, schema.Property]:
     for key, name, length in (("RINDEX", "rindex", False), ("RAYLEIGH", "rayleigh_length", True),
                               ("ABSLENGTH", "abs_length", True)):  # fmt: skip
         entry = d[name]
-        e, v = _sorted_table(entry, _length_scale(entry, name) if length else 1.0)
+        e, v = _sorted_table(entry, _length_scale(entry, name) if length else None)
         note = f"LArSoft {table} {name}: {entry.get('source', d['source'])}"
         out[key] = schema.Property(key, v, e, "", "recipe", note)
     return out
+
+
+def lar_tokens(table: str = STANDARD) -> dict:
+    """Return the source tokens of ``lar_tables`` {RINDEX, RAYLEIGH, ABSLENGTH} (energies in eV, lengths in cm)."""
+    d = data()["lar"][table]
+    return {key: _tokens(d[name], d[name].get("value_unit", "cm") if length else None)
+            for key, name, length in (("RINDEX", "rindex", False), ("RAYLEIGH", "rayleigh_length", True),
+                                      ("ABSLENGTH", "abs_length", True))}  # fmt: skip
 
 
 def lar_medium_from(material: schema.Material, name: str = "lar", scatter: bool = True, absorb: bool = True):
@@ -116,6 +142,13 @@ def reflector_tables(material: str, table: str = STANDARD) -> dict[str, schema.P
                                           note),
             DIFFUSE_FRACTION: schema.Property(DIFFUSE_FRACTION, np.asarray(m["diffuse_fraction"], np.float64), e, "",
                                               "recipe", note)}  # fmt: skip
+
+
+def reflector_tokens(material: str, table: str = STANDARD) -> dict:
+    """Return the source tokens of ``reflector_tables`` (its energies in eV; the values are unitless)."""
+    s = data()["surfaces"][table]
+    entry = dict(energy=s["energies_eV"], values=s["energies_eV"], energy_unit="eV")
+    return {k: _tokens(entry) for k in (REFLECTIVITY, DIFFUSE_FRACTION)}
 
 
 def reflector_from(properties: dict):

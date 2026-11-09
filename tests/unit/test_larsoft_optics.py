@@ -2,6 +2,8 @@
 baseline's LAr medium and steel reflector exactly; and the compile-level part of the baseline's
 tests/test_lartpc_toy.py (an LAr sensor in LAr has its own class, a same-material active volume is no boundary)."""
 
+from decimal import Decimal
+
 import numpy as np
 
 from lumen.build import _legacy_regions as regions
@@ -20,8 +22,21 @@ def test_tables_are_property_records_in_detector_file_units():
     t = lar.lar_tables()
     assert set(t) == {"RINDEX", "RAYLEIGH", "ABSLENGTH"} and all(p.origin == "recipe" for p in t.values())
     assert np.array_equal(t["RINDEX"].energy, d["rindex"]["energy"]) and np.all(np.diff(t["RAYLEIGH"].energy) > 0)
-    assert np.array_equal(t["RAYLEIGH"].value, np.asarray(d["rayleigh_length"]["values"]) * 1e-2)  # cm -> m
-    assert np.array_equal(t["ABSLENGTH"].value, np.asarray(d["abs_length"]["values"]) * 1e-2)
+    for key, name in (("RAYLEIGH", "rayleigh_length"), ("ABSLENGTH", "abs_length")):  # cm -> m, exact decimals
+        want = np.array([float(Decimal(repr(float(v))) * Decimal("0.01")) for v in d[name]["values"]])
+        assert np.array_equal(t[key].value, want[np.argsort(d[name]["energy"], kind="stable")])
+
+
+def test_tables_decode_from_their_source_tokens():
+    from lumen.gdml import tokens
+
+    t, toks = lar.lar_tables(), lar.lar_tokens()
+    for key, p in t.items():
+        assert [tokens.energy(x) for x in toks[key]["energy"]] == list(p.energy)
+        if toks[key]["value"] is not None:
+            assert [tokens.length_value(x) for x in toks[key]["value"]] == list(p.value)
+    r, rt = lar.reflector_tables("STEEL_STAINLESS_Fe7Cr2Ni"), lar.reflector_tokens("STEEL_STAINLESS_Fe7Cr2Ni")
+    assert all([tokens.energy(x) for x in rt[k]["energy"]] == list(r[k].energy) for k in r)
 
 
 def test_medium_from_records_is_the_shipped_medium():

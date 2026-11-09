@@ -217,6 +217,29 @@ def test_names_geant4_strips_at_0x_and_refuses_collisions(tmp_path):
         exporter.export(importer.read_gdml(write(tmp_path, GDML)), tmp_path / "h.gdml", scope="full", names="geant4")
 
 
+def test_names_geant4_renames_the_sensor_paths(tmp_path):
+    text = GDML.replace('name="pmt0x20"', 'name="qmt0x20"').replace('ref="PmtLV"', 'ref="Pmt0xLV"')
+    text = text.replace('<volume name="PmtLV">', '<volume name="Pmt0xLV">')
+    result = importer.import_gdml(
+        write(tmp_path, text),
+        dataclasses.replace(
+            _toy_recipe(),
+            decisions=(),
+            groups=(sensorsets.SensorGroup("pmt", "any_entry", "lumen:counting", lv="Pmt0xLV"),),
+            sensor_volumes=sensorsets.SensorVolumes(names="^Pmt"),
+            sensor_columns=lambda *a: {"lv": ["Pmt0xLV"] * 2},
+        ),
+    )
+    assert all("0x" in p for p in result.sensor_sets["default"].ids)
+    exporter.export(result, tmp_path / "g.gdml", scope="full", names="geant4", on_lossy="omit")
+    back = exporter.read_export(tmp_path / "g.gdml")
+    s = back.sensor_sets["default"]
+    assert s.ids == tuple(exporter._strip_path(p) for p in result.sensor_sets["default"].ids)
+    assert not any("0x" in p for p in s.ids) and s.groups[0].lv == "Pmt" and back.sensor_columns["lv"] == ["Pmt"] * 2
+    names = {p.name for p in back.detector_file.placements} | set(back.detector_file.volumes)
+    assert all(part.split("#")[0] in names for p in s.ids for part in p.split("/"))
+
+
 def test_scope_active_writes_the_detector_in_a_shell(tmp_path):
     df = dataclasses.replace(importer.read_gdml(write(tmp_path, GDML)), detector_volume="TankLV")
     rep = exporter.export(df, tmp_path / "act.gdml")
@@ -269,3 +292,85 @@ def test_enum_and_key_tables_agree_with_the_optics_rules():
     assert tuple(exporter.FINISHES[: len(optics.FINISHES)]) == optics.FINISHES
     assert set(exporter.G4_10_KEYS) == set(optics.G4_10_KEYS)
     assert (optics.TABLE_KEYS | optics.CONST_KEYS) <= exporter.GEANT4_KEYS
+
+
+# --------------------------------------------------------------------------------------------------- tokens
+TOKENS = GDML.replace('values="2.0*eV 1.33 3.0*eV 1.34 4.5e-06 1.35"', 'values="2.0*eV 1.33 3.4*eV 1.34 4.5e-06 1.35"')
+TOKENS = TOKENS.replace('<matrix name="REF" coldim="2" values="2.0*eV 0.9 4.5*eV 0.8"/>',
+                        '<matrix name="REF" coldim="2" values="2.0 0.9 4.5 0.8" unit="eV"/>')  # fmt: skip
+
+
+def test_source_tokens_are_written_while_the_value_is_unchanged(tmp_path):
+    df = importer.read_gdml(write(tmp_path, TOKENS))
+    w = df.tokens["materials"]["Water"]
+    assert w["RINDEX"]["energy"] == ["2.0*eV", "3.4*eV", None]  # 4.5e-06 is the canonical literal already
+    assert df.materials["Water"].properties["RINDEX"].energy[1] == 3.4  # lumen keeps the exact decimal value
+    assert df.tokens["surfaces"]["Liner"]["REFLECTIVITY"]["matrix_unit"] == "eV"  # kept; Geant4 does not read it
+    assert df.tokens["solids"]["Pmt"]["unit"] == "cm" and df.tokens["placements"]["0"] == [
+        "cm",
+        ["1.25", "0", "HALF*2".replace("HALF*2", "(1.0)")],
+    ]
+    exporter.export(df, tmp_path / "t.gdml", scope="full")
+    text = (tmp_path / "t.gdml").read_text()
+    assert 'values="2e-6 1.33 3.4*eV 1.34 4.5e-6 1.35"' in text.replace("2.0*eV", "2e-6")
+    assert '<tube name="Pmt" rmax="12.5" z="10"' in text and 'lunit="cm"' in text
+    assert 'values="2 0.9 4.5 0.8" unit="eV"' in text  # written back beside its tokens; Geant4 does not read it
+    g4 = reader.Evaluator().eval("3.4*eV")  # Geant4's product, in MeV
+    assert g4 == 3.4 * 1e-6 and g4 != float("3.4e-6")  # one ulp from the decimal value
+    back = exporter.read_export(tmp_path / "t.gdml").detector_file
+    assert back.tokens == df.tokens and contents(back) == contents(df)
+    c = calibrations.Calibration(
+        "c",
+        "toy",
+        "sha256:x",
+        {"materials/Water/RINDEX": calibrations.Table(np.array([2.0, 3.4, 4.5]), np.array([1.3, 1.31, 1.32]))},
+    )
+    exporter.export(df, tmp_path / "c.gdml", scope="full", calibration=c)
+    ctext = (tmp_path / "c.gdml").read_text()
+    assert 'values="2e-6 1.3 3.4e-6 1.31 4.5e-6 1.32"' in ctext  # a calibrated table is written canonically
+    assert contents(exporter.read_export(tmp_path / "c.gdml").detector_file) == contents(fo.apply(df, [c]))
+
+
+def test_a_changed_value_is_written_canonically_and_tokens_round_trip_deterministically(tmp_path):
+    df = importer.read_gdml(write(tmp_path, TOKENS))
+    pls = (dataclasses.replace(df.placements[0], position=(0.02, 0.0, 0.01)), *df.placements[1:])
+    exporter.export(dataclasses.replace(df, placements=pls), tmp_path / "m.gdml", scope="full")
+    assert '<position unit="mm" x="20" y="0" z="10"/>' in (tmp_path / "m.gdml").read_text()
+    _, back, (first, second) = round_trip(tmp_path, df)
+    assert back.detector_file.tokens == df.tokens and first == second
+    assert importer.read_gdml(write(tmp_path, TOKENS, "again.gdml")).tokens == df.tokens
+
+
+def test_a_larsoft_reflector_is_written_as_its_geant4_form(tmp_path):
+    df = importer.read_gdml(write(tmp_path, GDML))
+    e = np.array([7.0, 9.0, 10.0])
+    props = {
+        "REFLECTIVITY": schema.Property("REFLECTIVITY", np.full(3, 0.25), e, "", "recipe", "R"),
+        "DIFFUSE_FRACTION": schema.Property("DIFFUSE_FRACTION", np.full(3, 0.5), e, "", "recipe", "f"),
+    }
+    steel = schema.Surface(
+        "steel",
+        "dielectric_metal",
+        "unified",
+        "ground",
+        0.0,
+        props,
+        schema.OpticsModel("lumen:larsoft_reflector", 1, {}, "recipe", "LArSoft"),
+    )
+    toks = {"surfaces": {"steel": {k: {"energy": ["7.0*eV", "9.0*eV", "10.0*eV"], "matrix_unit": None, "value": None}
+                                   for k in props}}}  # fmt: skip
+    df = dataclasses.replace(
+        df,
+        surfaces={**df.surfaces, "steel": steel},
+        tokens={**df.tokens, **toks},
+        skins=df.skins + (schema.Skin("steel:PmtLV", "steel", "PmtLV", "recipe", "steel"),),
+    )
+    rep, back, (first, second) = round_trip(tmp_path, df)
+    assert rep.lossless and "--refuse-lossy" not in rep.g4ref_args and first == second
+    assert contents(back.detector_file) == contents(df) and back.detector_file.tokens == df.tokens
+    g4 = importer.read_gdml(tmp_path / "a" / "x.gdml")  # what Geant4 reads
+    s = g4.surfaces["steel"]
+    assert sorted(s.properties) == ["BACKSCATTERCONSTANT", "REFLECTIVITY", "SPECULARLOBECONSTANT",
+                                    "SPECULARSPIKECONSTANT"]  # fmt: skip
+    assert list(s.properties["SPECULARSPIKECONSTANT"].value) == [0.5] * 3 and s.value == 0.0
+    assert "7.0*eV 0.25" in (tmp_path / "a" / "x.gdml").read_text()

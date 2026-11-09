@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-SCHEMA = "lumen-detector/1"
+SCHEMA = "lumen-detector/1.1"  # 1.1 adds optional fields only (Material.mee_ev, tokens): readers of 1 accept it
 OUTSIDE_ABSORB = "absorb"  # photons leaving the detector volume end there
 
 
@@ -237,7 +237,9 @@ class DetectorFile:
     (nm) is where every optical table must be defined. ``build_options`` holds the recipe's choices for building the
     geometry (``split_unions``: unions of more pieces than this are placed as their pieces). ``meshes`` holds the
     tessellated solids' triangle arrays by name. ``provenance`` records the source file, its sha256, the importer
-    and recipe, and ``report`` every normalisation and decision, in words.
+    and recipe, and ``report`` every normalisation and decision, in words. ``tokens`` keeps, sparsely, the source
+    text of the lengths and energies whose Geant4 reading the canonical writer would not reproduce
+    (``lumen.gdml.tokens``): an export writes them back while the value is unchanged.
     """
 
     name: str
@@ -261,3 +263,4 @@ class DetectorFile:
     provenance: dict = field(default_factory=dict)
     report: tuple[str, ...] = ()
     schema: str = SCHEMA
+    tokens: dict = field(default_factory=dict)  # source tokens of lengths and energies (lumen.gdml.tokens), sparse

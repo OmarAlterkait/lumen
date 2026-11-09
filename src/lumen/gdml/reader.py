@@ -270,6 +270,7 @@ class Transform:
     position: tuple[float, float, float] = (0.0, 0.0, 0.0)
     rotation: tuple[float, float, float] = (0.0, 0.0, 0.0)
     scale: tuple[float, float, float] | None = None
+    position_text: tuple | None = None  # the position as written: (unit or None, (x, y, z) texts)
 
 
 @dataclass
@@ -286,6 +287,7 @@ class Solid:
     sections: list = field(default_factory=list)  # xtru (z, x offset, y offset, scaling factor)
     facets: list = field(default_factory=list)  # tessellated: (position refs, "ABSOLUTE" | "RELATIVE")
     tet: tuple = ()  # tet: (position refs, the lunit in mm)
+    texts: dict = field(default_factory=dict)  # the lengths as written: unit, params, planes, vertices, sections
 
 
 @dataclass
@@ -389,6 +391,8 @@ class GDMLDocument:
         self.borders, self.skins = [], []  # (name, surface, [pv, pv]) and (name, surface, [lv])
         self.userinfo = []
         self.matrix_text = {}  # name -> the source tokens of its values
+        self.matrix_unit = {}  # name -> its unit attribute (Geant4 does not read it)
+        self.position_text = {}  # name -> (unit or None, (x, y, z) texts) of a defined position
         self.world = None
         self.report = []
         self._matrix_err = {}
@@ -425,10 +429,15 @@ class GDMLDocument:
             return tuple(self.angle(el.get(a, "0"), el.get("unit"), what) for a in ("x", "y", "z"))
         return tuple(self.length(el.get(a, "0"), el.get("unit"), what) for a in ("x", "y", "z"))
 
+    @staticmethod
+    def vec_text(el):
+        """Return a position element as written: (unit or None, (x, y, z) texts)."""
+        return el.get("unit"), tuple(el.get(a, "0") for a in ("x", "y", "z"))
+
     def transform(self, parent, pos=("position", "positionref"), rot=("rotation", "rotationref"),
                   scale=("scale", "scaleref")):  # fmt: skip
         """Return the Transform of an element's position, rotation and scale children (inline or by reference)."""
-        t, r, sc = (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), None
+        t, r, sc, text = (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), None, None
         where = f"{tag(parent)} {parent.get('name')!r}"
         tables = {pos[1]: (self.positions, "positionref"), rot[1]: (self.rotations, "rotationref")}
         if scale:
@@ -436,7 +445,7 @@ class GDMLDocument:
         for c in parent:
             tg = tag(c)
             if tg == pos[0]:
-                t = self.vec(c, "position")
+                t, text = self.vec(c, "position"), self.vec_text(c)
             elif tg == rot[0]:
                 r = self.vec(c, "rotation")
             elif scale and tg == scale[0]:
@@ -448,12 +457,12 @@ class GDMLDocument:
                     raise GDMLError(f"{where}: {label} {ref!r} is not defined")
                 v = table[ref]
                 if tg == pos[1]:
-                    t = v
+                    t, text = v, self.position_text.get(ref)
                 elif tg == rot[1]:
                     r = v
                 else:
                     sc = v
-        return Transform(t, r, sc)
+        return Transform(t, r, sc, text)
 
     def matrix(self, name):
         """Return a matrix as (rows, coldim) float64 in Geant4's internal units; raise if undefined or unreadable."""
@@ -535,11 +544,15 @@ class GDMLDocument:
         for el in vecs:  # after every constant is known
             table = {"position": self.positions, "rotation": self.rotations, "scale": self.scales}[tag(el)]
             table[el.get("name")] = self.vec(el, tag(el))
+            if tag(el) == "position":
+                self.position_text[el.get("name")] = self.vec_text(el)
 
     def read_matrix(self, el):
         """Read a <matrix>: values evaluated in internal units, the source tokens kept."""
         nm = el.get("name")
         toks = (el.get("values") or "").split()
+        if el.get("unit") is not None:
+            self.matrix_unit[nm] = el.get("unit")
         try:
             cd = int(round(self.ev.eval(el.get("coldim", "1"))))
             if cd < 1:
@@ -666,6 +679,7 @@ class GDMLDocument:
         what = f"{tg} {nm!r}"
         s = Solid(nm, tg)
         lu, au = el.get("lunit"), el.get("aunit")
+        s.texts = dict(unit=lu, params={})
         for a, v in el.attrib.items():
             al = a.lower()
             if al in SKIP_ATTRS or al.startswith("vertex"):
@@ -676,6 +690,7 @@ class GDMLDocument:
                 s.params[al] = self.num(v, f"{what} attribute {a}")
             else:
                 s.params[al] = self.length(v, lu, f"{what} attribute {a}")
+                s.texts["params"][al] = v
         if tg in BOOLEAN:
             self._boolean(el, s)
         elif tg == "multiUnion":
@@ -722,6 +737,7 @@ class GDMLDocument:
                 raise GDMLError(f"{what}: vertex {r!r} is not defined")
         if s.type == "tet":
             s.tet = (refs, self.num(el.get("lunit", "mm"), f"{what} lunit"))
+            s.texts["lunit"] = el.get("lunit")
             return
         for c in el:
             ct = tag(c)
@@ -734,17 +750,21 @@ class GDMLDocument:
 
     def _solid_children(self, el, s, lu, what):
         tg = s.type
-        if tg in ("polycone", "polyhedra"):
-            s.planes = [tuple(self.length(c.get(k, "0"), lu, f"{what} zplane") for k in ("rmin", "rmax", "z"))
-                        for c in el if tag(c) == "zplane"]  # fmt: skip
-        elif tg in ("genericPolycone", "genericPolyhedra"):
-            s.planes = [tuple(self.length(c.get(k, "0"), lu, f"{what} rzpoint") for k in ("r", "z"))
-                        for c in el if tag(c) == "rzpoint"]  # fmt: skip
+        if tg in ("polycone", "polyhedra", "genericPolycone", "genericPolyhedra"):
+            kind, keys = (
+                ("zplane", ("rmin", "rmax", "z")) if tg in ("polycone", "polyhedra") else ("rzpoint", ("r", "z"))
+            )
+            rows = [[c.get(k, "0") for k in keys] for c in el if tag(c) == kind]
+            s.planes = [tuple(self.length(t, lu, f"{what} {kind}") for t in row) for row in rows]
+            s.texts["planes"] = rows
         elif tg == "xtru":
+            s.texts.update(vertices=[], sections=[])
             for c in el:
                 if tag(c) == "twoDimVertex":
                     s.vertices.append((self.length(c.get("x"), lu, what), self.length(c.get("y"), lu, what)))
+                    s.texts["vertices"].append([c.get("x"), c.get("y")])
                 elif tag(c) == "section":
+                    s.texts["sections"].append([c.get("zPosition"), c.get("xOffset"), c.get("yOffset")])
                     s.sections.append((self.length(c.get("zPosition"), lu, what),
                                        self.length(c.get("xOffset"), lu, what),
                                        self.length(c.get("yOffset"), lu, what),

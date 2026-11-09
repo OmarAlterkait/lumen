@@ -27,7 +27,7 @@ from pathlib import Path
 import numpy as np
 
 from lumen.format import schema
-from lumen.gdml import reader
+from lumen.gdml import reader, tokens
 from lumen.gdml.units import ENERGY_EV, LENGTH_M, LITERAL, MM_PER_M, PRODUCT
 
 IMPORTER_VERSION = "1"
@@ -290,8 +290,8 @@ def surfaces(doc: reader.GDMLDocument, placements: tuple, rep: list) -> tuple[di
             raise ImportRefused(f"bordersurface {name!r}: the pair {refs[0]!r} -> {refs[1]!r} has a border already")
         pairs.add(tuple(refs))
         borders.append(schema.Border(name, surf, refs[0], refs[1]))
-    stripped = sum(1 for b in borders for r in (b.pv1, b.pv2)
-                   if sum(1 for p in placements if reader.g4_strip(p.name) == reader.g4_strip(r)) > 1)  # fmt: skip
+    by_stripped = Counter(reader.g4_strip(p.name) for p in placements)
+    stripped = sum(1 for b in borders for r in (b.pv1, b.pv2) if by_stripped[reader.g4_strip(r)] > 1)
     if stripped:
         rep.append(f"{stripped} border reference(s) name a physical volume whose name repeats once the 0x suffix is "
                    "stripped: bound by the full name, as Geant4 binds them; a GDML export with stripped names would "
@@ -319,6 +319,8 @@ def read_gdml(path, material_keys=None) -> schema.DetectorFile:
     vols, pls = structure(doc)
     mats, els, isos = materials(doc, rep, material_keys)
     surfs, skins, borders = surfaces(doc, pls, rep)
+    toks, r3 = tokens.collect(doc, sol, meshes, pls, mats, surfs)
+    rep += r3
     sha = hashlib.sha256(Path(path).read_bytes()).hexdigest()
     prov = dict(importer="lumen.gdml.import_gdml", importer_version=IMPORTER_VERSION,
                 source=dict(file=Path(path).name, sha256=f"sha256:{sha}"))  # fmt: skip
@@ -327,7 +329,7 @@ def read_gdml(path, material_keys=None) -> schema.DetectorFile:
                           wavelength_range=(0.0, 0.0), solids=sol, volumes=vols, placements=pls, materials=mats,
                           elements=els, isotopes=isos, surfaces=surfs, skins=skins, borders=borders, meshes=meshes,
                           userinfo=tuple(_aux(a) for a in doc.userinfo), provenance=prov,
-                          report=tuple(rep))  # fmt: skip
+                          report=tuple(rep), tokens=toks)  # fmt: skip
 
 
 def import_gdml(path, recipe, inputs: dict | None = None) -> ImportResult:
