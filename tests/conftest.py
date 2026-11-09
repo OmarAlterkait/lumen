@@ -1,20 +1,9 @@
 """Shared test configuration.
 
-XLA's CPU thunk runtime (jax 0.5.3) runs the navigator's nested loops wrongly and nondeterministically: a query whose
-inputs are all constants misses the face it should meet in some processes (the baseline's navigator alike). The tests
-run on the classic CPU runtime until the jax pin moves past it.
+The tests run on XLA's default CPU runtime. The classic-runtime override that A5 added for jax 0.5.3 is gone with the
+jax 0.6.2 pin: 0.5.3's thunk runtime missed navigator faces in programs loaded from the persistent compilation cache;
+0.6.2 misses none, cache on or off (tools/port/xla_runtime_probe.py check, port/gates/xla_runtime_062.json).
 """
-
-import os
-
-CPU_FLAG = "--xla_cpu_use_thunk_runtime=false"
-_ENV = os.environ  # noqa: TID251 -- XLA's own flag, set before jax starts (not a lumen setting)
-
-
-def pytest_configure(config):
-    # the leaf goldens (--port-goldens) were made on the default runtime and are compared bit for bit on it
-    if config.getoption("--port-goldens") is None and CPU_FLAG.split("=")[0] not in _ENV.get("XLA_FLAGS", ""):
-        _ENV["XLA_FLAGS"] = (_ENV.get("XLA_FLAGS", "") + " " + CPU_FLAG).strip()
 
 
 def pytest_addoption(parser):

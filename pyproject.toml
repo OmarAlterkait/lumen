@@ -13,9 +13,12 @@ authors = [{ name = "Omar Alterkait" }]
 classifiers = ["Private :: Do Not Upload"]
 dependencies = [
     "numpy>=1.24",
-    "jax>=0.5.3,<0.6",
+    # jax is pinned exactly (port/gates/jax_versions.json: 0.5.3's CPU thunk runtime misses faces with the persistent
+    # cache on; 0.11.2 breaks tallymap ec953da's reverse mode); the S3DF lock is cluster/s3df/requirements-jax062.lock
+    "jax==0.6.2",
+    "jaxlib==0.6.2",
     "scipy>=1.10",  # spatial search of sibling placements (scipy.spatial.cKDTree) in the geometry lowering
-    # The photon loop. The exact commit is pinned in cluster/s3df/constraints-develop.txt.
+    # The photon loop: tallymap lumen/perf ec953da (0.5.0+lumen.2), pinned by commit in cluster/s3df/requirements-jax062.lock.
     "tallymap>=0.5,<0.6",
 ]
 

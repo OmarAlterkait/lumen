@@ -14,8 +14,8 @@ released, and the interfaces will change.
 lumen is not published, and neither is tallymap, the photon-loop engine it needs. Today it runs only on S3DF:
 
 ```bash
-cluster/s3df/make_env.sh <ENV_DIR>    # a venv inside develop.sif, outside HOME
-source cluster/s3df/env.sh <ENV_DIR>  # variables, caches, and `run` on PATH
+source cluster/s3df/env.sh                                         # the group's env (jax 0.6.2), caches, `run` on PATH
+cluster/s3df/make_env.sh <ENV_DIR>    # or your own copy: the same lock, outside HOME
 run python -m pytest                                               # inside the container
 ```
 
