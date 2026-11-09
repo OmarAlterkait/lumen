@@ -10,10 +10,8 @@
 The toys are GDML strings read by the importer (the coinc_sib layout: a 4 m world, two 0.4 m cubes); ported from the
 baseline's tests/test_overlaps.py, which built them with the scene builder."""
 
-import jax
-import jax.numpy as jnp
 import numpy as np
-from nav_toys import F32, I32, defn, make_scene
+from nav_toys import defn, locate, make_scene, one, query
 
 from lumen.build import lowering, solids
 from lumen.gdml import importer
@@ -59,14 +57,19 @@ def cubes(tmp_path, order, off_b=0.0):
     return loaded.scene, tuple(loaded.media[m] for m in ("MW", "MA", "MB"))
 
 
+def _q(nav):
+    """one query (o, d, vol, last) at t_max 10 m; one program serves every navigator of the cubes' layout"""
+    return lambda o, d, v, l_: one(query(nav, o, d, v, l_, 10.0, by_layout=True))
+
+
 def walk(toy, n=4):
     """the pencil from x = -0.8 m along +x: (x, class after as 0 world, 1 A, 2 B, cont) of its first n crossings"""
     sc, ids = toy
     nav = navigate.Navigator.from_scene(sc)
-    q = jax.jit(lambda o, d, v, l_: nav.query(o, d, v, l_, 10.0))
-    d = jnp.asarray([1.0, 0.0, 0.0], F32)
-    o = jnp.asarray([-0.8, 0.0, 0.0], F32)
-    v, last, out, x = nav.locate(o), I32(-1), [], -0.8
+    q = _q(nav)
+    d = np.asarray([1.0, 0.0, 0.0], np.float32)
+    o = np.asarray([-0.8, 0.0, 0.0], np.float32)
+    v, last, out, x = locate(nav, o, by_layout=True)[0], -1, [], -0.8
     cls = np.asarray(nav.host["cls"])
     for _ in range(n):
         r = q(o, d, v, last)
@@ -104,10 +107,10 @@ def test_a_reflection_at_a_relocation_stays_in_the_volume_located(tmp_path):
     (StepTooSmall), but a photon relocated into a sibling already holding the point stays in that sibling"""
     for off, x_cross in ((0.1, 0.2), (0.0, 0.2)):  # partial overlap; coincident
         nav = navigate.Navigator.from_scene(cubes(tmp_path, "AB", off)[0])
-        q = jax.jit(lambda o, d, v, l_, nav=nav: nav.query(o, d, v, l_, 10.0))
-        d = jnp.asarray([1.0, 0.0, 0.0], F32)
-        o = jnp.asarray([-0.8, 0.0, 0.0], F32)
-        r1 = q(o, d, nav.locate(o), I32(-1))  # the entry into A: a reflection stays in the world
+        q = _q(nav)
+        d = np.asarray([1.0, 0.0, 0.0], np.float32)
+        o = np.asarray([-0.8, 0.0, 0.0], np.float32)
+        r1 = q(o, d, locate(nav, o, by_layout=True)[0], -1)  # the entry into A: a reflection stays in the world
         assert int(r1["vol_reflect"]) == int(r1["vol_before"]) == 0
         o2 = o + r1["t"] * d
         r2 = q(o2, d, r1["vol_after"], r1["srf"])  # A's exit, located in B
@@ -132,9 +135,9 @@ def test_a_reflection_at_a_lowered_hole_steps_back_into_the_filler():
             "F": at0("F", solids.g4_box(0.4, 0.4, 0.4), B_),
         }
         nav = navigate.Navigator.from_scene(make_scene(defs, outside=3, hole_fillers=["F"] if holed else []))
-        q = jax.jit(lambda o, d, v, l_, nav=nav: nav.query(o, d, v, l_, 10.0))
-        o = jnp.asarray([0.0, 0.0, 0.0], F32)
-        d = jnp.asarray([0.0, 1.0, 0.0], F32)
-        r = q(o, d, I32(2), I32(-1))  # the photon in F; F's face y = 0.2 lies inside S's slab
+        q = _q(nav)
+        o = np.asarray([0.0, 0.0, 0.0], np.float32)
+        d = np.asarray([0.0, 1.0, 0.0], np.float32)
+        r = q(o, d, 2, -1)  # the photon in F; F's face y = 0.2 lies inside S's slab
         assert abs(float(r["t"]) - 0.2) < 1e-5 and int(r["vol_after"]) == 1 and int(r["vol_before"]) == 2
         assert int(r["vol_reflect"]) == (2 if holed else 1), holed

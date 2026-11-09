@@ -8,10 +8,8 @@ Ported from the navigator part of the baseline's tests/test_coincident.py; its t
 without the shell, the reflecting coincident face) come with the transport. Its class-compiler tests are in
 test_legacy_regions.py."""
 
-import jax
-import jax.numpy as jnp
 import numpy as np
-from nav_toys import F32, I32, defn, make_scene
+from nav_toys import defn, make_scene, per_ray
 from test_legacy_regions import LAM, MATS, library, tree
 
 from lumen.build import _legacy_regions as regions
@@ -56,20 +54,19 @@ def test_a_float32_thin_same_medium_shell_keeps_its_cathode():
     rng = np.random.default_rng(7)
     N = 512
     u = np.c_[-np.ones(N), rng.normal(0, 0.15, (N, 2))]
-    Dr = jnp.asarray(u / np.linalg.norm(u, axis=1, keepdims=True), F32)
-    x0 = jnp.asarray([20.15, 0.0, 0.0], F32)
+    Dr = (u / np.linalg.norm(u, axis=1, keepdims=True)).astype(np.float32)
+    x0 = np.asarray([20.15, 0.0, 0.0], np.float32)
     kinds = {}
     for shell in (True, False):
         o = shell_optics(shell)
         geom = tracked.from_scene(shell_scene(shell), o)
         assert (geom.pass_tab is not None) == shell  # glass -> shell: one medium, no surface: a pass pair
-        q = jax.jit(jax.vmap(lambda d, geom=geom: geom.query(None, x0, d, 0, 10.0, vol=I32(-1))))
-        r = jax.tree.map(np.asarray, q(Dr))
+        r = per_ray(lambda nav, d, geom=geom: geom.query(None, x0, d, 0, 10.0, vol=-1), geom.nav, Dr)
         inner = o.class_of[_inner(shell)]
         ok = r["hit"] & (r["cls_after"] == inner) & (r["vol_after"] == geom.nav.n - 1)
         assert ok.all(), (shell, int((~ok).sum()), r["cls_before"][:4], r["cls_after"][:4], inner)
-        np.testing.assert_allclose(np.linalg.norm(np.asarray(x0) + r["t"][:, None] * np.asarray(Dr) -
-                                                  np.array([20.0, 0, 0]), axis=1), 0.1, atol=1e-4)  # fmt: skip
+        np.testing.assert_allclose(np.linalg.norm(x0 + r["t"][:, None] * Dr - np.array([20.0, 0, 0]), axis=1), 0.1,
+                                   atol=1e-4)  # fmt: skip
         # the pair the navigator reports (glass -> cavity: the 1 um shell is merged into the crossing) resolves to
         # the cathode: the compiler takes a coincident crossing past a pass pair to the border
         kinds[shell] = {o.kinds[int(k)] for k in o.kind_of[r["cls_before"], r["cls_after"]]}

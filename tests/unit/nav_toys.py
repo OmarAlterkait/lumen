@@ -147,9 +147,93 @@ def toy(name):
 
 
 # ------------------------------------------------------------------------------------------------ batched calls
-def vm(fn):
-    """jit(vmap(fn))."""
-    return jax.jit(jax.vmap(fn))
+# A test's cost is tracing, lowering and compiling its programs, not running them, and the persistent cache stores
+# only the compiled code. A jax.vmap of the query's nested loops takes ~5 s to trace; the one-ray program traces in
+# under 1 s and compiles in 1-2 s with the navigator's arrays as constants (3 s as operands). So a batch runs one
+# compiled one-ray program per row from the host (~0.1 ms a row), and each program is made once per session per
+# navigator and function, shared by every test of that toy. ``by_layout``: the navigator's arrays enter as operands
+# instead, so one program serves every navigator of the same layout (the GDML cube toys).
+_PROGRAMS = {}
+
+
+def layout(nav):
+    """Return what a traced navigator program depends on besides its operands' values."""
+    leaves, tree = jax.tree.flatten(nav.operands())
+    return (nav.n, nav.n_mesh, nav.chunk, int(nav.CH0), tuple(nav.SRF), bool(nav.E.has_torus), int(nav.E.empty_leaf),
+            tree, tuple((a.shape, str(a.dtype)) for a in leaves))  # fmt: skip
+
+
+def _program(fn, nav, by_layout):
+    prec = jax.config.jax_default_matmul_precision
+    key = (fn, layout(nav), prec) if by_layout else (fn, id(nav), prec)
+    if key not in _PROGRAMS:
+        if by_layout:
+            prog = jax.jit(lambda ops, *a, tmpl=nav: fn(tmpl.bind(ops), *a))
+        else:
+            prog = jax.jit(functools.partial(fn, nav))
+        _PROGRAMS[key] = (nav, prog)  # the navigator held: its id stays its own
+    prog = _PROGRAMS[key][1]
+    return functools.partial(prog, nav.operands()) if by_layout else prog
+
+
+def _host(a):
+    a = np.asarray(a)
+    return a.astype(np.float32 if a.dtype.kind == "f" else np.int32 if a.dtype.kind in "iu" else a.dtype)
+
+
+def per_ray(fn, nav, *rays, shared=(), by_layout=False):
+    """Return fn(nav, *row, *shared) for each row of the arrays in ``rays`` (leading axis), stacked as numpy arrays.
+
+    ``fn``: a module-level function of a navigator (its program is cached on fn and the navigator); ``shared``:
+    arrays passed to every row (t_max, a pass table).
+    """
+    prog = _program(fn, nav, by_layout)
+    rows = [_host(r) for r in rays]
+    sh = tuple(jnp.asarray(_host(s)) for s in shared)
+    out = jax.device_get([prog(*(r[i] for r in rows), *sh) for i in range(len(rows[0]))])
+    return jax.tree.map(lambda *a: np.stack(a), *out)
+
+
+def _locate(nv, x):
+    return nv.locate(x)
+
+
+def _query(nv, o, d, v, last, t_max):
+    return nv.query(o, d, v, last=last, t_max=t_max)
+
+
+def _query_sn(nv, o, d, v, last, sn, t_max):
+    return nv.query(o, d, v, last=last, sn=sn, t_max=t_max)
+
+
+def _query_pass(nv, o, d, v, last, t_max, pass_tab):
+    return nv.query(o, d, v, last=last, t_max=t_max, pass_tab=pass_tab)
+
+
+def locate(nav, X, by_layout=False):
+    """Return the volume holding each point of X (n, 3): ``nav.locate`` per point."""
+    return per_ray(_locate, nav, np.asarray(X, np.float32).reshape(-1, 3), by_layout=by_layout)
+
+
+def query(nav, X, D, vol, last=-1, t_max=1e3, sn=None, pass_tab=None, by_layout=False):
+    """Return ``nav.query`` per ray (a dict of arrays): X, D (n, 3) or (3,); vol, last (n,) or one; sn (n, 3), (3,)."""
+    X, D = np.asarray(X, np.float32).reshape(-1, 3), np.asarray(D, np.float32).reshape(-1, 3)
+    n = max(len(X), len(D), np.size(vol), np.size(last), 0 if sn is None else np.size(sn) // 3)
+    rows = [np.broadcast_to(X, (n, 3)), np.broadcast_to(D, (n, 3)), np.broadcast_to(np.asarray(vol, np.int32), (n,)),
+            np.broadcast_to(np.asarray(last, np.int32), (n,))]  # fmt: skip
+    tm = np.float32(t_max)
+    if pass_tab is not None:
+        assert sn is None
+        return per_ray(_query_pass, nav, *rows, shared=(tm, np.asarray(pass_tab, bool)), by_layout=by_layout)
+    if sn is not None:
+        sn = np.broadcast_to(np.asarray(sn, np.float32).reshape(-1, 3), (n, 3))
+        return per_ray(_query_sn, nav, *rows, sn, shared=(tm,), by_layout=by_layout)
+    return per_ray(_query, nav, *rows, shared=(tm,), by_layout=by_layout)
+
+
+def one(r):
+    """Return row 0 of a per-ray result (a single ray's)."""
+    return jax.tree.map(lambda a: a[0], r)
 
 
 def rays(n, seed, half=0.95):
@@ -174,9 +258,8 @@ def walk_check(sc, nav=None, n=1500, steps=4, seed=0, orc_scene=None, tol=2e-5):
     """
     nav = nav_of(sc) if nav is None else nav
     orc = oracle.Oracle(orc_scene or sc)
-    q = vm(lambda o, d, v, l_: nav.query(o, d, v, last=l_, t_max=10.0))
     O_, Dr = rays(n, seed)
-    vol = np.asarray(vm(nav.locate)(jnp.asarray(O_, F32)))
+    vol = locate(nav, O_)
     last = np.full(n, -1)
     rng = np.random.default_rng(seed + 1)
     O32 = O_.astype(np.float32)
@@ -184,8 +267,7 @@ def walk_check(sc, nav=None, n=1500, steps=4, seed=0, orc_scene=None, tol=2e-5):
     bad = []
     alive = np.ones(n, bool)
     for s in range(steps):
-        r = {k: np.asarray(v) for k, v in q(jnp.asarray(O32), jnp.asarray(Dr, F32), jnp.asarray(vol, I32),
-                                            jnp.asarray(last, I32)).items()}  # fmt: skip
+        r = query(nav, O32, Dr, vol, last, t_max=10.0)
         for i in np.flatnonzero(alive):
             # a continued walk starts on a surface: the navigator takes everything within the band of the start as
             # the start (Geant4's kCarTolerance), so the oracle starts past that band too

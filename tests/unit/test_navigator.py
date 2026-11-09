@@ -13,13 +13,16 @@ from nav_toys import (
     T_ORC,
     defn,
     g4,
+    locate,
     make_scene,
     mesh_def,
     nav_of,
+    one,
+    per_ray,
+    query,
     rays,
     scene_mesh,
     scene_split,
-    vm,
     walk_check,
 )
 
@@ -41,7 +44,7 @@ def test_locate_matches_oracle(name, toys):
     X = np.random.default_rng(3).uniform(-0.95, 0.95, (4000, 3))
     if name == "wires":  # near the wires: points in the plane volume
         X = np.random.default_rng(3).uniform([-0.01, -0.35, -0.35], [0.01, 0.35, 0.35], (4000, 3))
-    v = np.asarray(vm(nav.locate)(jnp.asarray(X, F32)))
+    v = locate(nav, X)
     med = nav.host["cls"][v]
     ref = oracle.Oracle(sc).label(X)[0]
     bad = np.flatnonzero(med != ref)
@@ -65,7 +68,7 @@ def test_wires_frame_group_and_walks(toys):
     O_ = np.c_[np.full(500, -0.5), rng.uniform(-0.25, 0.25, (500, 2))]
     Dr = np.tile([1.0, 0, 0], (500, 1)) + rng.normal(0, 0.05, (500, 3))
     Dr /= np.linalg.norm(Dr, axis=1, keepdims=True)
-    r = vm(lambda o, d: nav.query(o, d, nav.locate(o), t_max=10.0))(jnp.asarray(O_, F32), jnp.asarray(Dr, F32))
+    r = query(nav, O_, Dr, locate(nav, O_), t_max=10.0)
     orc = oracle.Oracle(sc)
     ref = [orc.query(O_[i], Dr[i], T_ORC, 10.0, push=0.0) for i in range(len(O_))]
     ra = np.asarray(r["cls_after"])
@@ -85,9 +88,24 @@ def test_split_unions_exact():
 
 def _jets_case(nav, n=300, seed=10):
     O_, Dr = rays(n, 9, half=0.6)
-    vol = np.asarray(vm(nav.locate)(jnp.asarray(O_, F32)))
+    vol = locate(nav, O_)
     tg = np.random.default_rng(seed).normal(size=(n, 6))
     return nav, O_, Dr, vol, tg
+
+
+def t_jets(nav, o, d, v, last, u, t_max):
+    """(t, y) of one query and their first and second derivatives along the tangent u = (do, dd), y = o + t d the
+    hit point (the custom_jvp's live t); one program for the three jet tests"""
+
+    def f(oo, dd):
+        t = nav.query(oo, dd, v, last=last, t_max=t_max)["t"]
+        return jnp.concatenate([t[None], oo + t * dd])
+
+    def g(oo, dd):
+        return jax.jvp(f, (oo, dd), (u[:3], u[3:]))
+
+    (ty, d1), (_, d2) = jax.jvp(g, (o, d), (u[:3], u[3:]))
+    return ty, d1, d2
 
 
 def test_live_t_derivative_matches_float64_fd(toys):
@@ -95,12 +113,8 @@ def test_live_t_derivative_matches_float64_fd(toys):
     sc, nav = toys("nest")
     nav, O_, Dr, vol, tg = _jets_case(nav)
     orc = oracle.Oracle(sc)
-
-    def tf(o, d, v, u):
-        return jax.jvp(lambda oo, dd: nav.query(oo, dd, v, t_max=10.0)["t"], (o, d), (u[:3], u[3:]))
-
-    t, dt = vm(tf)(jnp.asarray(O_, F32), jnp.asarray(Dr, F32), jnp.asarray(vol, I32), jnp.asarray(tg, F32))
-    t, dt = np.asarray(t), np.asarray(dt)
+    ty, d1, _ = per_ray(t_jets, nav, O_, Dr, vol, np.full(len(vol), -1), tg, shared=(10.0,))
+    t, dt = ty[:, 0], d1[:, 0]
     h = 1e-6
     errs = []
     for i in range(len(O_)):
@@ -128,19 +142,7 @@ def test_live_t_second_derivative_matches_float64_fd(toys):
     sc, nav = toys("nest")
     nav, O_, Dr, vol, tg = _jets_case(nav)
     orc = oracle.Oracle(sc)
-
-    def tf(o, d, v, u):
-        def f(oo, dd):
-            t = nav.query(oo, dd, v, t_max=10.0)["t"]
-            return jnp.concatenate([t[None], oo + t * dd])
-
-        def g(oo, dd):
-            return jax.jvp(f, (oo, dd), (u[:3], u[3:]))[1]
-
-        return f(o, d), jax.jvp(g, (o, d), (u[:3], u[3:]))[1]
-
-    ty, d2 = (np.asarray(a) for a in vm(tf)(jnp.asarray(O_, F32), jnp.asarray(Dr, F32), jnp.asarray(vol, I32),
-                                            jnp.asarray(tg, F32)))  # fmt: skip
+    ty, _, d2 = per_ray(t_jets, nav, O_, Dr, vol, np.full(len(vol), -1), tg, shared=(10.0,))
     h = 1e-4
     errs = []
     for i in range(len(O_)):
@@ -163,36 +165,37 @@ def test_live_t_second_derivative_matches_float64_fd(toys):
     assert len(errs) > 150 and np.median(errs) < 1e-5 and np.max(errs) < 1e-2, (len(errs), np.median(errs))
 
 
+def held_and_query(nav, o, d, v, u):
+    """[(t, normal), first and second derivatives along u] of the query (fq) and of the held surface (fs)"""
+    G = tracked.TrackedGeometry(nav, nav.n + 1, np.full(nav.n + 1, -1, np.int32))
+    q = G.query(None, o, d, 0, 10.0, vol=v)
+
+    def fq(oo, dd):
+        r = G.query(None, oo, dd, 0, 10.0, vol=v)
+        return r["t"], r["normal"]
+
+    def fs(oo, dd):
+        return G.surface(None, q, oo, dd)
+
+    out = []
+    for f in (fq, fs):
+
+        def g1(oo, dd, f=f):
+            return jax.jvp(f, (oo, dd), (u[:3], u[3:]))[1]
+
+        out.append((f(o, d), g1(o, d), jax.jvp(g1, (o, d), (u[:3], u[3:]))[1]))
+    return out
+
+
 def test_held_surface_is_the_query_in_value_and_jets(toys):
     """surface_at (the winner held, no second walk) gives the query's own t and normal and their first derivatives
     along a tangent bit for bit, the second to float32 rounding"""
     sc, nav = toys("nest")
     nav = nav.with_classes(list(range(nav.n)), [], nav.n)
-    G = tracked.TrackedGeometry(nav, nav.n + 1, np.full(nav.n + 1, -1, np.int32))
     O_, Dr = rays(300, 9, half=0.6)
-    vol = np.asarray(vm(nav.locate)(jnp.asarray(O_, F32)))
+    vol = locate(nav, O_)
     tg = np.random.default_rng(11).normal(size=(300, 6)).astype(np.float32)
-
-    def both(o, d, v, u):
-        q = G.query(None, o, d, 0, 10.0, vol=v)
-
-        def fq(oo, dd):
-            r = G.query(None, oo, dd, 0, 10.0, vol=v)
-            return r["t"], r["normal"]
-
-        def fs(oo, dd):
-            return G.surface(None, q, oo, dd)
-
-        out = []
-        for f in (fq, fs):
-
-            def g1(oo, dd, f=f):
-                return jax.jvp(f, (oo, dd), (u[:3], u[3:]))[1]
-
-            out.append((f(o, d), g1(o, d), jax.jvp(g1, (o, d), (u[:3], u[3:]))[1]))
-        return out
-
-    a, b = vm(both)(jnp.asarray(O_, F32), jnp.asarray(Dr, F32), jnp.asarray(vol, I32), jnp.asarray(tg))
+    a, b = per_ray(held_and_query, nav, O_, Dr, vol, tg)
     la, lb = jax.tree_util.tree_leaves(a), jax.tree_util.tree_leaves(b)
     for x, y in zip(la[:4], lb[:4], strict=False):  # t, normal and their first derivatives: bit for bit
         assert np.array_equal(np.asarray(x), np.asarray(y))
@@ -201,15 +204,20 @@ def test_held_surface_is_the_query_in_value_and_jets(toys):
         assert np.allclose(x, y, rtol=1e-4, atol=1e-6 * np.max(np.abs(x))), np.max(np.abs(x - y))
 
 
+def crossing_and_surface(nav, o, d, v):
+    """next_crossing's Crossing, and surface_at on it"""
+    cx = navigate.next_crossing(nav, o, d, v)
+    return cx, navigate.surface_at(nav, cx, o, d)
+
+
 def test_next_crossing_is_the_query(toys):
     """the Crossing record carries the query's values; surface_at on it gives the query's t"""
     nav = toys("nest")[1]
-    o, d = jnp.array([0.1, 0.0, -0.8], F32), jnp.array([0.0, 0.0, 1.0], F32)
-    v = navigate.locate(nav, o)
-    cx = jax.jit(lambda o_, d_: navigate.next_crossing(nav, o_, d_, v))(o, d)
-    r = jax.jit(lambda o_, d_: nav.query(o_, d_, v))(o, d)
+    o, d = np.array([[0.1, 0.0, -0.8]]), np.array([[0.0, 0.0, 1.0]])
+    v = locate(nav, o)
+    cx, (t, n) = one(per_ray(crossing_and_surface, nav, o, d, v))
+    r = one(query(nav, o, d, v))
     assert float(cx.t) == float(r["t"]) and int(cx.vol_after) == int(r["vol_after"]) and int(cx.srf) == int(r["srf"])
-    t, n = jax.jit(lambda o_, d_: navigate.surface_at(nav, cx, o_, d_))(o, d)
     assert float(t) == float(r["t"]) and np.array_equal(np.asarray(n), np.asarray(r["normal"]))
 
 
@@ -223,21 +231,22 @@ def test_multi_member_fails_closed():
 
 
 def _q(nav):
-    return jax.jit(lambda o, d, v, l_: nav.query(o, d, v, last=l_))
+    """one query (o, d, vol, last) -> its dict"""
+    return lambda o, d, v, l_: one(query(nav, o, d, v, l_))
 
 
 def test_reversal_at_the_face_just_crossed_exits(toys):
     """a photon that has just entered a volume and heads straight back out makes a zero-length exit to the mother"""
     nav = toys("nest")[1]
     q = _q(nav)
-    o = jnp.array([0.1, 0.0, -0.8], F32)
-    up, down = jnp.array([0.0, 0.0, 1.0], F32), jnp.array([0.0, 0.0, -1.0], F32)
-    v_world = int(jax.jit(nav.locate)(o))
-    r1 = jax.tree.map(np.asarray, q(o, up, I32(v_world), I32(-1)))  # into the tank's bottom face
+    o = np.array([0.1, 0.0, -0.8], np.float32)
+    up, down = np.array([0.0, 0.0, 1.0], np.float32), np.array([0.0, 0.0, -1.0], np.float32)
+    v_world = int(locate(nav, o)[0])
+    r1 = q(o, up, I32(v_world), I32(-1))  # into the tank's bottom face
     assert r1["hit"] and abs(float(r1["t"]) - 0.3) < 1e-5 and int(r1["vol_after"]) != v_world
     # the hit point 0.3 um inside the face, within the identity band (8 eps |x| ~ 0.8 um)
-    x = o + (F32(r1["t"]) + F32(3e-7)) * up
-    r2 = jax.tree.map(np.asarray, q(x, down, I32(r1["vol_after"]), I32(r1["item"])))
+    x = o + (np.float32(r1["t"]) + np.float32(3e-7)) * up
+    r2 = q(x, down, I32(r1["vol_after"]), I32(r1["item"]))
     assert r2["hit"] and float(r2["t"]) < 1e-5 and int(r2["vol_after"]) == v_world, r2
 
 
@@ -245,12 +254,14 @@ def test_turning_back_at_the_face_just_left_enters_it(toys):
     """Geant4: a photon on X's face heading into X enters X (a zero-length step) -- also when X is the volume just
     left. The side is the photon's state (srf), only the direction decides; starts 0-3 ulps either side, 1-80 deg"""
     nav = toys("nest")[1]
-    q = jax.jit(jax.vmap(lambda o, d, v, l_: nav.query(o, d, v, last=l_), in_axes=(0, 0, None, None)))
-    o = jnp.array([0.1, 0.0, -0.4], F32)
-    v_in = int(jax.jit(nav.locate)(o))
-    r1 = jax.tree.map(np.asarray, jax.jit(lambda o, d: nav.query(o, d, I32(v_in), last=I32(-1)))(
-        o, jnp.array([0.0, 0.0, -1.0], F32)))  # fmt: skip
-    v_out, x0 = int(r1["vol_after"]), np.asarray(o) + np.float32(r1["t"]) * np.array([0, 0, -1], np.float32)
+
+    def q(X, D, v, l_):
+        return query(nav, X, D, v, l_)
+
+    o = np.array([0.1, 0.0, -0.4], np.float32)
+    v_in = int(locate(nav, o)[0])
+    r1 = one(query(nav, o, np.array([0.0, 0.0, -1.0]), v_in, -1))
+    v_out, x0 = int(r1["vol_after"]), o + np.float32(r1["t"]) * np.array([0, 0, -1], np.float32)
     assert r1["hit"] and v_out != v_in and int(r1["item"]) == v_in, r1
     srf = int(r1["srf"])  # the tank, its bottom face, the outward sign: the state
     assert int(nav.srf_decode(srf)[0]) == v_in and bool(nav.srf_decode(srf)[4]), srf
@@ -260,16 +271,15 @@ def test_turning_back_at_the_face_just_left_enters_it(toys):
     X[:, 2] += rng.integers(-3, 4, N).astype(np.float32) * np.float32(6e-8)
     ang, phi = np.radians(rng.uniform(1.0, 80.0, N)), rng.uniform(0, 2 * np.pi, N)
     Dr = np.stack([np.sin(ang) * np.cos(phi), np.sin(ang) * np.sin(phi), np.cos(ang)], 1).astype(np.float32)
-    r = jax.tree.map(np.asarray, q(jnp.asarray(X), jnp.asarray(Dr), I32(v_out), I32(srf)))
+    r = q(X, Dr, v_out, srf)
     ok = r["hit"] & (r["t"] < 1e-5) & (r["vol_after"] == v_in)
     assert ok.all(), (int((~ok).sum()), r["t"][~ok][:5], r["vol_after"][~ok][:5])
     # the direction from the event's own normal (as the step passes it) answers alike
-    qs = jax.jit(jax.vmap(lambda o, d, v, l_, n_: nav.query(o, d, v, last=l_, sn=n_), in_axes=(0, 0, None, None, None)))
-    rs = jax.tree.map(np.asarray, qs(jnp.asarray(X), jnp.asarray(Dr), I32(v_out), I32(srf), jnp.asarray(r1["normal"])))
+    rs = query(nav, X, Dr, v_out, srf, sn=r1["normal"])
     for k_ in ("hit", "t", "vol_after", "zero", "srf"):
         np.testing.assert_array_equal(rs[k_], r[k_], err_msg=k_)
     Dr[:, 2] *= -1  # heading on away from the tank: no zero-length entry
-    r = jax.tree.map(np.asarray, q(jnp.asarray(X), jnp.asarray(Dr), I32(v_out), I32(srf)))
+    r = q(X, Dr, v_out, srf)
     bad = r["hit"] & (r["t"] < 1e-5)
     assert bad.sum() == 0, (int(bad.sum()), r["vol_after"][bad][:5])
 
@@ -281,37 +291,39 @@ def test_grazing_reflection_inside_a_far_sphere_meets_its_far_side():
                      "orb": defn("orb", solids.g4_orb(0.25), 2)})  # fmt: skip
     nav = nav_of(sc)
     vo = nav.defs.index("orb")
-    o = jnp.array([20.0, 0.0, 0.0], F32)
-    r1 = jax.tree.map(np.asarray, jax.jit(lambda o, d: nav.query(o, d, I32(vo), last=I32(-1)))(
-        o, jnp.array([0.0, 1.0, 0.0], F32)))  # fmt: skip
+    o = np.array([20.0, 0.0, 0.0], np.float32)
+    r1 = one(query(nav, o, np.array([0.0, 1.0, 0.0]), vo, -1))
     assert r1["hit"] and abs(float(r1["t"]) - 0.25) < 1e-4, r1
-    x0 = np.asarray(o) + np.float32(r1["t"]) * np.array([0, 1, 0], np.float32)
+    x0 = o + np.float32(r1["t"]) * np.array([0, 1, 0], np.float32)
     rng = np.random.default_rng(2)
     N = 200
     a = np.radians(rng.uniform(0.25, 3.0, N))
     phi = rng.uniform(0, 2 * np.pi, N)
     Dr = np.stack([np.cos(a) * np.cos(phi), -np.sin(a), np.cos(a) * np.sin(phi)], 1).astype(np.float32)
     X = np.repeat(x0[None], N, 0).astype(np.float32)
-    q = jax.jit(jax.vmap(lambda x, d: nav.query(x, d, I32(vo), last=I32(r1["srf"]))))
-    r = jax.tree.map(np.asarray, q(jnp.asarray(X), jnp.asarray(Dr)))
+
+    def q(X, D):
+        return query(nav, X, D, vo, r1["srf"])
+
+    r = q(X, Dr)
     chord = 2 * 0.25 * np.sin(a)
     ok = r["hit"] & (np.abs(r["t"] - chord) < 1e-3 * chord + 1e-4) & (r["vol_after"] != vo)
     assert ok.all(), (int((~ok).sum()), np.degrees(a[~ok][:5]), r["t"][~ok][:5], chord[~ok][:5])
     a = np.radians(rng.uniform(0.01, 0.25, N))
     Dr = np.stack([np.cos(a) * np.cos(phi), -np.sin(a), np.cos(a) * np.sin(phi)], 1).astype(np.float32)
-    r = jax.tree.map(np.asarray, q(jnp.asarray(X), jnp.asarray(Dr)))
+    r = q(X, Dr)
     ok = r["hit"] & (r["vol_after"] != vo) & (r["t"] < 2 * 0.25 * np.sin(a) + 1e-3)
     assert ok.all(), (int((~ok).sum()), np.degrees(a[~ok][:5]), r["t"][~ok][:5])
 
 
 def _reentry(nav):
     q = _q(nav)
-    o = jnp.array([0.1, 0.0, -0.8], F32)
-    up = jnp.array([0.0, 0.0, 1.0], F32)
-    v_world = int(jax.jit(nav.locate)(o))
-    r1 = jax.tree.map(np.asarray, q(o, up, I32(v_world), I32(-1)))
-    x = o + (F32(r1["t"]) + F32(3e-7)) * up
-    d = jnp.array([0.5, 0.0, -1.0], F32) / np.float32(np.sqrt(1.25))
+    o = np.array([0.1, 0.0, -0.8], np.float32)
+    up = np.array([0.0, 0.0, 1.0], np.float32)
+    v_world = int(locate(nav, o)[0])
+    r1 = q(o, up, I32(v_world), I32(-1))
+    x = o + (np.float32(r1["t"]) + np.float32(3e-7)) * up
+    d = np.array([0.5, 0.0, -1.0], np.float32) / np.float32(np.sqrt(1.25))
     return q, x, d, I32(r1["vol_after"]), I32(r1["item"]), v_world, up
 
 
@@ -319,7 +331,7 @@ def test_zero_length_events_carry_their_face_normal(toys):
     """a zero-length exit the on-face rule decides is at the face it sits on: the normal is that face's, not -d"""
     nav = toys("nest")[1]
     q, x, d, v1, l1, v_world, _ = _reentry(nav)
-    r2 = jax.tree.map(np.asarray, q(x, d, v1, l1))
+    r2 = q(x, d, v1, l1)
     assert r2["hit"] and float(r2["t"]) < 1e-5 and int(r2["vol_after"]) == v_world, r2
     assert abs(float(r2["normal"][2])) > 0.999 and float(np.dot(r2["normal"], np.asarray(d))) < 0, r2["normal"]
 
@@ -328,7 +340,8 @@ def test_a_zero_length_event_carries_its_live_t(toys):
     """a zero-length event on a known face is the implicit function of that face too: d t / d o = -n_z / (n . d)"""
     nav = toys("nest")[1]
     q, x, d, v1, l1, _, up = _reentry(nav)
-    t, dt = jax.jit(lambda x_: jax.jvp(lambda xx: q(xx, d, v1, l1)["t"], (x_,), (up,)))(x)
+    ty, d1, _ = one(per_ray(t_jets, nav, x[None], d[None], [v1], [l1], np.r_[up, 0, 0, 0][None], shared=(1e3,)))
+    t, dt = ty[0], d1[0]
     n = np.asarray(q(x, d, v1, l1)["normal"])
     assert float(t) < 1e-5
     want = -n[2] / float(np.dot(n, np.asarray(d)))
@@ -353,8 +366,7 @@ def test_a_pass_pair_leaves_the_visible_crossing_its_true_class_before():
     X = (u * rng.uniform(0.26, 0.295, N)[:, None]).astype(np.float32)
     Dr = -u + 0.05 * rng.normal(size=(N, 3))
     Dr = (Dr / np.linalg.norm(Dr, axis=1, keepdims=True)).astype(np.float32)
-    q = jax.jit(jax.vmap(lambda x, d: nav.query(x, d, I32(vg), last=I32(-1), pass_tab=P)))
-    r = jax.tree.map(np.asarray, q(jnp.asarray(X), jnp.asarray(Dr)))
+    r = query(nav, X, Dr, vg, -1, pass_tab=P)
     ok = (r["hit"] & (r["cls_before"] == 3) & (r["vol_before"] == vb) & (r["cls_after"] == 4) & (r["vol_after"] == vi)
           & (r["n_pass"] >= 1))  # fmt: skip
     assert ok.all(), (int((~ok).sum()), r["cls_before"][~ok][:5], r["vol_before"][~ok][:5])
@@ -380,10 +392,9 @@ def test_rounds_run_out_on_a_row_of_same_class_envelopes():
                      "abs": defn("abs", solids.g4_box(0.1, 0.1, 0.1), 2)})  # fmt: skip
     nav = nav_of(sc)
     o, d = np.array([-0.95, 0.001, 0.002]), np.array([1.0, 0.0, 0.0])
-    q = jax.jit(lambda o_, v, l_: nav.query(o_, jnp.asarray(d, F32), v, last=l_, t_max=10.0))
-    vol, last, x, n_cont = int(jax.jit(nav.locate)(jnp.asarray(o, F32))), -1, o.astype(np.float32), 0
+    vol, last, x, n_cont = int(locate(nav, o)[0]), -1, o.astype(np.float32), 0
     for _ in range(12):
-        r = {k: np.asarray(v) for k, v in q(jnp.asarray(x, F32), I32(vol), I32(last)).items()}
+        r = one(query(nav, x, d, vol, last, t_max=10.0))
         assert r["hit"]
         x = (x + np.float32(r["t"]) * d.astype(np.float32)).astype(np.float32)
         vol, last = int(r["vol_after"]), int(r["item"])
@@ -411,12 +422,12 @@ def test_no_zero_length_entry_from_a_face_heading_out():
     O_ = np.stack([x, y, z], 1).astype(np.float32)
     Dr = np.stack([np.sin(ang), np.cos(ang) * np.cos(phi), np.cos(ang) * np.sin(phi)], 1).astype(np.float32)
     for last in (-1, dv):
-        r = vm(lambda o, d, last=last: nav.query(o, d, I32(0), last=I32(last)))(jnp.asarray(O_), jnp.asarray(Dr))
-        out = np.asarray(r["hit"]) & (np.asarray(r["t"]) < 1e-5)
+        r = query(nav, O_, Dr, 0, last)
+        out = r["hit"] & (r["t"] < 1e-5)
         assert out.sum() == 0, (last, int(out.sum()))
     Dr[:, 0] *= -1  # heading in: the zero-length entry stays
-    r = vm(lambda o, d: nav.query(o, d, I32(0), last=I32(-1)))(jnp.asarray(O_), jnp.asarray(Dr))
-    ins = np.asarray(r["hit"]) & (np.asarray(r["t"]) < 1e-5) & (np.asarray(r["vol_after"]) == dv)
+    r = query(nav, O_, Dr, 0, -1)
+    ins = r["hit"] & (r["t"] < 1e-5) & (r["vol_after"] == dv)
     assert ins.mean() == 1.0, ins.mean()
 
 
@@ -438,10 +449,10 @@ def test_a_mesh_face_within_the_band_ahead_is_met():
     V0 = np.asarray(nav.dev()["V0"], np.float64)
     ka = int(np.argmin(np.abs(V0 - A[0]).sum(1)))
     kb = int(np.argmin(np.abs(V0 - Bt[0]).sum(1)))
-    o = jnp.asarray([0.5950872302055359, 1.4237298965454102, 1.8702424764633179], F32)
-    d = jnp.asarray([-0.053876541554927826, 0.9535114169120789, -0.2965017557144165], F32)
+    o = np.asarray([0.5950872302055359, 1.4237298965454102, 1.8702424764633179], np.float32)
+    d = np.asarray([-0.053876541554927826, 0.9535114169120789, -0.2965017557144165], np.float32)
     srf = nav.srf_pack(I32(nav.CH0), I32(ka), I32(-1), jnp.bool_(True), jnp.bool_(True))
-    q = jax.jit(lambda o_, d_, l_: nav.query(o_, d_, I32(0), last=l_, t_max=10.0))(o, d, srf)
+    q = one(query(nav, o, d, 0, srf, t_max=10.0))
     assert bool(q["hit"]) and int(q["leaf"]) == kb and float(q["t"]) < 1e-5, (float(q["t"]), int(q["leaf"]), ka, kb)
 
 
@@ -465,7 +476,10 @@ def test_a_mesh_facet_is_met_only_by_a_ray_entering_it():
     mesh's opaque class"""
     nav = nav_of(_mesh_scene(cube_tris((1.9, 0.0, 0.0), 0.05), 8.0))
     band = 8 * 2.0**-23 * 1.95
-    q = jax.jit(lambda o_, d_: nav.query(o_, d_, I32(0), t_max=10.0))
+
+    def q(o_, d_):
+        return one(query(nav, o_, d_, 0, t_max=10.0))
+
     d = np.array([-0.6, 0.3, 0.2])
     d /= np.linalg.norm(d)
     r = q(jnp.asarray([1.95 - 0.1 * band, 0.01, -0.01], F32), jnp.asarray(d, F32))
@@ -520,8 +534,7 @@ def test_a_long_mesh_triangle_is_met_at_its_plane(case):
     ka = int(np.argmin(np.abs(V0 - A[0]).sum(1) + np.abs(V1 - A[1]).sum(1)))
     kb = int(np.argmin(np.abs(V0 - Bt[0]).sum(1) + np.abs(V1 - Bt[1]).sum(1)))
     srf = nav.srf_pack(I32(nav.CH0), I32(ka), I32(-1), jnp.bool_(o_flag), jnp.bool_(True))
-    q = jax.jit(lambda o_, d_, l_, s_: nav.query(o_, d_, I32(0), last=l_, sn=s_, t_max=10.0))(
-        jnp.asarray(o, F32), jnp.asarray(d, F32), srf, jnp.asarray(sn, F32))  # fmt: skip
+    q = one(query(nav, o, d, 0, srf, sn=sn, t_max=10.0))
     nb = np.cross(Bt[1] - Bt[0], Bt[2] - Bt[0])
     short = 3 * 2.0**-23 * 2.0 / abs(float(np.dot(nb / np.linalg.norm(nb), d)))
     assert bool(q["hit"]) and int(q["leaf"]) == kb and t64 - short - 1e-7 < float(q["t"]) < t64 + 1e-6, (
@@ -548,12 +561,9 @@ def test_a_grazing_entry_at_a_rim_is_in():
     O_ = (c + np.stack([rho * np.cos(phi), rho * np.sin(phi), z], 1)).astype(np.float32)  # on the sphere
     a = np.radians(rng.uniform(0.05, 0.3, N))
     Dr = np.stack([-np.cos(phi) * np.cos(a), -np.sin(phi) * np.cos(a), np.sin(a)], 1).astype(np.float32)
-    q = vm(lambda o, d, v, l_, n_: nav.query(o, d, v, last=l_, sn=n_))
-    r1 = jax.tree.map(np.asarray, q(jnp.asarray(O_), jnp.asarray(Dr), jnp.zeros(N, I32), jnp.full(N, -1, I32),
-                                    jnp.zeros((N, 3), F32)))  # fmt: skip
+    r1 = query(nav, O_, Dr, 0, -1, sn=np.zeros(3))
     assert (r1["hit"] & (r1["vol_after"] == cv)).mean() == 1.0
     X = (O_ + r1["t"][:, None] * Dr).astype(np.float32)
-    r2 = jax.tree.map(np.asarray, q(jnp.asarray(X), jnp.asarray(Dr), jnp.full(N, cv, I32), jnp.asarray(r1["srf"]),
-                                    jnp.asarray(r1["normal"])))  # fmt: skip
+    r2 = query(nav, X, Dr, cv, r1["srf"], sn=r1["normal"])
     back = r2["hit"] & (r2["t"] < 1e-3)  # the chord to the far side is ~ 7 cm
     assert back.sum() == 0, (int(back.sum()), r2["t"][back][:5], r2["vol_after"][back][:5])
