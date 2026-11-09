@@ -136,7 +136,8 @@ class Evaluator:
             return v
         except ValueError:
             pass
-        toks, pos = [], 0
+        toks: list[tuple[str, object]] = []
+        pos = 0
         while pos < len(s):
             mm = _TOK.match(s, pos)
             if not mm or mm.end() == pos:
@@ -150,7 +151,7 @@ class Evaluator:
                 toks.append(("i", mm.group(2)))
             else:
                 toks.append(("o", mm.group(3)))
-        saved = (getattr(self, "_t", None), getattr(self, "_p", 0))
+        saved: tuple = (getattr(self, "_t", None), getattr(self, "_p", 0))
         self._t, self._p = toks, 0
         try:
             v = self._expr()
@@ -222,7 +223,7 @@ class Evaluator:
         f = FUNCS.get(name)
         if f is None:
             raise GDMLError("unknown function " + name)
-        return float(f(*args))
+        return float(f(*args))  # type: ignore[operator]
 
     def _element(self, name):
         idx = [self._expr()]
@@ -774,7 +775,7 @@ class GDMLDocument:
             if child not in self.volumes:
                 raise GDMLError(f"volume {v.name!r}: physvol {c.get('name')!r} places {child!r}, not defined before it")
             copy = c.get("copynumber")
-            v.placements.append(Physvol(child, c.get("name") or child + "_PV",
+            v.placements.append(Physvol(str(child), c.get("name") or f"{child}_PV",
                                         None if copy is None else int(round(self.num(copy, "copynumber"))),
                                         self.transform(c)))  # fmt: skip
 
@@ -797,7 +798,8 @@ def write_normalised(src, dst):
     ET.register_namespace("xsi", "http://www.w3.org/2001/XMLSchema-instance")
     tree = ET.parse(src)
     root = tree.getroot()
-    rep, nden = [], [0]
+    rep: list[str] = []
+    nden = [0]
 
     def fix(text):
         def f(mo):
@@ -813,7 +815,7 @@ def write_normalised(src, dst):
             nv = fix(v)
             if nv != v:
                 el.set(k, nv)
-    seen = {}
+    seen: dict = {}
     for sec in root:
         if tag(sec) == "define":
             for el in list(sec):

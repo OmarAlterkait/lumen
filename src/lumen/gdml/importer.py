@@ -80,7 +80,7 @@ def solids(doc: reader.GDMLDocument) -> tuple[dict, dict, list]:
     """Return (solids, meshes, report lines) of the document."""
     out, meshes, rep = {}, {}, []
     for name, s in doc.solids.items():
-        kw = {}
+        kw: dict = {}
         if s.type in reader.BOOLEAN or s.type == "multiUnion":
             kw.update(refs=tuple(s.refs), transforms=tuple(_transform(t) for t in s.transforms))
         elif s.type == "scaledSolid":
@@ -105,7 +105,8 @@ def solids(doc: reader.GDMLDocument) -> tuple[dict, dict, list]:
 
 def structure(doc: reader.GDMLDocument) -> tuple[dict, tuple]:
     """Return (volumes, placements): every placement in document order, each volume's daughters in Geant4's order."""
-    placements, volumes = [], {}
+    placements: list = []
+    volumes: dict = {}
     for name, v in doc.volumes.items():
         idx = []
         for pv in v.placements:
@@ -160,15 +161,15 @@ def read_property(doc: reader.GDMLDocument, key: str, ref: str, what: str, rep: 
     """
     try:
         m = doc.matrix(ref)
-    except reader.GDMLError as e:
-        raise ImportRefused(f"{what}.{key}: {e}") from None
+    except reader.GDMLError as err:
+        raise ImportRefused(f"{what}.{key}: {err}") from None
     toks = doc.matrix_text.get(ref, [])
     length = key in LENGTH_KEYS
     if m.shape[1] == 1:
-        v = float(m[0, 0])
+        c = float(m[0, 0])
         if length:
-            v = _length_m(toks[0], v) if toks else v / MM_PER_M
-        return schema.Property(key, np.asarray(v, np.float64), None, ref)
+            c = _length_m(toks[0], c) if toks else c / MM_PER_M
+        return schema.Property(key, np.asarray(c, np.float64), None, ref)
     if m.shape[1] != 2:
         raise ImportRefused(f"{what}.{key}: matrix {ref!r} has {m.shape[1]} columns (a property needs 1 or 2)")
     e = np.array([_energy_ev(toks[2 * i], m[i, 0]) for i in range(m.shape[0])], np.float64)
@@ -237,7 +238,8 @@ def surfaces(doc: reader.GDMLDocument, placements: tuple, rep: list) -> tuple[di
         props = _properties(doc, s.props, f"opticalsurface {name!r}", rep, skip=SURFACE_INERT)
         out[name] = schema.Surface(name, s.type, s.model, s.finish, float(doc.num(s.value, f"opticalsurface {name!r}")),
                               props, inert=inert)  # fmt: skip
-    skins, seen_lv = [], {}
+    skins: list = []
+    seen_lv: dict = {}
     for name, surf, lvs in doc.skins:
         _known(out, surf, name)
         for lv in lvs:
@@ -289,7 +291,8 @@ def read_gdml(path) -> schema.DetectorFile:
     sha = hashlib.sha256(Path(path).read_bytes()).hexdigest()
     prov = dict(importer="lumen.gdml.import_gdml", importer_version=IMPORTER_VERSION,
                 source=dict(file=Path(path).name, sha256=f"sha256:{sha}"))  # fmt: skip
-    return schema.DetectorFile(name=Path(path).stem, world=doc.world, detector_volume=doc.world,
+    world = str(doc.world)
+    return schema.DetectorFile(name=Path(path).stem, world=world, detector_volume=world,
                           wavelength_range=(0.0, 0.0), solids=sol, volumes=vols, placements=pls, materials=mats,
                           elements=els, isotopes=isos, surfaces=surfs, skins=skins, borders=borders, meshes=meshes,
                           userinfo=tuple(_aux(a) for a in doc.userinfo), provenance=prov,

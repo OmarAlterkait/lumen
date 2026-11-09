@@ -38,8 +38,8 @@ class Aux:
 class Transform:
     """A GDML transform: rotation angles (rad, GDML order x, y, z) and position (m)."""
 
-    rotation: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    position: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    rotation: tuple[float, ...] = (0.0, 0.0, 0.0)
+    position: tuple[float, ...] = (0.0, 0.0, 0.0)
 
 
 @dataclass(frozen=True)
@@ -58,7 +58,7 @@ class Solid:
     params: dict[str, float] = field(default_factory=dict)
     refs: tuple[str, ...] = ()
     transforms: tuple[Transform, ...] = ()
-    scale: tuple[float, float, float] | None = None
+    scale: tuple[float, ...] | None = None
     planes: tuple[tuple[float, ...], ...] = ()
     vertices: tuple[tuple[float, ...], ...] = ()
     sections: tuple[tuple[float, float, float, float], ...] = ()
@@ -85,9 +85,9 @@ class Placement:
     volume: str
     mother: str
     copy: int | None
-    position: tuple[float, float, float]  # m, in the mother's frame
-    rotation: tuple[float, float, float]  # rad, GDML physvol angles (passive)
-    scale: tuple[float, float, float] | None = None
+    position: tuple[float, ...]  # m, in the mother's frame
+    rotation: tuple[float, ...]  # rad, GDML physvol angles (passive)
+    scale: tuple[float, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -220,9 +220,10 @@ class DetectorFile:
 
     ``detector_volume`` is the logical volume that is simulated (light leaving it is absorbed: ``outside``), and
     ``outside_surface`` the surface a photon meets on leaving it, when the recipe names one; ``wavelength_range``
-    (nm) is where every optical table must be defined. ``meshes`` holds the tessellated solids'
-    triangle arrays by name. ``provenance`` records the source file, its sha256, the importer and recipe, and
-    ``report`` every normalisation and decision, in words.
+    (nm) is where every optical table must be defined. ``build_options`` holds the recipe's choices for building the
+    geometry (``split_unions``: unions of more pieces than this are placed as their pieces). ``meshes`` holds the
+    tessellated solids' triangle arrays by name. ``provenance`` records the source file, its sha256, the importer
+    and recipe, and ``report`` every normalisation and decision, in words.
     """
 
     name: str
@@ -241,6 +242,7 @@ class DetectorFile:
     meshes: dict[str, np.ndarray] = field(default_factory=dict)
     outside: str = OUTSIDE_ABSORB
     outside_surface: str | None = None
+    build_options: dict = field(default_factory=dict)
     userinfo: tuple[Aux, ...] = ()
     provenance: dict = field(default_factory=dict)
     report: tuple[str, ...] = ()

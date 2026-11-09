@@ -54,7 +54,7 @@ def save(c: Calibration, directory) -> Path:
     if path.exists():
         raise FileExistsError(f"calibration {path} exists: choose a new name")
     arrays = d / c.name
-    values = {}
+    values: dict[str, object] = {}
     for i, (key, v) in enumerate(sorted(c.values.items())):
         if isinstance(v, Table):
             arrays.mkdir(parents=True, exist_ok=True)

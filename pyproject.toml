@@ -48,6 +48,8 @@ ignore = ["N806"]
 "tools/**" = ["D", "T20", "TID251", "B023", "PLR0912", "PLR0913", "PLR0915", "C901"]
 # imports the baseline's modules under the baseline's own short names, so the case code reads like the baseline's
 "tools/port/leaf_goldens.py" = ["N812"]
+"tools/port/import_goldens.py" = ["N812"]
+"tools/port/harness/b0_run.py" = ["N812"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
@@ -70,8 +72,17 @@ known-first-party = ["lumen"]
 [tool.mypy]
 # Host-side code only (style guide): device code is annotated with jax.Array and checked by its tests.
 python_version = "3.10"
-files = ["src/lumen/_env.py", "src/lumen/_cache.py"]
-strict = true
+files = ["src/lumen/_env.py", "src/lumen/_cache.py", "src/lumen/format", "src/lumen/gdml", "src/lumen/params.py",
+         "src/lumen/plugins.py"]
+check_untyped_defs = true
+ignore_missing_imports = true
+follow_imports = "silent"
+
+[[tool.mypy.overrides]]
+module = ["lumen._env", "lumen._cache"]
+disallow_untyped_defs = true
+disallow_any_generics = true
+warn_return_any = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

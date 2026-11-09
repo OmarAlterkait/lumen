@@ -148,7 +148,7 @@ def _optics(o: schema.OpticsModel) -> dict:
 
 def to_files(df: schema.DetectorFile) -> dict[str, bytes]:
     """Return every file of the detector file by relative path (detector.json last, with the manifest)."""
-    w, used = _Writer(), {}
+    w, used = _Writer(), dict[str, str]()
     mats = {}
     for name, m in df.materials.items():
         c = m.composition
@@ -177,7 +177,7 @@ def to_files(df: schema.DetectorFile) -> dict[str, bytes]:
     isotopes = {n: dict(z=i.z, n=i.n, molar_mass_g_mol=i.molar_mass_g_mol) for n, i in df.isotopes.items()}
     solids = {}
     for name, s in df.solids.items():
-        rec = dict(type=s.type, params=s.params)
+        rec: dict[str, object] = dict(type=s.type, params=s.params)
         if s.refs:
             rec["refs"] = list(s.refs)
             rec["transforms"] = [[list(t.rotation), list(t.position)] for t in s.transforms]
@@ -218,7 +218,7 @@ def to_files(df: schema.DetectorFile) -> dict[str, bytes]:
         )
         for n, s in df.surfaces.items()
     }
-    docs = {
+    docs: dict[str, dict] = {
         "materials.json": dict(materials=mats),
         "elements.json": dict(elements=elements, isotopes=isotopes),
         "solids.json": dict(solids=solids),
@@ -244,6 +244,7 @@ def to_files(df: schema.DetectorFile) -> dict[str, bytes]:
         wavelength_range_nm=list(df.wavelength_range),
         outside=df.outside,
         outside_surface=df.outside_surface,
+        build_options=df.build_options,
         provenance=df.provenance,
         report=list(df.report),
         manifest=manifest,
@@ -422,6 +423,7 @@ def read(path) -> schema.DetectorFile:
         meshes=meshes,
         outside=head["outside"],
         outside_surface=head["outside_surface"],
+        build_options=head.get("build_options", {}),
         userinfo=tuple(_aux_back(a) for a in d["userinfo.json"]["userinfo"]),
         provenance=head["provenance"],
         report=tuple(head["report"]),
