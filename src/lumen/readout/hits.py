@@ -7,7 +7,7 @@ measured charge. ``expected_hits`` assumes one window per sensor holding all its
 spread is shorter than the window).
 
 Charge: the number of photoelectrons n in the window is Poisson(mu), mu = pe + dark rate x window, and Q | n is the
-n-fold SPE convolution, computed at once from the characteristic function on a static charge grid:
+convolution of n SPE charges, computed at once from the characteristic function on a static charge grid:
 phi_Q = exp(mu (phi_1 - 1)), one FFT per sensor, exact in mu and the SPE values. Sensors with mu above half the
 grid's range are marked unresolved (their charge distribution is taken Gaussian, their hit probability 1 - e^-mu).
 

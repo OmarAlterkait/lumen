@@ -1,4 +1,4 @@
-"""The photoelectron density and the expected waveform, after tracking (exact folds of the time histogram).
+"""The photoelectron density and the expected waveform, after tracking (exact convolutions of the time histogram).
 
     rho_s(t)  = sum_j H_sj [F(t + dt - t_j - T_s) - F(t - t_j - T_s)]  per bin of width dt, plus dark rate x dt
     E[V_s(t)] = baseline + gain_s m1 (rho_s * <h>)(t)                   m1, m2: the SPE charge's mean and mean square

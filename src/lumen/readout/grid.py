@@ -212,31 +212,37 @@ def from_photons(model, gate, n_sensors: int, photons: dict, replicas: int = 1, 
     """
     grid = make_grid(model, gate)
     n = len(photons["sensor"])
-    dep = _Photons(
-        *(
-            jnp.asarray(photons.get(k, np.zeros(n)), d)
-            for k, d in (("sensor", jnp.int32), ("lam", jnp.float32), ("hit", jnp.float32), ("time", jnp.float32))
-        )
-    )
-    w = np.asarray(photons.get("weight", np.ones(n)), np.float64)
-    r = np.arange(n) % replicas
-    idx, cw = (np.asarray(a) for a in jax.vmap(lambda d: charge_cells(d, grid))(dep))
+    m = 1 << max(int(n - 1).bit_length(), 0)  # padded to a power of two (no sensor): few shapes compile
+
+    def col(k, d, fill=0.0):
+        x = np.asarray(photons.get(k, np.zeros(n)))
+        return jnp.asarray(np.concatenate([x, np.full(m - n, fill)]), d)
+
+    dep = _Photons(col("sensor", jnp.int32, -1), col("lam", jnp.float32), col("hit", jnp.float32),
+                   col("time", jnp.float32))  # fmt: skip
+    w = np.r_[np.asarray(photons.get("weight", np.ones(n)), np.float64), np.zeros(m - n)]
+    r = np.arange(m) % replicas
+    idx, cw = (np.asarray(a) for a in _CELLS(dep, grid))
     charge = np.zeros((replicas, n_sensors * grid.n_lam * grid.n_theta))
     ok = idx >= 0
     np.add.at(charge, (np.broadcast_to(r[:, None], idx.shape)[ok], idx[ok]), (w[:, None] * cw)[ok])
     out = dict(charge=charge.reshape(replicas, n_sensors, grid.n_lam, grid.n_theta))
     if grid.nt:
-        ti, tw, oi, ow = (np.asarray(a) for a in jax.vmap(lambda d: time_cells(d, grid))(dep))
+        ti, tw, oi, ow = (np.asarray(a) for a in _TIME_CELLS(dep, grid))
         time, over = np.zeros(n_sensors * grid.nt), np.zeros((n_sensors * 2, 2))
         ok = ti >= 0
         np.add.at(time, ti[ok], (w[:, None] * tw)[ok])
-        t = np.asarray(photons["time"], np.float64)
+        t = np.r_[np.asarray(photons["time"], np.float64), np.zeros(m - n)]
         for c, val in ((0, w[:, None] * ow), (1, (w * t)[:, None] * ow)):
             np.add.at(over[:, c], oi[oi >= 0], val[oi >= 0])
         over = over.reshape(n_sensors, 2, 2)
         out.update(time=time.reshape(1, n_sensors, grid.nt), late=over[None, :, 0], early=over[None, :, 1])
     out = {k: jnp.asarray(v, jnp.float32) for k, v in out.items()}
     return Histograms(**out, profile=profile, grid=grid, model=model, gate=tuple(float(x) for x in gate))
+
+
+_CELLS = jax.jit(jax.vmap(charge_cells, in_axes=(0, None)), static_argnums=1)
+_TIME_CELLS = jax.jit(jax.vmap(time_cells, in_axes=(0, None)), static_argnums=1)
 
 
 def histogram_bytes(grid: Grid, n_sensors: int, replicas: int, tangents: int = 0, half_replicas: int = 2) -> int:

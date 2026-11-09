@@ -18,9 +18,14 @@ per channel, no number tuned:
               SER's peak (the SER normalised to its peak, as PMTSinglePEmodel "data");
   noise       eff1_nonoise: none (baseline 14250); nominal and eff1: the data noise templates, whose per-channel
               baseline and variance are taken from the reference's own samples before any light (-1000 to -200 ns).
-The variance: lumen's Campbell variance of Poisson photoelectrons, plus the term OpDetSim adds by drawing Poisson(c
-eff) photoelectrons per photon bin (the photons per bin are themselves Poisson): eff^2 sum_t lambda_t R(t)^2, R the
-expected response to one photoelectron. Compared at the occupancies where OpDetSim's non-linearity is off.
+The variance: lumen's Campbell variance of Poisson photoelectrons given the photons, plus the variance between the
+reference's events of their own photon lists: each event's expected waveform is eff x sum over its photons of R(t),
+R lumen's expected response to one photoelectron. OpDetSim stores each sample as unsigned short (DigiPMTSBNDAlg.cc
+ConstructWaveformLite*: std::vector<short unsigned int>(waves.begin(), waves.end())), truncating it: where a pulse
+is present the sample loses its fractional part, so without noise the reference's mean is lowered by 0.5 P(pulse
+present) (and its variance raised by P / 3 - P^2 / 4), P from the photon lists; with the data noise, whose values are
+fractional, every sample loses it alike, in the measured baseline. Compared at the occupancies where OpDetSim's
+non-linearity is off.
 """
 
 import argparse
@@ -126,21 +131,35 @@ def main():
                     lam = np.asarray(LAM)[ph["band"][mine]]
                     phot = dict(sensor=np.zeros(len(t), int), lam=lam, time=t, weight=np.full(len(t), 1.0 / nev))
                     h = rd.from_photons(model, GATE, 1, phot) if len(t) else None
+                    verr = None
                     if h is None:
                         mean, var = np.full(5000, float(p["sensors/pmt/frontend/baseline"])), np.full(
                             5000, float(p["sensors/pmt/frontend/noise"]) ** 2)  # fmt: skip
                     else:
                         mean, var = (np.asarray(x, np.float64) for x in expect(h, p))
-                        var = var + _cluster(model, p, t, ph["band"][mine], eff, nev, expect)
+                        within = var.copy()
+                        between, m2d, m4d = _between(model, p, ph[mine], eff, nev, expect)
+                        var = var + between
+                        if cfg == "eff1_nonoise":
+                            pp = _present(ph[mine], eff, nev)
+                            mean, var = mean - 0.5 * pp, var + pp / 3.0 - pp**2 / 4.0
+                            within = within + pp / 3.0 - pp**2 / 4.0
+                        # the sample variance's error: event values = their mean + Gaussian within-event noise
+                        w0 = np.maximum(within, 0.0)
+                        verr = np.sqrt(np.maximum(m4d - m2d**2 + 4 * w0 * m2d + 2 * w0**2, 0.0) / nev)
                     sig = np.abs(mean - mean[PRE].mean()) > 1e-3 * max(np.abs(mean - mean[PRE].mean()).max(), 1e-9)
-                    err2 = (v_ref + var) / nev / 2.0 + 1e-12
+                    err2 = (v_ref + np.maximum(var, 0.0)) / nev / 2.0 + 1e-12  # (FFT round-off: var >= 0)
                     win = sig | (np.abs(m_ref - m_ref[PRE].mean()) > 5 * np.sqrt(err2))
                     area_l = float(np.sum((mean - mean[PRE].mean())[win]))
                     area_r = float(np.sum((m_ref - m_ref[PRE].mean())[win]))
                     area_err = float(np.sqrt(np.sum(v_ref[win]) / nev))
                     vsig_l = float(np.sum((var - var[PRE].mean())[win]))
                     vsig_r = float(np.sum((v_ref - v_ref[PRE].mean())[win]))
-                    rows.append(dict(channel=int(ch), type=pd, n_photons=int(len(t)), on=bool(on[k]),
+                    vp = 0.0
+                    if verr is not None:  # over the samples carrying light (round-off elsewhere)
+                        lit_v = win & (var > 0.01 * var.max()) & (verr > 0)
+                        vp = float(np.sqrt(np.mean(((v_ref - var) / verr)[lit_v] ** 2))) if lit_v.any() else 0.0
+                    rows.append(dict(channel=int(ch), type=pd, n_photons=int(len(t)), on=bool(on[k]), var_pull_rms=vp,
                                      chi2_mean=float(np.sum((m_ref - mean)[win] ** 2 / err2[win])),
                                      ndf=int(win.sum()), area_lumen=area_l, area_ref=area_r, area_err=area_err,
                                      var_signal_lumen=vsig_l, var_signal_ref=vsig_r,
@@ -151,37 +170,59 @@ def main():
                 lit = [r for r in rows if r["n_photons"] > 0 and r["on"]]
                 c2, nd = sum(r["chi2_mean"] for r in lit), sum(r["ndf"] for r in lit)
                 ar = np.array([(r["area_lumen"] - r["area_ref"]) / max(r["area_err"], 1e-9) for r in lit])
-                vr = np.array([(r["var_signal_lumen"] - r["var_signal_ref"]) / max(r["var_signal_err"], 1e-9)
-                               for r in lit])  # fmt: skip
-                print(
-                    cfg,
-                    L,
-                    int(s),
-                    f"mean chi2/ndf {c2:.0f}/{nd} = {c2 / max(nd, 1):.3f}; area pulls rms "
-                    f"{np.sqrt(np.mean(ar**2)):.2f} mean {ar.mean():+.2f}; variance pulls rms "
-                    f"{np.sqrt(np.mean(vr**2)):.2f} mean {vr.mean():+.2f}; channels {len(lit)}",
-                    flush=True,
-                )
+                vr = np.array([r["var_pull_rms"] for r in lit])
+                vs = np.array([r["var_signal_ref"] / r["var_signal_lumen"] for r in lit if r["var_signal_lumen"] != 0])
+                print(f"{cfg} L{L} s{int(s)}: mean chi2/ndf {c2:.0f}/{nd} = {c2 / max(nd, 1):.3f}; area pulls rms "
+                      f"{np.sqrt(np.mean(ar**2)):.2f} mean {ar.mean():+.2f}; per-sample variance pulls rms "
+                      f"{np.sqrt(np.mean(vr**2)):.2f}; summed variance ref/lumen median {np.median(vs):.3f}; "
+                      f"channels {len(lit)}", flush=True)  # fmt: skip
     Path(a.out).write_text(json.dumps(res, indent=1))
 
 
-def _cluster(model, p, t, band, eff, nev, expect):
-    """OpDetSim's extra variance from Poisson(c eff) photoelectrons per photon bin: sum_t lambda_t eff^2 R(t)^2."""
+def _response(model, p, expect):
+    """lumen's expected response to one photoelectron arriving at an even and at an odd ns (on the sample grid)."""
     resp = []
-    for t0 in (0.0, 1.0):  # the response to one photoelectron arriving at an even and an odd ns
+    for t0 in (0.0, 1.0):
         h = rd.from_photons(model, GATE, 1, dict(sensor=np.zeros(1, int), lam=np.full(1, LAM[1]), time=np.full(1, t0)))
         q = dict(p)
         q["sensors/pmt/qe"] = np.ones(2, np.float32)
         q["sensors/pmt/frontend/baseline"] = np.float32(0.0)
         q["sensors/pmt/frontend/noise"] = np.float32(0.0)
         resp.append(np.asarray(expect(h, q)[0], np.float64))
-    w = np.zeros((2, 5000))
-    ti = t.astype(int)
-    np.add.at(w, (ti % 2, ti // 2), eff[band] ** 2 / nev)
-    out = np.zeros(5000)
-    for ph in (0, 1):
-        out += np.convolve(w[ph], resp[ph] ** 2)[:5000]
-    return out
+    return resp
+
+
+_RESP: dict = {}
+
+
+def _between(model, p, phot, eff, nev, expect):
+    """The variance between the reference's events of their expected waveforms (each from its own photons)."""
+    key = (
+        p["sensors/pmt/pulse/shape"].tobytes(),
+        float(p["sensors/pmt/gain"][0]),
+        float(p["sensors/pmt/charge/sigma"]),
+    )
+    if key not in _RESP:  # the response depends only on the channel's pulse, gain and spread
+        _RESP[key] = _response(model, p, expect)
+    resp = _RESP[key]
+    ev = np.unique(phot["event"], return_inverse=True)[1]
+    ti = np.trunc(phot["t"]).astype(int)
+    w = np.zeros((2, len(np.unique(ev)), 5000))
+    np.add.at(w, (ti % 2, ev, ti // 2), eff[phot["band"]])
+    n = 1 << int(np.ceil(np.log2(10000)))
+    mu = sum(np.fft.irfft(np.fft.rfft(w[k], n) * np.fft.rfft(resp[k], n), n)[:, :5000] for k in (0, 1))
+    full = np.zeros((nev, 5000))
+    full[: len(mu)] = mu  # events without a photon here have no light
+    d = full - full.mean(0)
+    return full.var(0, ddof=1), (d**2).mean(0), (d**4).mean(0)
+
+
+def _present(phot, eff, nev):
+    """P(a pulse is present) per sample: some photoelectron placed in the 550 samples before it."""
+    ti = np.trunc(phot["t"]).astype(int)
+    lam = np.zeros(5000)
+    np.add.at(lam, (1000 + ti) // 2, (1.0 - np.exp(-eff[phot["band"]])) / nev)
+    return 1.0 - np.exp(-np.convolve(lam, np.ones(550))[:5000])
 
 
 if __name__ == "__main__":
