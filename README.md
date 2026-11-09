@@ -16,7 +16,7 @@ lumen is not published, and neither is tallymap, the photon-loop engine it needs
 ```bash
 source cluster/s3df/env.sh                                         # the group's env (jax 0.6.2), caches, `run` on PATH
 cluster/s3df/make_env.sh <ENV_DIR>    # or your own copy: the same lock, outside HOME
-run python -m pytest                                               # inside the container
+run python -m pytest tests/unit -n 4                               # tier (a), inside the container: 4 workers
 ```
 
 ## Documentation

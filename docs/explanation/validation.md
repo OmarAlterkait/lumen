@@ -31,6 +31,17 @@ equals the automatic derivative to 1e-10, so the derivative is right. The exactn
 difference's own error from the difference at h/4 (a 1/h error gives |FDX(h/4) − FDX(h)| / 3) and allows three times
 it; an automatic derivative that misses a term still disagrees at every h.
 
+## Compiled programs and the persistent cache
+
+lumen turns on JAX's persistent compilation cache by default (`<LUMEN_CACHE>/xla`, never under HOME; an explicit
+`JAX_COMPILATION_CACHE_DIR` is respected). Bitwise checks rely on a program loaded from that cache computing exactly
+what a fresh compile computes. On jax 0.5.3 it did not: the navigator's face misses on the CPU (the A5 probe, 16 of
+20 processes) came from programs loaded from the cache on XLA's thunk runtime; with the cache off, no process missed.
+On jax 0.6.2, the pinned version, a load from the cache is bitwise equal to a fresh compile on the CPU and the GPU
+(a photon-loop record and leaf-module outputs, three separate processes: cache off, writing, loading). The GPU tier
+checks it on every run (`tests/physics/test_persistent_cache.py`), and `tools/port/xla_runtime_probe.py check
+--cache` checks the navigator on the CPU.
+
 ## References
 
 Every reference product is listed with its sha256, its producer (binary, flags, seed, chunking) and any patch, in
