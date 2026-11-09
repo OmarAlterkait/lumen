@@ -104,11 +104,11 @@ def scene_split():
     })  # fmt: skip
 
 
-def scene_overlap():
-    """two siblings overlapping by 50 mm, and a daughter protruding 20 mm from its mother"""
+def scene_overlap(b_x=0.1):
+    """two siblings overlapping by 50 mm (b at x = b_x; 0.35: apart), and a daughter protruding 20 mm from its mother"""
     return make_scene({
         "world": defn("world", solids.g4_box(2.0, 2.0, 2.0), 1, [("a", np.eye(3), (-0.15, 0, 0)),
-                                                              ("b", np.eye(3), (0.1, 0, 0)),
+                                                              ("b", np.eye(3), (b_x, 0, 0)),
                                                               ("m", np.eye(3), (0, 0.6, 0))]),
         "a": defn("a", solids.g4_box(0.4, 0.4, 0.4), 2), "b": defn("b", solids.g4_box(0.2, 0.2, 0.2), 3),
         "m": defn("m", solids.g4_box(0.2, 0.2, 0.2), 4, [("p", np.eye(3), (0.11, 0, 0))]),

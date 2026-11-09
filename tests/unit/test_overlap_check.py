@@ -3,7 +3,7 @@ sibling pair and a protruding daughter found, a clean scene clean, the pieces of
 pass-through reported. Ported from the check tests of the baseline's tests/test_navigator.py."""
 
 import numpy as np
-from nav_toys import nav_of, scene_mesh, scene_split
+from nav_toys import nav_of, scene_mesh, scene_overlap, scene_split
 
 from lumen.build import lowering, scene
 from lumen.validate import overlaps
@@ -19,6 +19,21 @@ def test_check_finds_overlap_and_protrusion(toys):
     assert len(clean["pairs"]) == 0 and len(clean["protrude"]) == 0, clean
     lines = overlaps.report(nav, c)
     assert "1 protruding volumes" in lines[0] and "('a', 'b')" in lines[0], lines
+    # a repeated check, and a check of another navigator of the same layout (b moved off a), compile nothing: the
+    # navigator's arrays are the program's arguments, not its constants
+    apart = nav_of(scene_overlap(b_x=0.35))
+    assert overlaps.layout(apart) == overlaps.layout(nav)
+    first = overlaps.check(nav, n_pts=256, backend="vmap")  # on a CPU, c's own program
+
+    def compiled():
+        return sum(p._cache_size() for k, (_, p) in overlaps._PROGRAMS.items() if k[1][0] != "tallymap")
+
+    n0 = compiled()
+    again, c2 = overlaps.check(nav, n_pts=256, backend="vmap"), overlaps.check(apart, n_pts=256, backend="vmap")
+    assert compiled() == n0
+    assert all(np.array_equal(again[k], first[k]) and np.array_equal(first[k], c[k]) for k in c)
+    assert ("a", "b") not in {(apart.defs[a], apart.defs[b]) for a, b in c2["pairs"]}, c2["pairs"]
+    assert {apart.defs[int(u)] for u in c2["protrude"]} == {"p"}, c2["protrude"]
 
 
 def test_check_passes_the_pieces_of_one_split_union():

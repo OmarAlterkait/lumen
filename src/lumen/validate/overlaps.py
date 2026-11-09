@@ -14,12 +14,16 @@ Notes
 -----
 Ported from the baseline's lumen.geometry.navigator (check, check_meshes, the runner) and lumen.geometry.tracked
 (the report). The checks report; they never change the navigator (the baseline's links from them are not ported).
+
+A check's program is compiled once and reused: with jax.vmap, per navigator layout (``layout``) and settings, the
+navigator's arrays entering as arguments, so a repeated check, or a check of another navigator of the same layout,
+traces nothing (a vmap of the navigator's nested loops takes seconds to trace); with tallymap, per navigator.
 """
 
 from __future__ import annotations
 
 import re
-from collections import Counter
+from collections import Counter, OrderedDict
 
 import jax
 import jax.numpy as jnp
@@ -40,6 +44,19 @@ SHOWN = 8  # the report shows at most this many families
 MAX_UP = 64  # the ancestor walk's depth limit
 PIECE = re.compile(r"\|pc\d+(\||$)")  # a split union's piece definition
 PIECE_PATH = re.compile(r"^(.*)/pc\d+$")
+PROGRAMS = 8  # compiled checks kept, the least recently used dropped (each holds one navigator)
+_PROGRAMS: OrderedDict = OrderedDict()  # (test, layout or navigator id, settings) -> (navigator, program)
+
+
+def _backend(backend):
+    if backend is not None:
+        return backend
+    try:
+        import tallymap  # noqa: F401 -- only whether it imports
+
+        return "tallymap" if jax.default_backend() == "gpu" else "vmap"
+    except ImportError:
+        return "vmap"
 
 
 def runner(one, backend=None):
@@ -47,13 +64,7 @@ def runner(one, backend=None):
 
     ``backend``: "tallymap" (one thread each; the default on a GPU where tallymap imports) or "vmap" (jax.vmap).
     """
-    if backend is None:
-        try:
-            import tallymap  # noqa: F401 -- only whether it imports
-
-            backend = "tallymap" if jax.default_backend() == "gpu" else "vmap"
-        except ImportError:
-            backend = "vmap"
+    backend = _backend(backend)
     if backend == "tallymap":
         import tallymap as tm
 
@@ -69,6 +80,47 @@ def runner(one, backend=None):
         return run
 
     return jax.jit(jax.vmap(one))
+
+
+def layout(nav):
+    """Return what a check's traced program depends on besides the values of the navigator's arrays.
+
+    The Python values the navigator's device methods read (its sizes, the surface codes' layout, the CSG kernels
+    present) and the shapes and dtypes of its arrays: navigators of one layout run one compiled check.
+    """
+    a, c = nav.arrays, nav.arrays.csg
+    leaves, tree = jax.tree.flatten(nav.operands())
+    return (a.n, a.n_mesh, a.chunk, int(a.ch0), tuple(a.srf), a.bg, c.n_kinds, c.maxnl, c.empty_leaf, c.has_torus,
+            tuple(c.n_leaves), tree, tuple((x.shape, str(x.dtype)) for x in leaves))  # fmt: skip
+
+
+def _program(test, nav, extra, settings, backend):
+    """Return run(i, id) of a per-point test over arrays: ``test = (name, make)``, make(nav, extra) -> one(i, id).
+
+    vmap: one program per (name, layout, settings), the navigator's arrays and ``extra`` (the per-navigator arrays
+    the test reads) its arguments; tallymap: one per (name, navigator, settings), its arrays closed over.
+    """
+    name, make = test
+    tallymap = _backend(backend) == "tallymap"
+    key = (name, ("tallymap", id(nav)) if tallymap else layout(nav), settings)
+    if key not in _PROGRAMS:
+        if tallymap:
+            prog = runner(make(nav, extra), "tallymap")
+        else:
+
+            def one(ops, i, iid, tmpl=nav):
+                return make(tmpl.bind(ops["nav"]), ops["extra"])(i, iid)
+
+            prog = jax.jit(jax.vmap(one, in_axes=(None, 0, 0)))
+        _PROGRAMS[key] = (nav, prog)  # the navigator held: an id in a key stays its own
+        if len(_PROGRAMS) > PROGRAMS:
+            _PROGRAMS.popitem(last=False)
+    _PROGRAMS.move_to_end(key)
+    prog = _PROGRAMS[key][1]
+    if tallymap:
+        return prog
+    ops = dict(nav=nav.operands(), extra=extra)
+    return lambda i, iid: prog(ops, i, iid)
 
 
 def _piece_groups(nav):
@@ -137,7 +189,8 @@ def _one(nav, pg, opts):
     """Return the per-point test: (ok, protrudes, holders, the across-levels holder)."""
     D = nav.dev()
     n = nav.n
-    seed, kmax, tol_ = opts
+    seed, kmax, tol = opts
+    tol_ = None if tol is None else F32(tol)
 
     def one(u, iid):
         ok, xi = _sample(nav, u, iid, (seed, tol_))
@@ -167,13 +220,16 @@ def check(nav, n_pts=N_POINTS, n_min=N_MIN, seed=0, kmax=K_MAX, tol=None, backen
     cross (volume, holder) and cross_counts).
     """
     n = nav.n
-    tol_ = None if tol is None else F32(tol)
-    one = _one(nav, _piece_groups(nav), (seed, kmax, tol_))
+    opts = (int(seed), int(kmax), None if tol is None else float(np.float32(tol)))
+
+    def check_point(nv, extra):
+        return _one(nv, extra["pg"], opts)
+
+    run = _program(("check", check_point), nav, dict(pg=_piece_groups(nav)), opts, backend)
     _, inv, cnt = np.unique([d_.split("|")[0] for d_ in nav.defs], return_inverse=True, return_counts=True)
     npts = np.maximum(n_min, -(-n_pts // cnt[inv])).astype(np.int64)
     u_all = np.repeat(np.arange(n, dtype=np.int32), npts)
     ids = np.arange(len(u_all), dtype=np.int32)
-    run = runner(one, backend)
     ok, prot, hold, cross = [], [], [], []
     for s0 in range(0, len(ids), chunk):
         a, b, c, e = run(jnp.asarray(u_all[s0 : s0 + chunk]), jnp.asarray(ids[s0 : s0 + chunk]))
@@ -228,7 +284,13 @@ def check_meshes(nav, n_pts=MESH_POINTS, seed=0, kmax=K_MAX, backend=None):
         return dict(pairs={}, protrude={}, n_points=0)
     nch = len(nav.host["cmesh"])
     c_all = np.repeat(np.arange(nch, dtype=np.int32), n_pts)
-    prot, hold, _ = runner(_mesh_one(nav, seed, kmax), backend)(jnp.asarray(c_all), jnp.arange(len(c_all), dtype=I32))
+    opts = (int(seed), int(kmax))
+
+    def mesh_point(nv, extra):
+        return _mesh_one(nv, *opts)
+
+    run = _program(("check_meshes", mesh_point), nav, {}, opts, backend)
+    prot, hold, _ = run(jnp.asarray(c_all), jnp.arange(len(c_all), dtype=I32))
     prot, hold = np.asarray(prot), np.asarray(hold)
     mesh_of = np.asarray(nav.host["cmesh"])[c_all]
     pairs, pr = {}, {}
