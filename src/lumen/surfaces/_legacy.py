@@ -444,8 +444,9 @@ def _probe_support(kind, consts):
 def fixed(kind, consts):
     """Return ``kind`` with the parameters in ``consts`` held at those values: a type whose parameters are the rest.
 
-    A value the model fixes is not a parameter (the edge rule's OUT): a lowering-implied constant (a frontpainted
-    finish's f_spec, Geant4's default TRANSMITTANCE 0, a film's thickness and side). The derived type is named
+    A value the model never reads is not a parameter (the edge rule's OUT, decided by structure, never by the value:
+    docs/explanation/parameters.md): a frontpainted finish's f_spec, LArSoft's reflector's f_glossy and sigma_alpha,
+    a film's yield without WLSMEANNUMBERPHOTONS, its thickness and side. The derived type is named
     ``type{p=v,...}`` and its support is probed (``_probe_support``), so the edge floor never proposes an outcome the
     constants rule out.
     """

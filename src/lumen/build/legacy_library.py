@@ -31,7 +31,9 @@ Sensor groups
     ``border_into`` with model ``lumen:geant4``: the borders into the group's volumes are sensors through the
     surface's own detection (``settings["efficiency_on_entry"]`` replaces the efficiency on entry, the sensors are
     named ``<settings["name_prefix"] or the group name>:<surface>``). ``any_entry`` with model ``lumen:counting``: a
-    counting sensor of efficiency ``settings["eff"]`` on every placement of the group's volumes.
+    counting sensor of efficiency ``settings["eff"]`` on every placement of the group's volumes. ``border_into`` with
+    model ``lumen:pmt``: tracked as ``lumen:geant4`` with every absorption entering counted (efficiency 1 on entry):
+    the PMT's QE, CE and efficiency apply after tracking (``lumen.sensors``).
 
 The outside material is always its own opaque medium, "outside". ``sources`` maps every parameter leaf of the
 library (the paths of ``_legacy_regions.named_params``, e.g. ("media", "Water", "index", "value")) to the
@@ -70,8 +72,10 @@ class Source(NamedTuple):
 
     ``key`` is the detector-file key ("materials/<material>/<PROPERTY>", "surfaces/<surface>/<PROPERTY>",
     "surfaces/<surface>/value", "surfaces/<surface>/settings/<name>", "sensors/<group>/<setting>"), None for a value
-    lumen fixes. ``column``: "energy" or "value" of a table, "constant" (a constant property or the surface value),
-    "setting", "derived" (computed from the key: ``note`` says how) or "fixed".
+    the file does not give. ``column``: "energy" or "value" of a table, "constant" (a constant property or the surface
+    value), "setting", "derived" (computed from the key: ``note`` says how), "default" (Geant4's value of a property
+    the file omits and the model reads: a parameter at that value) or "fixed" (a value the model never reads for this
+    type, model and finish: folded into the surface type, ``fold_fixed``).
     """
 
     key: str | None
@@ -243,6 +247,9 @@ def _surfaces(df, tree, films):
 
 
 # ----------------------------------------------------------------------------------------------------- the sensors
+BORDER_MODELS = ("lumen:geant4", "lumen:pmt")  # lumen:pmt: tracked as lumen:geant4 at efficiency 1 on entry
+
+
 def _border_groups(df, tree, groups):
     border = [g for g in groups if g.rule == "border_into"]
     if len(border) > 1:
@@ -250,10 +257,11 @@ def _border_groups(df, tree, groups):
     if not border:
         return set(), regions.BorderSensor(), None
     g = border[0]
-    if g.model != "lumen:geant4":
-        raise LibraryError(f"sensor group {g.name!r}: border_into reads the model 'lumen:geant4', not {g.model!r}")
+    if g.model not in BORDER_MODELS:
+        raise LibraryError(f"sensor group {g.name!r}: border_into reads a model of {BORDER_MODELS}, not {g.model!r}")
     pvs = {p for p in tree.order if g.selects(tree.by_name[p].lv)}
-    how = regions.BorderSensor(None, g.settings.get("efficiency_on_entry"), g.settings.get("name_prefix", g.name))
+    eff_in = 1.0 if g.model == "lumen:pmt" else g.settings.get("efficiency_on_entry")
+    how = regions.BorderSensor(None, eff_in, g.settings.get("name_prefix", g.name))
     return pvs, how, g
 
 
@@ -297,16 +305,21 @@ def library_and_bindings(df: schema.DetectorFile, tree, instances, sensor_set):
 
 
 def _fixed(sources, section, name, param):
-    """Return whether every leaf of an entry's parameter comes from no detector-file parameter key."""
+    """Return whether every leaf of an entry's parameter is one the model never reads, or the film's geometry.
+
+    Structure decides, never values (docs/explanation/parameters.md): a value the model reads stays a parameter
+    whatever it is, Geant4's default of an omitted property included ("default"); the film's thickness and side
+    ("/settings/") are geometry.
+    """
     src = [v for k, v in sources.items() if k[:3] == (section, name, param)]
-    return bool(src) and all(v.key is None or "/settings/" in v.key for v in src)
+    return bool(src) and all(v.column == "fixed" or "/settings/" in (v.key or "") for v in src)
 
 
 def fold_fixed(library, sources):
-    """Return the library with every value the model fixes folded into its surface type (``legacy.fixed``).
+    """Return the library with every value the model never reads folded into its surface type (``legacy.fixed``).
 
-    A key exists only for a property the detector file defines or a declared setting of a chosen model (OUT): a
-    lowering-implied constant (no key, or a structural setting) is not packed as a parameter.
+    OUT is structural (``_fixed``): a frontpainted finish's specular fraction, LArSoft's reflector's lobe and facet
+    width, a film's WLS yield without WLSMEANNUMBERPHOTONS, the film's thickness and side.
     """
 
     def one(section, name, e):
@@ -324,9 +337,9 @@ def fold_fixed(library, sources):
 
 
 # ----------------------------------------------------------------------------------------------------- the sources
-def _table_or_constant(key, p: schema.Property | None, default_note):
+def _table_or_constant(key, p: schema.Property | None, default_note, absent="fixed"):
     if p is None:
-        return {(): Source(None, "fixed", default_note)}
+        return {(): Source(None, absent, default_note)}
     if rules.is_table(p):
         return {("energy",): Source(key, "energy"), ("value",): Source(key, "value")}
     return {(): Source(key, "constant")}
@@ -372,6 +385,9 @@ INDEX_KEYS = {"nr": ("REALRINDEX", "RINDEX"), "nk": ("IMAGINARYRINDEX", "KINDEX"
 
 def _surface_param(rec: schema.Surface, param: str, value):
     s, pr = f"surfaces/{rec.name}", rec.properties
+    if rec.optics.name == "lumen:larsoft_reflector" and param in ("f_glossy", "sigma_alpha"):
+        # larsim OpBoundaryProcessSimple: specular about the global normal or Lambertian, no lobe and no facets
+        return {(): Source(None, "fixed", f"never read by LArSoft's OpBoundaryProcessSimple ({param})")}
     if rec.optics.name == "lumen:larsoft_reflector" and param in ("R", "f_spec"):
         key = "REFLECTIVITY" if param == "R" else "DIFFUSE_FRACTION"
         return {(): Source(f"{s}/{key}", "derived", "LArSoft's table at 128 nm (f_spec = 1 - the diffuse fraction)")}
@@ -379,8 +395,14 @@ def _surface_param(rec: schema.Surface, param: str, value):
         p = pr.get(SURFACE_KEYS[param])
         if p is not None and rules.is_table(p) and not isinstance(value, tuple):
             return {(): Source(f"{s}/{SURFACE_KEYS[param]}", "value", "a flat table read as its constant")}
-        return _table_or_constant(f"{s}/{SURFACE_KEYS[param]}", p, "Geant4's default")
+        # G4OpBoundaryProcess::PostStepDoIt starts each step at R 1, T 0, EFFICIENCY 0, spike / lobe / back 0 and
+        # reads them whether or not the surface gives them: an omitted one is a parameter at Geant4's default
+        return _table_or_constant(f"{s}/{SURFACE_KEYS[param]}", p, "Geant4's default", "default")
     if param in VALUE_PARAMS:
+        from lumen.build.spec import value_read
+
+        if not value_read(rec):  # a polished or painted finish samples no facet
+            return {(): Source(None, "fixed", f"no facet is sampled: {param} is never read")}
         return {(): Source(f"{s}/value", "constant")}
     if param in INDEX_KEYS:
         key = next((k for k in INDEX_KEYS[param] if k in pr), INDEX_KEYS[param][0])
@@ -406,7 +428,7 @@ def _film_sources(df, rec: schema.Surface):
             for k, v in _table_or_constant(
                 f"{m}/WLSMEANNUMBERPHOTONS",
                 film.properties.get("WLSMEANNUMBERPHOTONS"),
-                "1 photon per absorption (G4OpWLS)",
+                "G4OpWLS emits one photon when WLSMEANNUMBERPHOTONS is absent: no mean is read",
             ).items()
         }
     )
@@ -428,6 +450,8 @@ def _sensor_sources(df, name, group, entry):
     surface = name.split(":", 1)[1].removesuffix("|out")
     out = _surface_sources(df.surfaces[surface], entry.params)
     eff = "eff" if "eff" in entry.params else "qe"
+    if group is not None and not name.endswith("|out") and group.model == "lumen:pmt":
+        return {k: v for k, v in out.items() if k[0] != eff}  # 1 on entry, fixed: the PMT's values apply after
     if group is not None and not name.endswith("|out") and group.settings.get("efficiency_on_entry") is not None:
         out = {k: v for k, v in out.items() if k[0] != eff}
         out[(eff,)] = Source(f"sensors/{group.name}/efficiency_on_entry", "setting")

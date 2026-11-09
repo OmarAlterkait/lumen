@@ -62,7 +62,8 @@ def test_every_encoding_on_the_toy(toy):
     assert set(lib.media) == {"outside", "Liq", "opaque"} and lib.media["opaque"].medium.opaque
     assert b.skins == {"Blk": "glis", "<outside>": "glis", PLUS: f"film:{PLUS}", MINUS: f"film:{MINUS}"}
     film = lib.surfaces[f"film:{PLUS}"]
-    # the film's side, thickness and yield are values the model fixes (OUT): folded into one type per side
+    # the film's side and thickness (geometry), the backing's f_spec (groundfrontpainted) and the yield (no
+    # WLSMEANNUMBERPHOTONS: G4OpWLS reads no mean) are never read as parameters (OUT): one type per side
     assert film.kind.name == "coated:Shifter:painted{axis=(1,0,0),b:f_spec=0,d=1e-06,eta=1}"
     assert lib.surfaces[f"film:{MINUS}"].kind.name == "coated:Shifter:painted{axis=(-1,0,0),b:f_spec=0,d=1e-06,eta=1}"
     assert "axis" not in film.params and "d" not in film.params and "L" in film.params
@@ -105,7 +106,9 @@ def test_border_sensors(toy):
     sset = SensorSet("default", (group,) + COUNTING.groups)
     _, lib, b, src = glue.library_and_bindings(df, tree(*TREE), INSTANCES, sset)
     e = lib.sensors["tube:pdieR"]
-    assert e.kind.name == "dielectric_rt_sensor{T=0}" and e.params["eff"] == 1.0  # Geant4's default T 0: fixed (OUT)
+    # Geant4 reads T (its default 0 when the surface gives none): a parameter, not folded (structure decides)
+    assert e.kind.name == "dielectric_rt_sensor" and e.params["eff"] == 1.0 and e.params["T"] == 0.0
+    assert src[("sensors", "tube:pdieR", "T")] == glue.Source(None, "default", "Geant4's default")
     assert b.borders == {("w/blk1/Blk", "w/other/X"): "tube:pdieR"}
     assert regions.SensorBinding("tube:pdieR", 1, lv="X", entry="border") in b.sensors
     assert src[("sensors", "tube:pdieR", "eff")] == glue.Source("sensors/pmt/efficiency_on_entry", "setting")

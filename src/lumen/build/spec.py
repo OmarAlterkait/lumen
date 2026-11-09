@@ -2,9 +2,11 @@
 
 Keys come from the detector file (every material and surface property, and each surface's value) and from the sensor
 set (each group's model fields). What each Geant4 property means is in ``PROPERTIES``; a key it does not list is
-kept, as a dimensionless value of unknown range, so a calibration can still carry it. A property whose value the
-model fixes is not a parameter: the Mie constants of a material without MIEHG, and a Mie forward ratio of 0 or 1
-whose other lobe the material lacks (``lumen.rules.optics.mie_constants``).
+kept, as a dimensionless value of unknown range, so a calibration can still carry it. A value the model never reads
+is not a parameter (structure decides, never the value: docs/explanation/parameters.md): the Mie constants of a
+material without MIEHG, a Mie forward ratio of 0 or 1 whose other lobe the material lacks
+(``lumen.rules.optics.mie_constants``), and a surface's value (sigma_alpha or polish) where no facet is sampled
+(``value_read``).
 """
 
 from __future__ import annotations
@@ -58,6 +60,21 @@ def not_parameters(rec) -> frozenset:
     return optics.mie_constants(rec.properties, f"material {rec.name!r}")[1]
 
 
+def value_read(rec: fmt.Surface) -> bool:
+    """Whether the model reads a surface's value (sigma_alpha or polish): Geant4's dielectric_metal, ground finish.
+
+    Unified reads sigma_alpha in GetFacetNormal for a lobe reflection, glisur its polish. A polished or painted
+    finish never samples a facet, and lumen's dielectric_dielectric surfaces are polished or painted; LArSoft's
+    OpBoundaryProcessSimple (``lumen:larsoft_reflector``) and a WLS film's record read no value.
+    """
+    from lumen.rules import optics
+
+    if rec.optics.name != "geant4":
+        return False
+    _, finish, type_ = optics.surface_names(rec)
+    return type_ == "dielectric_metal" and finish == "ground"
+
+
 def detector_values(df: fmt.DetectorFile) -> tuple[dict, dict]:
     """Return (values, spec) of the detector file's own parameters."""
     values, spec = {}, {}
@@ -70,7 +87,7 @@ def detector_values(df: fmt.DetectorFile) -> tuple[dict, dict]:
                 key = f"{kind}/{name}/{prop}"
                 values[key] = _value(p)
                 spec[key] = _info(key, prop, p.energy is not None)
-            if isinstance(rec, fmt.Surface):
+            if isinstance(rec, fmt.Surface) and value_read(rec):
                 key = f"surfaces/{name}/value"
                 values[key] = float(rec.value)
                 spec[key] = ParamInfo(key, "rad", (0.0, INF), "reweight")
