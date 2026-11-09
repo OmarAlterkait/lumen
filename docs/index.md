@@ -8,5 +8,6 @@ The documentation follows the Diátaxis layout:
 - `explanation/`: background and design. Start with the [glossary](explanation/glossary.md).
 - `dev/`: for people working on lumen itself.
 
-Measured limits are listed in [known limits](explanation/known-limits.md). The [validation report](validation/report.md)
+Measured limits are listed in [known limits](explanation/known-limits.md); how the checks decide is in
+[validation](explanation/validation.md). The [validation report](validation/report.md)
 is generated from the checks' records by `lumen validate report`.
