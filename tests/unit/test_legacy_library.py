@@ -62,9 +62,13 @@ def test_every_encoding_on_the_toy(toy):
     assert set(lib.media) == {"outside", "Liq", "opaque"} and lib.media["opaque"].medium.opaque
     assert b.skins == {"Blk": "glis", "<outside>": "glis", PLUS: f"film:{PLUS}", MINUS: f"film:{MINUS}"}
     film = lib.surfaces[f"film:{PLUS}"]
-    assert film.kind is lib.surfaces[f"film:{MINUS}"].kind and film.kind.name == "coated:Shifter:painted"
-    assert np.array_equal(film.params["axis"], [1.0, 0.0, 0.0]) and film.params["d"] == 1e-6
-    assert b.borders == {("w/blk1/Blk", "w/other/X"): "paint"} and lib.surfaces["paint"].kind is legacy.PAINTED
+    # the film's side, thickness and yield are values the model fixes (OUT): folded into one type per side
+    assert film.kind.name == "coated:Shifter:painted{axis=(1,0,0),b:f_spec=0,d=1e-06,eta=1}"
+    assert lib.surfaces[f"film:{MINUS}"].kind.name == "coated:Shifter:painted{axis=(-1,0,0),b:f_spec=0,d=1e-06,eta=1}"
+    assert "axis" not in film.params and "d" not in film.params and "L" in film.params
+    assert (
+        b.borders == {("w/blk1/Blk", "w/other/X"): "paint"} and lib.surfaces["paint"].kind.name == "painted{f_spec=0}"
+    )
     assert lib.sensors["sen"].params == {"eff": 0.5} and b.sensors == (regions.SensorBinding("sen", 1, lv="Sen"),)
     o = regions.compile(lib, t, b, LAM)
     assert o.class_of["w/sh/S"] == o.class_of["w/W"]  # the index-matched film volume is the liquid
@@ -91,7 +95,7 @@ def test_a_recipe_skin_replaces_the_gdml_skin(toy):
     df = decided(toy)
     df = dataclasses.replace(df, skins=df.skins + (schema.Skin("mirror", "glispol", "Blk", "recipe"),))
     _, lib, b, _ = glue.library_and_bindings(df, tree(*TREE), INSTANCES, COUNTING)
-    assert b.skins["Blk"] == "glispol" and lib.surfaces["glispol"].kind is legacy.SPECULAR_METAL
+    assert b.skins["Blk"] == "glispol" and lib.surfaces["glispol"].kind.name.split("{")[0] == legacy.SPECULAR_METAL.name
 
 
 def test_border_sensors(toy):
@@ -101,7 +105,7 @@ def test_border_sensors(toy):
     sset = SensorSet("default", (group,) + COUNTING.groups)
     _, lib, b, src = glue.library_and_bindings(df, tree(*TREE), INSTANCES, sset)
     e = lib.sensors["tube:pdieR"]
-    assert e.kind is legacy.DIELECTRIC_RT_SENSOR and e.params["eff"] == 1.0
+    assert e.kind.name == "dielectric_rt_sensor{T=0}" and e.params["eff"] == 1.0  # Geant4's default T 0: fixed (OUT)
     assert b.borders == {("w/blk1/Blk", "w/other/X"): "tube:pdieR"}
     assert regions.SensorBinding("tube:pdieR", 1, lv="X", entry="border") in b.sensors
     assert src[("sensors", "tube:pdieR", "eff")] == glue.Source("sensors/pmt/efficiency_on_entry", "setting")

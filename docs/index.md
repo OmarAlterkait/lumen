@@ -7,3 +7,5 @@ The documentation follows the Diátaxis layout:
 - `reference/`: the API (to be written).
 - `explanation/`: background and design. Start with the [glossary](explanation/glossary.md).
 - `dev/`: for people working on lumen itself.
+
+Measured limits are listed in [known limits](explanation/known-limits.md).

@@ -21,6 +21,7 @@ import numpy as np
 N_RAYS = 4096  # directions per point (~3.5 deg apart): a feature thinner than that at that distance can be missed
 SAFETY = 0.9  # the estimate is scaled by this
 T_MAX = 1e3  # m: the farthest crossing looked for
+RAY_CHUNK = 256  # rays per batch: the vmapped navigator's lanes keep their own stacks (all 4096 at once: ~50 GB on SK)
 
 
 def fibonacci_sphere(n):
@@ -35,16 +36,17 @@ def fibonacci_sphere(n):
 def ray_clearance(nav, points, n_rays=N_RAYS, safety=SAFETY):
     """Return each point's estimated distance (m) to the nearest surface the light sees, times ``safety``."""
     X = np.asarray(points, np.float32).reshape(-1, 3)
-    D = jnp.asarray(fibonacci_sphere(n_rays))
+    D = fibonacci_sphere(n_rays)
 
-    def one(x):
+    @jax.jit
+    def nearest(x, d):
         v = nav.locate(x)
-        q = jax.vmap(lambda d: nav.query(x, d, v, t_max=T_MAX))(D)
-        t = jnp.where(q["hit"], q["t"], jnp.inf)
-        return jnp.min(jnp.minimum(t, q["t_pass0"]))
+        q = jax.vmap(lambda d_: nav.query(x, d_, v, t_max=T_MAX))(d)
+        return jnp.min(jnp.minimum(jnp.where(q["hit"], q["t"], jnp.inf), q["t_pass0"]))
 
-    c = np.asarray(jax.jit(jax.vmap(one))(jnp.asarray(X)))
-    return safety * c
+    c = [min(float(nearest(jnp.asarray(x), jnp.asarray(D[i : i + RAY_CHUNK]))) for i in range(0, n_rays, RAY_CHUNK))
+         for x in X]  # fmt: skip
+    return safety * np.asarray(c, np.float32)
 
 
 class Clearance:

@@ -18,6 +18,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 import jax.numpy as jnp
+import numpy as np
 
 from lumen._core.safe import clip01, sanitize
 from lumen.media import phase
@@ -36,6 +37,7 @@ from lumen.surfaces.outcomes import (
     REFRACT,
     SPECULAR,
     STRAIGHT,
+    TERMINAL,
 )
 
 COATED_FACE = 0.5  # the film is on the faces whose facing normal has n . axis above this
@@ -414,6 +416,57 @@ def coated(name, backing, reemission):
         True,
         amps,
     )
+
+
+# ------------------------------------------------------------------------------------- values the model fixes (OUT)
+_FIXED = {}  # (type, constants) -> the derived type: one object per pair, so rows with the same constants share it
+
+
+def _const(v):
+    return tuple(float(x) for x in np.ravel(v)) if np.ndim(v) else float(v)
+
+
+def _probe_support(kind, consts):
+    """Return the outcomes of ``kind`` with ``consts`` held that are not identically zero (terminal ones kept).
+
+    Probed at every other parameter 0.5 and a generic incidence; a type whose probe needs more keeps its support.
+    """
+    try:
+        p = {k: 0.5 for k in kind.params if k not in consts} | {k: jnp.asarray(v) for k, v in consts.items()}
+        ctx = dict(lam=jnp.asarray(400.0), wi=jnp.asarray([0.6, 0.0, -0.8]), n=jnp.asarray([0.0, 0.0, 1.0]),
+                   n1=jnp.asarray(1.33), n2=jnp.asarray(1.5), layer=0)  # fmt: skip
+        pr = [float(x) for x in kind.probs(p, ctx)]
+    except Exception:
+        return kind.outcomes
+    return tuple(o for o in kind.outcomes if TERMINAL[o] or pr[o] != 0.0)
+
+
+def fixed(kind, consts):
+    """Return ``kind`` with the parameters in ``consts`` held at those values: a type whose parameters are the rest.
+
+    A value the model fixes is not a parameter (the edge rule's OUT): a lowering-implied constant (a frontpainted
+    finish's f_spec, Geant4's default TRANSMITTANCE 0, a film's thickness and side). The derived type is named
+    ``type{p=v,...}`` and its support is probed (``_probe_support``), so the edge floor never proposes an outcome the
+    constants rule out.
+    """
+    consts = {k: _const(v) for k, v in consts.items()}
+    if not consts:
+        return kind
+    key = (id(kind), tuple(sorted(consts.items())))
+    if key not in _FIXED:
+
+        def full(p):
+            return {**{k: jnp.asarray(v, jnp.float32) for k, v in consts.items()}, **p}
+
+        tag = ",".join(f"{k}={v:g}" if isinstance(v, float) else f"{k}=({','.join(f'{x:g}' for x in v)})"
+                       for k, v in sorted(consts.items()))  # fmt: skip
+        amps = None if kind.amps is None else (lambda p, ctx: kind.amps(full(p), ctx))
+        derived = SurfaceType(f"{kind.name}{{{tag}}}", tuple(q for q in kind.params if q not in consts),
+                              _probe_support(kind, consts), lambda p, ctx: kind.probs(full(p), ctx),
+                              lambda p, ctx: kind.lobe_params(full(p), ctx), kind.reemit, kind.glossy,
+                              kind.reemit_lobe, kind.stack, amps)  # fmt: skip
+        _FIXED[key] = (kind, derived)  # the base kept alive: its id stays unique
+    return _FIXED[key][1]
 
 
 TYPES = (

@@ -49,3 +49,15 @@ def test_concurrent_directory_builds_keep_one_complete_entry(tmp_path):
     assert not errors
     assert sorted(q.name for q in target.iterdir()) == ["a.npy", "b.json"]
     assert [q.name for q in target.parent.iterdir()] == ["key"]
+
+
+def test_the_tallymap_cache_is_never_under_home(monkeypatch, tmp_path):
+    import pytest
+
+    monkeypatch.delenv("TALLYMAP_CUDA_CACHE", raising=False)
+    monkeypatch.setenv("LUMEN_CACHE", str(tmp_path / "c"))
+    assert _env.tallymap_cache() == tmp_path / "c" / "tallymap"
+    assert os.environ["TALLYMAP_CUDA_CACHE"] == str(tmp_path / "c" / "tallymap")  # noqa: TID251 -- what tallymap reads
+    monkeypatch.setenv("TALLYMAP_CUDA_CACHE", str(Path.home() / ".cache" / "tallymap"))
+    with pytest.raises(RuntimeError, match="under HOME"):
+        _env.tallymap_cache()

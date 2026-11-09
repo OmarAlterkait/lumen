@@ -293,7 +293,34 @@ def library_and_bindings(df: schema.DetectorFile, tree, instances, sensor_set):
     library = regions.Library(media=media, surfaces=surfaces, sensors=sensors)
     bindings = regions.Bindings(materials=bind, skins=skins, borders=borders, sensors=tuple(sbind) + tuple(cbind))
     sources = _flatten(library, {"media": msrc, "surfaces": ssrc, "sensors": {**bsrc, **csrc}})
-    return tree, library, bindings, sources
+    return tree, fold_fixed(library, sources), bindings, sources
+
+
+def _fixed(sources, section, name, param):
+    """Return whether every leaf of an entry's parameter comes from no detector-file parameter key."""
+    src = [v for k, v in sources.items() if k[:3] == (section, name, param)]
+    return bool(src) and all(v.key is None or "/settings/" in v.key for v in src)
+
+
+def fold_fixed(library, sources):
+    """Return the library with every value the model fixes folded into its surface type (``legacy.fixed``).
+
+    A key exists only for a property the detector file defines or a declared setting of a chosen model (OUT): a
+    lowering-implied constant (no key, or a structural setting) is not packed as a parameter.
+    """
+
+    def one(section, name, e):
+        consts = {k: v for k, v in e.params.items() if not isinstance(v, tuple) and _fixed(sources, section, name, k)}
+        if not consts:
+            return e
+        kind, rest = legacy.fixed(e.kind, consts), {k: v for k, v in e.params.items() if k not in consts}
+        if section == "sensors":
+            return regions.SensorEntry(kind, rest)
+        return regions.SurfaceEntry(kind, rest, e.ignored_between_same_material)
+
+    return regions.Library(media=library.media,
+                           surfaces={n: one("surfaces", n, e) for n, e in library.surfaces.items()},
+                           sensors={n: one("sensors", n, e) for n, e in library.sensors.items()})  # fmt: skip
 
 
 # ----------------------------------------------------------------------------------------------------- the sources
