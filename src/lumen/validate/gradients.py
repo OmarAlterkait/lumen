@@ -209,32 +209,46 @@ def _truncation_scan(sides, j, ad, fd, h, v0, n):  # noqa: PLR0913 -- the family
 
 
 def _exact(c):
-    return abs(c["ad"] - c["fd"]) <= EXACT * abs(c["fd"]) + 3 * c["floor"]
+    return abs(c["ad"] - c["fd"]) <= EXACT * abs(c["fd"]) + 3 * max(c["floor"], c.get("rounding", 0.0))
+
+
+def _with_rounding(c, c4):
+    """Return c with FDX's own float32 error estimated from FDX at h / 4 (``c4``): |FDX(h / 4) - FDX(h)| / 3.
+
+    The fixed-reference sides evaluate the parameter's terms (log sigma, alpha^2 / sigma^2, ...) at v (1 +- h) in
+    float32: each such evaluation rounds the same way on every photon, so the error is a bias that adds up along a
+    photon's reflections and grows as 1 / h (port/a9: 2.5e-4 per unified-lobe reflection in d log w at h = 1/1024,
+    none in float64). Rounding that scales as 1 / h makes FDX(h / 4) - FDX(h) three times FDX(h)'s error.
+    """
+    return dict(c, rounding=abs(c4["fd"] - c["fd"]) / 3.0)
 
 
 def _fdx(sides, j, ad, v0, n, hx, one_sided):  # noqa: PLR0913 -- the family's pieces
-    """Return (FDX, its h): h / 4 while AD and FDX(h) disagree and FDX(h) - FDX(h / 4) is resolved.
+    """Return (FDX, its h, FDX at h / 4): h / 4 while AD and FDX(h) disagree and FDX(h) - FDX(h / 4) is resolved.
 
     The realisation of a photon trapped between reflectors for thousands of bounces is steep in a parameter
     ((1 + c th)^n), so FDX at 1/1024 can still carry its stencil's truncation; an edge family starts at the h its
-    FD's h-scan converged at. An AD that misses a term disagrees with a converged FDX at every h.
+    FD's h-scan converged at. An AD that misses a term disagrees with a converged FDX at every h. FDX at h / 4 also
+    gives FDX's own float32 error (``_with_rounding``).
     """
-    fx = sides.fd(j, hx, one_sided, True)
+    fx, f4 = sides.fd(j, hx, one_sided, True), sides.fd(j, hx / 4, one_sided, True)
     for _ in range(TRUNCATION_STEPS):
-        if all(_exact(compare(ad[k], fx[k], v0[k], hx, n)) for k in (0, 1)):
+        c = [compare(ad[k], fx[k], v0[k], hx, n) for k in (0, 1)]
+        c4 = [compare(ad[k], f4[k], v0[k], hx / 4, n) for k in (0, 1)]
+        if all(_exact(_with_rounding(a, b)) for a, b in zip(c, c4, strict=True)):
             break
-        f2 = sides.fd(j, hx / 4, one_sided, True)
-        if all(_exact(compare(fx[k], f2[k], v0[k], hx / 4, n)) for k in (0, 1)):  # converged: AD differs
+        if all(_exact(compare(fx[k], f4[k], v0[k], hx / 4, n)) for k in (0, 1)):  # converged: AD differs
             break
-        fx, hx = f2, hx / 4
-    return fx, hx
+        fx, f4, hx = f4, sides.fd(j, hx / 16, one_sided, True), hx / 4
+    return fx, hx, f4
 
 
 def judge(cq, ct, xq, xt, no_draw, exact_gated=True):
     """Return (pass, note) of one family: FDX exactness, then the FD's paired z and the groups' mean z^2.
 
     ``cq``, ``ct``: AD against FD (charge, time-weighted charge); ``xq``, ``xt``: AD against FDX. Exactness allows
-    the FDX's own float32 resolution (three times ``FLOOR_V |f| / h`` at its h) besides ``EXACT``. A family that moves
+    the FDX's own float32 error (three times the larger of ``FLOOR_V |f| / h`` and the estimate from FDX at h / 4,
+    ``_with_rounding``) besides ``EXACT``. A family that moves
     no draw (``no_draw``: its FD with the shared reference is the fixed-reference function) has no statistics to
     test: its FD is the FDX's function at a coarser h, so only exactness is gated. ``exact_gated`` False: a
     parameter whose estimator has infinite variance (``INFINITE_VARIANCE``), whose realisation a finite difference
@@ -321,9 +335,10 @@ def check(name, *, detector=None, photons=None, replicas=None, reverse=False, on
             if not no_draw:
                 fd, h, scan = _truncation_scan(sides, j, ad, fd, h, v0, n)
                 stencil += scan
-        fdx, hx = _fdx(sides, j, ad, v0, n, min(o["hx"], h) if mode == "edge" else o["hx"], mode == "edge")
+        fdx, hx, fdx4 = _fdx(sides, j, ad, v0, n, min(o["hx"], h) if mode == "edge" else o["hx"], mode == "edge")
         cq, ct = compare(ad[0], fd[0], v0[0], h, n), compare(ad[1], fd[1], v0[1], h, n)
-        xq, xt = compare(ad[0], fdx[0], v0[0], hx, n), compare(ad[1], fdx[1], v0[1], hx, n)
+        xq, xt = (_with_rounding(compare(ad[k], fdx[k], v0[k], hx, n), compare(ad[k], fdx4[k], v0[k], hx / 4, n))
+                  for k in (0, 1))  # fmt: skip
         passed, note = judge(cq, ct, xq, xt, no_draw, exact_gated=keys[2] not in INFINITE_VARIANCE)
         adfdx = [
             float(ad[c][:, -1].sum() / fdx[c][:, -1].sum()) if fdx[c][:, -1].sum() else float("nan") for c in (0, 1)
