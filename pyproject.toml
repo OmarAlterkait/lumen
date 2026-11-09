@@ -30,6 +30,10 @@ fallback-version = "0.0.0"
 [tool.hatch.build.targets.wheel]
 packages = ["src/lumen"]
 
+[tool.hatch.build.targets.sdist]
+# an explicit list: untracked files, cluster/ (site paths) and tools/ never ship
+only-include = ["src", "tests", "docs", "README.md", "LICENSE", "pyproject.toml"]
+
 [tool.ruff]
 line-length = 120
 target-version = "py310"

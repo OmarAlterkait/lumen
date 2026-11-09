@@ -61,6 +61,44 @@ def test_privacy_guard_unset_is_a_noop_and_unreadable_refuses(tmp_path):
     assert guard(repo, tmp_path / "missing.txt", "staged").returncode == 1
 
 
+def push_guard(repo, patterns, ref="refs/heads/main"):
+    """Run the guard's pre-push check on the push of HEAD to a remote that has none of it."""
+    sha = git(repo, "rev-parse", "HEAD").stdout.strip()
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(repo), "LUMEN_PRIVATE_PATTERNS": str(patterns)}
+    line = f"{ref} {sha} {ref} {'0' * 40}\n"
+    return subprocess.run([sys.executable, str(GUARD), "push", "origin", "url"], cwd=repo, env=env, input=line,
+                          capture_output=True, text=True)  # fmt: skip
+
+
+def commit(repo, name, data, author="A U Thor <a@example.org>"):
+    (repo / name).write_bytes(data)
+    git(repo, "add", name)
+    git(repo, "-c", "user.name=c", "-c", "user.email=c@example.org", "commit", "-q", "--author", author, "-m", "add")
+
+
+def test_privacy_guard_pre_push_reads_commits_archives_authors_and_refs(tmp_path):
+    import io
+
+    import numpy as np
+
+    repo = make_repo(tmp_path)
+    pats = tmp_path / "patterns.txt"
+    pats.write_text("forbiddenword\n")
+    commit(repo, "ok.txt", b"fine\n")
+    assert push_guard(repo, pats).returncode == 0
+    buf = io.BytesIO()
+    np.savez_compressed(buf, names=np.array(["a", "the_ForbiddenWord_pmt"]))  # UTF-32 inside a deflated member
+    commit(repo, "names.npz", buf.getvalue())
+    r = push_guard(repo, pats)
+    assert r.returncode == 1 and "archive member" in r.stderr and "forbidden" not in r.stderr.lower()
+    git(repo, "reset", "-q", "--hard", "HEAD~1")
+    commit(repo, "two.txt", b"fine\n", author="forbiddenword <x@example.org>")
+    assert push_guard(repo, pats).returncode == 1
+    git(repo, "reset", "-q", "--hard", "HEAD~1")
+    r = push_guard(repo, pats, ref="refs/tags/forbiddenword-1")
+    assert r.returncode == 1 and "ref name" in r.stderr
+
+
 def test_jargon_hook(tmp_path):
     good = tmp_path / "errors.py"
     good.write_text('class LumenError(Exception):\n    """Raised when a photon is lost."""\n')

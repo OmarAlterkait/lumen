@@ -1,6 +1,6 @@
 # Every hook is local and runs from the environment made by cluster/s3df/make_env.sh, so nothing is fetched at
-# commit time. Install with:  pre-commit install --hook-type pre-commit --hook-type commit-msg
-default_install_hook_types: [pre-commit, commit-msg]
+# commit time. Install with:  pre-commit install --hook-type pre-commit --hook-type commit-msg --hook-type pre-push
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
 repos:
   - repo: local
     hooks:
@@ -16,6 +16,13 @@ repos:
         entry: python tools/hooks/privacy_guard.py message
         language: system
         stages: [commit-msg]
+      - id: privacy-guard-push
+        name: privacy guard (every outgoing commit, its blobs and archives, and the ref names)
+        entry: tools/hooks/pre_push.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
       - id: ruff-format
         name: ruff format
         entry: ruff format
