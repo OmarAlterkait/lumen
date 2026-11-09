@@ -3,7 +3,8 @@
 A ``Medium`` is static: an index law (None for an opaque medium, in which no photon travels: Geant4 kills a photon
 entering a material without RINDEX), an absorption-length law (absorption acts as a weight exp(-s / L_abs), never as
 an event) and event channels, each a (name, lobe, length law): Rayleigh scattering, re-emission by a wavelength
-shifter, and so on.
+shifter, and so on. Geant4's channels come in a fixed order, ``CHANNEL_ORDER`` (Rayleigh, Mie, WLS), so a medium's
+channel indices and its use of random numbers do not depend on which others it has.
 
 Parameters of one medium: ``{"index": {...}, "absorption": {...}, "<channel>": {"length": {...}, "lobe": {...}}}``.
 """
@@ -12,8 +13,10 @@ from dataclasses import dataclass
 
 import jax.numpy as jnp
 
-from lumen.media import laws
+from lumen.media import laws, phase
 from lumen.surfaces.lobes import Lobe
+
+CHANNEL_ORDER = ("rayleigh", "mie", "wls")
 
 
 @dataclass(frozen=True, eq=False)
@@ -49,6 +52,15 @@ class Medium:
     def __repr__(self):
         """Show the medium's name."""
         return f"Medium({self.name})"
+
+
+def mie(length: laws.Law) -> Channel:
+    """Return Geant4's Mie scattering channel (G4OpMieHG): mean free path ``length`` (MIEHG), lobe ``phase.MIE_HG``.
+
+    Its parameters are ``{"length": {...}, "lobe": {"g_forward": ..., "g_backward": ..., "forward_ratio": ...}}``
+    (MIEHG_FORWARD, MIEHG_BACKWARD, MIEHG_FORWARD_RATIO).
+    """
+    return Channel("mie", phase.MIE_HG, length)
 
 
 def evaluate(medium, p, lam):

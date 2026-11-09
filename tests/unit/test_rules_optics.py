@@ -150,7 +150,8 @@ def _with(material, **props):
 def test_refused_media(df):
     liq = df.materials["Liq"]
     one = schema.Property("X", np.asarray(1.0))
-    for key, why in (("MIEHG", "Mie"), ("WLSABSLENGTH2", "second WLS"), ("WLSMEANNUMBERPHOTONS", "Poisson"),
+    # MIEHG is read now (test_mie.py)
+    for key, why in (("WLSABSLENGTH2", "second WLS"), ("WLSMEANNUMBERPHOTONS", "Poisson"),
                      ("REALRINDEX", "complex index")):  # fmt: skip
         with pytest.raises(rules.OpticsRefused, match=why):
             rules.medium(_with(liq, **{key: one}))
