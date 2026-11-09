@@ -51,17 +51,33 @@ def bound(df):
     return dataclasses.replace(df, borders=tuple(b for b in df.borders if b.bound))
 
 
-def sensor_defaults(sensor_set) -> dict:
-    """Return ``sensors/<group>/<field>`` -> (value, ParamInfo) of each group's model settings that are values."""
+def sensor_defaults(sensor_set, parts=None) -> dict:
+    """Return ``sensors/<group>/<field>`` -> (value, ParamInfo): each group's settings that are values, then the
+    default values of its after-tracking sensor model (``lumen.plugins.sensor_models``, the value set ``defaults``;
+    per-sensor fields over the group's sensors in ``parts``)."""  # noqa: D205, D209
+    from lumen import plugins
+
     out = {}
     for g in sensor_set.groups:
         for field, v in g.settings.items():
             if isinstance(v, (int, float)) and not isinstance(v, bool) and field != "name_prefix":
                 key = f"sensors/{g.name}/{field}"
                 out[key] = (float(v), ParamInfo(key, "", (0.0, 1.0), "reweight"))
+        if g.model in plugins.sensor_models.names() and parts is not None:
+            if g.defaults is None:
+                raise ValueError(f"sensor group {g.name!r}: model {g.model!r} needs its value set (defaults)")
+            model = plugins.sensor_models.get(g.model)(g.defaults)
+            info = model.param_info(g.name)
+            n = len(group_tags(g, parts))
+            out.update({k: (v, info[k]) for k, v in model.defaults(g.name, n).items()})
     return out
+
+
+def group_tags(group, parts) -> list[int]:
+    """Return the sensor tags (the photon loop's sensor indices) of a sensor group, ascending."""
+    return [i for i, pv in enumerate(parts.optics.tag_pvs) if group.selects(parts.tree.by_name[pv].lv)]
 
 
 def parameters(df, sensor_set, parts, calibrations=()):
     """Return the Params of a built detector: its file's values, the sensor defaults, then the calibration chain."""
-    return spec.resolve(spec.param_spec_and_values(df, sensor_defaults(sensor_set)), calibrations)
+    return spec.resolve(spec.param_spec_and_values(df, sensor_defaults(sensor_set, parts)), calibrations)

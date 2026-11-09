@@ -15,6 +15,10 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+
+import jax
+import jax.numpy as jnp
 
 from lumen import _env
 from lumen.format import calibrations as cal
@@ -130,4 +134,113 @@ def load(name_or_path, *, sensors: str = "default", calibration: str = cal.NOMIN
     return Detector(df.name, path, df, sset, parts, columns, calibration, params)
 
 
-__all__ = ["Detector", "convert", "load"]
+# ------------------------------------------------------------------------------------------------------ simulate
+EXACT_CELL_FACTOR = 5  # device bytes per histogram byte: the GPU's exact sums keep a u64 sum and a u64 scratch per cell
+_MODELS: dict = {}  # (id(det), hit angle) -> (det, Model): one compile per detector and layout
+
+
+@jax.tree_util.register_pytree_node_class
+@dataclass(frozen=True)
+class Light:
+    """What ``simulate`` returns: per sensor the expected photon arrivals at the sensor (before its model), their
+    Monte Carlo error (over the replicas), the mean arrival time (ns), the group's histograms (``lumen.readout``) and
+    the run's health; ``provenance`` (static) says how it was made. Readout functions take ``(light, params)``."""  # noqa: D205, D209
+
+    arrivals: Any
+    arrivals_error: Any
+    mean_arrival_time: Any
+    histograms: Any
+    health: Any
+    provenance: tuple = ()
+
+    def tree_flatten(self):
+        """Return the arrays and the provenance."""
+        return (self.arrivals, self.arrivals_error, self.mean_arrival_time, self.histograms, self.health), \
+            self.provenance  # fmt: skip
+
+    @classmethod
+    def tree_unflatten(cls, aux, children):
+        """Rebuild from the arrays and the provenance."""
+        return cls(*children, aux)
+
+
+def _sensor_group(det):
+    from lumen import plugins
+
+    groups = [g for g in det.sensor_set.groups if g.model in plugins.sensor_models.names()]
+    if len(groups) != 1:
+        raise ValueError(f"simulate: one sensor group with a sensor model (lumen.sensors) is supported, the sensor "
+                         f"set has {[g.name for g in groups]}")  # fmt: skip
+    return groups[0], plugins.sensor_models.get(groups[0].model)(groups[0].defaults)
+
+
+def _model(det, hit_angle: bool):
+    from lumen.geometry import _legacy_tracked as tracked
+    from lumen.transport import step as steps
+
+    k = (id(det), hit_angle)
+    if k not in _MODELS:
+        geom = tracked.from_parts(det.parts, cache=True)
+        _MODELS[k] = (det, steps.Model(geom, det.parts.optics, hit_angle=hit_angle))
+    return _MODELS[k][1]
+
+
+def _budget() -> float:
+    try:
+        limit = float(jax.devices()[0].memory_stats()["bytes_limit"])
+    except Exception:  # a device without memory statistics (the CPU): no device budget
+        return float("inf")
+    return limit / EXACT_CELL_FACTOR
+
+
+def simulate(det, source, params=None, *, samples: int, seed: int, replicas: int = 16, gate=None,  # noqa: PLR0913
+             chunk: int = 1 << 20, backend: str = "auto") -> Light:  # fmt: skip
+    """Return the Light of ``samples`` photons of ``source`` through ``det`` at ``params`` (default: its own).
+
+    ``source``: an Emission batch of at least ``samples`` rows, or a function ``(first_id, count) -> Emission``. The
+    photons run in chunks of ``chunk`` (``lumen.readout.photon_chunks``), photon i under ``fold_in(key(seed), i)``.
+    The histograms are those of the sensor set's group with a sensor model (``lumen:pmt``), on its static grid
+    (``lumen.readout.make_grid`` with ``gate`` (ns), default the group's ``readout["gate"]``); ``simulate`` refuses
+    before launch (MemoryError) when they exceed the device's budget.
+    """
+    from lumen import readout as ro
+    from lumen import run as runner
+    from lumen.build import build
+    from lumen.transport import item
+    from lumen.transport import step as steps
+
+    group, sensor_model = _sensor_group(det)
+    gate = tuple(float(x) for x in (gate or (group.readout or {}).get("gate", (0.0, 0.0))))
+    grid = ro.make_grid(sensor_model, gate)
+    n = len(det.parts.optics.tag_pvs)
+    if build.group_tags(group, det.parts) != list(range(n)):
+        raise ValueError(f"simulate: sensor group {group.name!r} must contain every sensor of the detector")
+    r = item.Readout(n, grid, int(replicas))
+    ro.check_memory(grid, n, int(replicas), 0, _budget())
+    model = _model(det, grid.theta_knots is not None)
+    packed = jax.tree_util.tree_map(jnp.asarray, det.pack(det.params() if params is None else params))
+    ops = steps.operands(model, packed, None, steps.Controls(), None)
+    key = jax.random.key_data(jax.random.PRNGKey(int(seed)))
+    size, acc = min(int(chunk), int(samples)), None
+    for first, count in ro.photon_chunks(int(samples), size):
+        rows = source(first, count) if callable(source) else \
+            jax.tree_util.tree_map(lambda a, f=first, c=count: a[f:f + c], source)  # fmt: skip
+        if count < size:  # the last chunk keeps the shape: padded, its extra rows inactive
+            pad = lambda a, c=count: jnp.concatenate([a, jnp.repeat(a[-1:], size - c, 0)])  # noqa: E731
+            rows = jax.tree_util.tree_map(pad, rows)
+        t = runner.run(item.readout(r), model, ops, rows, key, replicas=int(replicas), first_id=first, backend=backend,
+                       n_active=count)  # fmt: skip
+        out = {k: jnp.asarray(v, jnp.float32) for k, v in t.outputs.items()}
+        acc = out if acc is None else {k: acc[k] + v for k, v in out.items()}
+    per = acc["arrival"].reshape(int(replicas), n)
+    arrivals = per.sum(0)
+    err = jnp.sqrt(replicas / max(replicas - 1, 1) * jnp.sum((per - per.mean(0)) ** 2, 0))
+    mean_t = jnp.where(arrivals > 0.0, acc["arrival_t"] / jnp.where(arrivals > 0.0, arrivals, 1.0), jnp.nan)
+    health = {k: acc[k] for k in ("lost", "abandoned", "escaped", "late", "truncated", "n_truncated", "stuck")}
+    prov = (("seed", int(seed)), ("samples", int(samples)), ("replicas", int(replicas)), ("chunk", size),
+            ("backend", backend), ("detector", det.name), ("calibration", det.calibration))  # fmt: skip
+    hist = item.histograms(r, acc, sensor_model, group.name, gate)
+    return Light(arrivals, err, mean_t, hist, health, prov)
+
+
+__all__ = ["Detector", "Light", "convert", "load", "simulate"]

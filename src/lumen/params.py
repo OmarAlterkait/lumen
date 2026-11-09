@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 
+import jax
 import numpy as np
 
 from lumen.format.apply import check
@@ -40,7 +41,11 @@ class UnknownParamKey(KeyError):  # noqa: N818 (the name of the documented error
 
 
 class Params(Mapping):
-    """An immutable mapping of parameter values with their declared spec and the layer each value came from."""
+    """An immutable mapping of parameter values with their declared spec and the layer each value came from.
+
+    A JAX pytree: its values are the leaves (a ``Table`` gives its energies and values), its keys, spec and layers the
+    static part, so a ``Params`` passes through ``jax.jit``, ``jax.grad`` and ``wrt=`` as it is.
+    """
 
     def __init__(self, values: dict, spec: Mapping, layers: dict):
         self._values = dict(values)
@@ -113,3 +118,16 @@ def _checked(info: ParamInfo, old, value):
         if np.any(v < lo) or np.any(v > hi):
             raise ValueError(f"{info.key} has a value outside [{lo}, {hi}] {info.unit}".rstrip())
     return value
+
+
+def _flatten(p: Params):
+    keys = tuple(sorted(p._values))
+    return tuple(p._values[k] for k in keys), (keys, tuple(sorted(p._spec.items())), tuple(sorted(p._layers.items())))
+
+
+def _unflatten(aux, leaves):
+    keys, spec, layers = aux
+    return Params(dict(zip(keys, leaves, strict=True)), dict(spec), dict(layers))
+
+
+jax.tree_util.register_pytree_node(Params, _flatten, _unflatten)

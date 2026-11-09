@@ -27,6 +27,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from lumen._core.safe import literal
+
 CELL_BYTES = 4  # float32 histogram cells
 TIME_SPLITS = ("cubic", "linear")
 
@@ -71,7 +73,7 @@ class Grid:
 
 def _hats(knots, x):
     """Return [(index, weight)] of x on hat functions over knots (constant beyond the end knots)."""
-    k = jnp.asarray(knots, jnp.float32)
+    k = literal(knots)  # built from scalars: never a float array closed over by the photon loop
     i = jnp.clip(jnp.searchsorted(k, x, side="right") - 1, 0, len(knots) - 2)
     f = jnp.clip((x - k[i]) / (k[i + 1] - k[i]), 0.0, 1.0)
     return [(i, 1.0 - f), (i + 1, f)]
@@ -81,7 +83,7 @@ def _lam_cells(grid, lam):
     if grid.lam_knots is not None:
         return _hats(grid.lam_knots, lam)
     if grid.lam_edges is not None:
-        b = jnp.searchsorted(jnp.asarray(grid.lam_edges, jnp.float32), lam, side="right") - 1
+        b = jnp.searchsorted(literal(grid.lam_edges), lam, side="right") - 1
         return [(jnp.where((b >= 0) & (b < grid.n_lam), b, -1), jnp.float32(1.0))]
     return [(jnp.int32(0), jnp.float32(1.0))]
 

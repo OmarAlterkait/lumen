@@ -72,13 +72,15 @@ class Model:
     """The static model: the geometry, the optics tables, the step config and the clearance field.
 
     The geometry carries its optical classes (``lumen.geometry._legacy_tracked``); the clearance field
-    (``lumen.geometry.clearance.Clearance``) serves the moving-source method.
+    (``lumen.geometry.clearance.Clearance``) serves the moving-source method; ``hit_angle``: the deposit carries the
+    hit angle (a sensor model reads CE).
     """
 
     geometry: Any
     tables: Any
     step: StepConfig = StepConfig()
     clearance: Any = None
+    hit_angle: bool = False
 
     @property
     def stacked(self):
@@ -130,7 +132,8 @@ class Deposit(NamedTuple):
     """What one step deposits: the expected detection (sensor, weight, time ns, wavelength nm) and the health.
 
     ``pushed`` / ``abandon`` flag the stuck rule; ``event`` (-2 a bulk event, else the surface outcome, -1 none) and
-    ``pair`` (class left x C + class met) are for diagnostics.
+    ``pair`` (class left x C + class met) are for diagnostics. ``hit`` (rad): the hit angle on the sensor
+    (``hit_angle``; 0 when the model has none).
     """
 
     sensor: jax.Array
@@ -145,6 +148,7 @@ class Deposit(NamedTuple):
     abandon: jax.Array
     event: jax.Array
     pair: jax.Array
+    hit: jax.Array = 0.0
 
 
 class _End(NamedTuple):
@@ -502,6 +506,23 @@ def step(model, ops, ph, key):
     tag_dep = q["tag"] if dpre is None else jnp.where(jnp.asarray(dpre)[cb, c_k], ph.tag, q["tag"])
     time = ph.t + vx.end.dt + vx.end.t / vx.v_g if cfg.moving_source else ph.t + vx.t_if / vx.v_g
     event, pair = jnp.where(scatter, -2, nx.outcome).astype(I32), cb * jnp.asarray(tables.kind_of).shape[0] + c_k
+    out_side = False if dpre is None else jnp.asarray(dpre)[cb, c_k]
+    hit = hit_angle(model, ops, ph, vx, out_side) if model.hit_angle else F32(0.0)
     dep = Deposit(jnp.where(at_if, tag_dep, -1), dep_q, time, ph.lam, lost, abandoned, escaped, late, pushed, abandon,
-                  event, pair)  # fmt: skip
+                  event, pair, hit)  # fmt: skip
     return ph2, dep
+
+
+def hit_angle(model, ops, ph, vx, out_side):
+    """Return the hit angle (rad) of a crossing into a sensor: acos(|z| / r) in the frame of the volume outside it.
+
+    WCSim's definition (WCSimWCSD.cc ProcessHits, ProcessHits_boundary): into the sensor, the step's start point in
+    the frame of the volume it starts in (the glass); out of it (``out_side``, credited to the volume left), the
+    crossing point in the frame of the volume after (the glass). Evaluated as atan2(rho, |z|): finite derivatives on
+    the axis.
+    """
+    q, D = vx.q, geometry(model, ops).nav.dev()
+    v = jnp.where(out_side, q["vol_after"], q["vol_before"])
+    x = jnp.where(out_side, ph.x + vx.t_if * ph.d, ph.x)
+    r = D["R"][v].T @ (x - D["t"][v])
+    return jnp.arctan2(jnp.sqrt(r[0] * r[0] + r[1] * r[1] + 1e-30), jnp.abs(r[2]))

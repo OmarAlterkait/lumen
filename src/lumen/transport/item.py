@@ -11,6 +11,7 @@ is the item's own mapped input, so a re-emitted photon keeps its row); ``alive(p
 
 from __future__ import annotations
 
+import functools
 from typing import Any, NamedTuple
 
 import jax.numpy as jnp
@@ -58,15 +59,85 @@ def photons(tally: TallyShape) -> ItemSpec:
         band = jnp.where((b >= 0) & (b < n_lam), b, -1)
         idx = jnp.where((dep.sensor >= 0) & (band >= 0), dep.sensor * n_lam + band, -1)
         idx = jnp.where(idx >= 0, idx + slot * cells, -1)
-        adds = [("Q", idx, dep.q), ("Tw", idx, dep.q * dep.time)]
-        adds += [(k, jnp.int32(0), getattr(dep, k)) for k in HEALTH]
-        return adds + [("stuck", jnp.where(f, i, -1), 1.0) for i, f in enumerate((dep.pushed, dep.abandon))]
+        return [("Q", idx, dep.q), ("Tw", idx, dep.q * dep.time)] + health_adds(dep)
 
     def outputs(replicas):
-        out = {"Q": (replicas * cells, True), "Tw": (replicas * cells, True), "stuck": (2, False)}
-        return out | {k: (1, True) for k in HEALTH}
+        return {"Q": (replicas * cells, True), "Tw": (replicas * cells, True)} | HEALTH_OUTPUTS
 
     return ItemSpec(start_photon, lambda ph: ph.alive, emits, outputs, lambda ph: dict(vertices=ph.vertex))
+
+
+class Readout(NamedTuple):
+    """The histograms of one sensor group (``lumen.readout``): sensors, the static grid, replicas on the charge
+    histogram, half-replicas on the time histogram."""  # noqa: D205, D209
+
+    n_sensors: int
+    grid: Any
+    replicas: int = 16
+    half_replicas: int = 2
+
+
+@functools.lru_cache(maxsize=32)
+def readout(r: Readout) -> ItemSpec:
+    """Return the ItemSpec filling a group's histograms through ``lumen.readout.charge_cells`` / ``time_cells``.
+
+    Outputs: "charge" (R S L A), "arrival" (R S: every deposit, whatever its wavelength or angle) and "arrival_t" (S:
+    q t), and on a timed grid "time" (H S nt), "over_q" / "over_qt" (H S 2: q and q t beyond the last node, side 0,
+    and before the first, side 1), with the health; photon i of n fills replica i R // n and half-replica i H // n
+    (``slot`` is the charge replica). One ItemSpec per Readout (no recompile for the same layout).
+    """
+    from lumen.readout import charge_cells, time_cells
+
+    g, s = r.grid, r.n_sensors
+    cells, nodes = s * g.n_lam * g.n_theta, s * g.nt
+
+    def emits(dep, slot, _grid):
+        idx, w = charge_cells(dep, g)
+        adds = [("charge", jnp.where(idx[m] >= 0, idx[m] + slot * cells, -1), dep.q * w[m]) for m in range(len(w))]
+        adds += [("arrival", jnp.where(dep.sensor >= 0, dep.sensor + slot * s, -1), dep.q),
+                 ("arrival_t", dep.sensor, dep.q * dep.time)]  # fmt: skip
+        if g.nt:
+            h = slot * r.half_replicas // r.replicas
+            ti, tw, oi, ow = time_cells(dep, g)
+            adds += [("time", jnp.where(ti[m] >= 0, ti[m] + h * nodes, -1), dep.q * tw[m]) for m in range(4)]
+            for m in range(2):
+                o = jnp.where(oi[m] >= 0, oi[m] + h * 2 * s, -1)
+                adds += [("over_q", o, dep.q * ow[m]), ("over_qt", o, dep.q * ow[m] * dep.time)]
+        return adds + health_adds(dep)
+
+    def outputs(replicas):
+        if replicas != r.replicas:
+            raise ValueError(f"readout: the item was made for {r.replicas} replicas, run with {replicas}")
+        out = {"charge": (replicas * cells, True), "arrival": (replicas * s, True), "arrival_t": (s, True)}
+        out |= HEALTH_OUTPUTS
+        if g.nt:
+            hs = r.half_replicas
+            out |= {"time": (hs * nodes, True), "over_q": (hs * 2 * s, True), "over_qt": (hs * 2 * s, True)}
+        return out
+
+    return ItemSpec(start_photon, lambda ph: ph.alive, emits, outputs, lambda ph: dict(vertices=ph.vertex))
+
+
+def histograms(r: Readout, outputs, model, group: str, gate) -> Any:
+    """Return the ``lumen.readout.Histograms`` of a run of ``readout(r)`` (its tally outputs)."""
+    from lumen.readout import Histograms
+
+    g, s, hs = r.grid, r.n_sensors, r.half_replicas
+    charge = outputs["charge"].reshape(r.replicas, s, g.n_lam, g.n_theta)
+    if not g.nt:
+        return Histograms(charge, grid=g, model=model, group=group, gate=tuple(gate))
+    q, qt = (outputs[k].reshape(hs, s, 2) for k in ("over_q", "over_qt"))
+    late, early = (jnp.stack([q[..., i], qt[..., i]], -1) for i in (0, 1))
+    return Histograms(charge, outputs["time"].reshape(hs, s, g.nt), late, early, None, g, model, group, tuple(gate))
+
+
+def health_adds(dep) -> list:
+    """Return the health adds of a Deposit: the weights of ``HEALTH`` and the "stuck" counts (pushed, abandoned)."""
+    adds = [(k, jnp.int32(0), getattr(dep, k)) for k in HEALTH]
+    return adds + [("stuck", jnp.where(f, i, -1), 1.0) for i, f in enumerate((dep.pushed, dep.abandon))]
+
+
+HEALTH_OUTPUTS = {"stuck": (2, False)} | {k: (1, True) for k in HEALTH}
 
 
 def grid(tally: TallyShape) -> dict:

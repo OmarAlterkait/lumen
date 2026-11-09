@@ -18,6 +18,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import jax
 import numpy as np
 
 from lumen.format.io import dumps
@@ -28,10 +29,13 @@ NOMINAL = "nominal"
 
 @dataclass(frozen=True)
 class Table:
-    """A tabulated parameter: energies (eV) and values, both arrays of one length."""
+    """A tabulated parameter: energies (eV) and values, both arrays of one length (a JAX pytree of the two)."""
 
     energy: np.ndarray
     value: np.ndarray
+
+
+jax.tree_util.register_pytree_node(Table, lambda t: ((t.energy, t.value), None), lambda _, c: Table(*c))
 
 
 @dataclass(frozen=True)

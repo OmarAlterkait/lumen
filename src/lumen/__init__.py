@@ -2,7 +2,7 @@
 
 from importlib.metadata import PackageNotFoundError, version
 
-from lumen.api import Detector, convert, load
+from lumen.api import Detector, Light, convert, load, simulate
 from lumen.params import Params
 from lumen.recipe import Recipe
 
@@ -11,4 +11,4 @@ try:
 except PackageNotFoundError:  # running from a source tree that is not installed
     __version__ = "0.0.0"
 
-__all__ = ["Detector", "Params", "Recipe", "__version__", "convert", "load"]
+__all__ = ["Detector", "Light", "Params", "Recipe", "__version__", "convert", "load", "simulate"]
