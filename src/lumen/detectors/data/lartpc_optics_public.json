@@ -1,0 +1,1596 @@
+{
+ "meta": {
+  "title": "Public optical properties used by LArSoft-based LArTPC photon transport (SBND, MicroBooNE)",
+  "compiled": "2026-10-22",
+  "interpolation": "Geant4 G4MaterialPropertyVector::Value: linear in energy, clamped to the end values outside the table",
+  "energy_to_wavelength": "lambda[nm] = 1239.84198 / E[eV]",
+  "commits": {
+   "LArSoft/lardataalg": "03f5e9a2e1cec38be040f91fdd662c9d54ee0667 (develop, 2026-09-14)",
+   "LArSoft/larsim (LegacyLArG4, last version before removal)": "0c42311b0925a0d1e1f4e734bcc53fe092d22689 (LegacyLArG4 removed in 9979d575, 2026-02-11)",
+   "LArSoft/larsim (develop)": "5adecfd9940a50bf3098f52c3f9c8da72720f2b1",
+   "LArSoft/larg4": "0cfdff2a54bb0b789e23744313aa2d2cb7bf35cb",
+   "LArSoft/larana": "e728f48ed6b53d616685f3a64ebe130643356e42",
+   "SBNSoftware/sbndcode": "4e41b3d89fca4960ce656499270bf2b996e5dfa0 (develop, 2026-10-20)",
+   "uboone/ubevt": "14ad3eb1397a6ced617eba36dc5d035a64bd196e",
+   "uboone/ubsim": "df3e2431947564443289d1a9e2cc1bedb0fec642",
+   "uboone/ubcore": "078fb06f05e5eeb2b9fcb3c559c138de1e292148",
+   "Geant4": "v11.2.2 (github.com/Geant4/geant4)"
+  }
+ },
+ "lar": {
+  "larsoft_standard": {
+   "source": "https://github.com/LArSoft/lardataalg/blob/03f5e9a2e1cec38be040f91fdd662c9d54ee0667/lardataalg/DetectorInfo/larproperties.fcl",
+   "rindex": {
+    "energy": [
+     1.18626,
+     1.68626,
+     2.18626,
+     2.68626,
+     3.18626,
+     3.68626,
+     4.18626,
+     4.68626,
+     5.18626,
+     5.68626,
+     6.18626,
+     6.68626,
+     7.18626,
+     7.68626,
+     8.18626,
+     8.68626,
+     9.18626,
+     9.68626,
+     10.1863,
+     10.6863,
+     11.1863
+    ],
+    "energy_unit": "eV",
+    "values": [
+     1.24664,
+     1.2205,
+     1.22694,
+     1.22932,
+     1.23124,
+     1.23322,
+     1.23545,
+     1.23806,
+     1.24116,
+     1.24489,
+     1.24942,
+     1.25499,
+     1.26197,
+     1.2709,
+     1.28263,
+     1.29865,
+     1.32169,
+     1.35747,
+     1.42039,
+     1.56011,
+     2.16626
+    ],
+    "value_unit": "1",
+    "source": "https://github.com/LArSoft/lardataalg/blob/03f5e9a2e1cec38be040f91fdd662c9d54ee0667/lardataalg/DetectorInfo/larproperties.fcl",
+    "note": "RIndexSpectrum; comment cites arXiv:2002.09346 (Babicz et al. 2020). Introduced in lardataalg 426882c8 (2020-03-26)."
+   },
+   "rayleigh_length": {
+    "energy": [
+     1.18626,
+     1.68626,
+     2.18626,
+     2.68626,
+     3.18626,
+     3.68626,
+     4.18626,
+     4.68626,
+     5.18626,
+     5.68626,
+     6.18626,
+     6.68626,
+     7.18626,
+     7.68626,
+     8.18626,
+     8.68626,
+     9.18626,
+     9.68626,
+     10.1863,
+     10.6863,
+     11.1863
+    ],
+    "energy_unit": "eV",
+    "values": [
+     1200800,
+     390747,
+     128633,
+     54969.1,
+     27191.8,
+     14853.7,
+     8716.9,
+     5397.42,
+     3481.37,
+     2316.51,
+     1577.63,
+     1092.02,
+     763.045,
+     534.232,
+     371.335,
+     252.942,
+     165.38,
+     99.9003,
+     51.2653,
+     17.495,
+     0.964341
+    ],
+    "value_unit": "cm",
+    "source": "https://github.com/LArSoft/lardataalg/blob/03f5e9a2e1cec38be040f91fdd662c9d54ee0667/lardataalg/DetectorInfo/larproperties.fcl",
+    "note": "RayleighSpectrum @ 90 K, from arXiv:2002.09346; loaded as G4 RAYLEIGH (cm)."
+   },
+   "abs_length": {
+    "energy": [
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11
+    ],
+    "energy_unit": "eV",
+    "values": [
+     8000.0,
+     8000.0,
+     8000.0,
+     8000.0,
+     8000.0,
+     2000.0,
+     2000.0,
+     2000.0
+    ],
+    "value_unit": "cm",
+    "source": "https://github.com/LArSoft/lardataalg/blob/03f5e9a2e1cec38be040f91fdd662c9d54ee0667/lardataalg/DetectorInfo/larproperties.fcl",
+    "note": "AbsLengthSpectrum; 8000 cm below 9 eV since lardataalg 3aa99da4 (2023-02-06, \"80 m for Xe wavelengths and above\"); 2000 cm before."
+   },
+   "fast_scint_spectrum": {
+    "energy": [
+     7.2,
+     7.9,
+     8.3,
+     8.6,
+     8.9,
+     9.1,
+     9.3,
+     9.6,
+     9.7,
+     9.8,
+     10,
+     10.2,
+     10.3,
+     10.6,
+     11,
+     11.6,
+     11.9
+    ],
+    "energy_unit": "eV",
+    "values": [
+     0.0,
+     0.04,
+     0.12,
+     0.27,
+     0.44,
+     0.62,
+     0.8,
+     0.91,
+     0.92,
+     0.85,
+     0.7,
+     0.5,
+     0.31,
+     0.13,
+     0.04,
+     0.01,
+     0.0
+    ],
+    "value_unit": "relative",
+    "source": "https://github.com/LArSoft/lardataalg/blob/03f5e9a2e1cec38be040f91fdd662c9d54ee0667/lardataalg/DetectorInfo/larproperties.fcl",
+    "note": "FastScintSpectrum (G4 FASTCOMPONENT); comment cites J. Chem. Phys. 91 (1989) 1469. Energies shifted by +1.2 eV in lardataalg 2658f43f (2021-01-21) because the old grid peaked at Kr wavelength."
+   },
+   "slow_scint_spectrum": {
+    "energy": [
+     7.2,
+     7.9,
+     8.3,
+     8.6,
+     8.9,
+     9.1,
+     9.3,
+     9.6,
+     9.7,
+     9.8,
+     10,
+     10.2,
+     10.3,
+     10.6,
+     11,
+     11.6,
+     11.9
+    ],
+    "energy_unit": "eV",
+    "values": [
+     0.0,
+     0.04,
+     0.12,
+     0.27,
+     0.44,
+     0.62,
+     0.8,
+     0.91,
+     0.92,
+     0.85,
+     0.7,
+     0.5,
+     0.31,
+     0.13,
+     0.04,
+     0.01,
+     0.0
+    ],
+    "value_unit": "relative",
+    "source": "https://github.com/LArSoft/lardataalg/blob/03f5e9a2e1cec38be040f91fdd662c9d54ee0667/lardataalg/DetectorInfo/larproperties.fcl",
+    "note": "identical to fast"
+   },
+   "scint_yield": {
+    "value": 24000.0,
+    "unit": "photons/MeV",
+    "source": "https://github.com/LArSoft/lardataalg/blob/03f5e9a2e1cec38be040f91fdd662c9d54ee0667/lardataalg/DetectorInfo/larproperties.fcl",
+    "note": "ScintYield; G4 SCINTILLATIONYIELD = ScintYield*ScintPreScale"
+   },
+   "scint_prescale": {
+    "value": 0.03,
+    "unit": "1",
+    "source": "https://github.com/LArSoft/lardataalg/blob/03f5e9a2e1cec38be040f91fdd662c9d54ee0667/lardataalg/DetectorInfo/larproperties.fcl",
+    "note": "photons actually tracked = yield*prescale; detector QE later divided by this"
+   },
+   "fast_time_constant": {
+    "value": 6.0,
+    "unit": "ns",
+    "source": "https://github.com/LArSoft/lardataalg/blob/03f5e9a2e1cec38be040f91fdd662c9d54ee0667/lardataalg/DetectorInfo/larproperties.fcl"
+   },
+   "slow_time_constant": {
+    "value": 1590.0,
+    "unit": "ns",
+    "source": "https://github.com/LArSoft/lardataalg/blob/03f5e9a2e1cec38be040f91fdd662c9d54ee0667/lardataalg/DetectorInfo/larproperties.fcl"
+   },
+   "yield_ratio": {
+    "value": 0.3,
+    "unit": "1",
+    "source": "https://github.com/LArSoft/lardataalg/blob/03f5e9a2e1cec38be040f91fdd662c9d54ee0667/lardataalg/DetectorInfo/larproperties.fcl",
+    "note": "G4 YIELDRATIO = fraction of photons in the FAST component (comment in fcl says \"fast / slow\", but it is used as Geant4 YIELDRATIO)"
+   },
+   "birks_constant": {
+    "value": 0.069,
+    "unit": "cm/MeV",
+    "source": "https://github.com/LArSoft/lardataalg/blob/03f5e9a2e1cec38be040f91fdd662c9d54ee0667/lardataalg/DetectorInfo/larproperties.fcl",
+    "note": "loaded with CLHEP::cm/CLHEP::MeV in MaterialPropertyLoader"
+   },
+   "resolution_scale": {
+    "value": 1.0,
+    "unit": "1",
+    "source": "https://github.com/LArSoft/lardataalg/blob/03f5e9a2e1cec38be040f91fdd662c9d54ee0667/lardataalg/DetectorInfo/larproperties.fcl"
+   },
+   "scint_by_particle_type_default": false,
+   "per_particle": {
+    "Muon": {
+     "yield_per_MeV": 24000.0,
+     "fast_fraction": 0.23
+    },
+    "Pion": {
+     "yield_per_MeV": 24000.0,
+     "fast_fraction": 0.23
+    },
+    "Electron": {
+     "yield_per_MeV": 20000.0,
+     "fast_fraction": 0.27
+    },
+    "Kaon": {
+     "yield_per_MeV": 24000.0,
+     "fast_fraction": 0.23
+    },
+    "Proton": {
+     "yield_per_MeV": 19200.0,
+     "fast_fraction": 0.29
+    },
+    "Alpha": {
+     "yield_per_MeV": 16800.0,
+     "fast_fraction": 0.56
+    }
+   },
+   "cerenkov_enabled_default": true
+  },
+  "larsoft_2018_to_2020_superseded": {
+   "source": "https://github.com/LArSoft/lardataalg/blob/50d12060230b51e0e8a69e8e9a79d1a1983d3050/lardataalg/DetectorInfo/larproperties.fcl",
+   "rindex": {
+    "energy": [
+     1.9,
+     2.934,
+     3.592,
+     5.566,
+     6.694,
+     7.54,
+     8.574,
+     9.044,
+     9.232,
+     9.42,
+     9.514,
+     9.608,
+     9.702,
+     9.796,
+     9.89,
+     9.984,
+     10.08,
+     10.27,
+     10.45,
+     10.74,
+     10.92
+    ],
+    "energy_unit": "eV",
+    "values": [
+     1.232,
+     1.236,
+     1.24,
+     1.261,
+     1.282,
+     1.306,
+     1.353,
+     1.387,
+     1.404,
+     1.423,
+     1.434,
+     1.446,
+     1.459,
+     1.473,
+     1.488,
+     1.505,
+     1.524,
+     1.569,
+     1.627,
+     1.751,
+     1.879
+    ],
+    "value_unit": "1",
+    "source": "https://github.com/LArSoft/lardataalg/blob/50d12060230b51e0e8a69e8e9a79d1a1983d3050/lardataalg/DetectorInfo/larproperties.fcl"
+   },
+   "rayleigh_length": {
+    "energy": [
+     2.8,
+     3.0,
+     3.5,
+     4.0,
+     5.0,
+     6.0,
+     7.0,
+     8.0,
+     8.5,
+     9.0,
+     9.2,
+     9.4,
+     9.5,
+     9.6,
+     9.7,
+     9.8,
+     9.9,
+     10.0,
+     10.2,
+     10.4,
+     10.6,
+     10.8
+    ],
+    "energy_unit": "eV",
+    "values": [
+     47923.0,
+     35981.0,
+     18825.0,
+     10653.0,
+     3972.0,
+     1681.0,
+     750.9,
+     334.7,
+     216.8,
+     135.0,
+     109.7,
+     88.06,
+     78.32,
+     69.34,
+     61.06,
+     53.46,
+     46.5,
+     40.13,
+     28.91,
+     19.81,
+     12.61,
+     7.2
+    ],
+    "value_unit": "cm",
+    "source": "https://github.com/LArSoft/lardataalg/blob/50d12060230b51e0e8a69e8e9a79d1a1983d3050/lardataalg/DetectorInfo/larproperties.fcl",
+    "note": "comment cites arXiv:1502.04213 (Grace et al.)"
+   },
+   "abs_length": {
+    "energy": [
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11
+    ],
+    "energy_unit": "eV",
+    "values": [
+     2000.0,
+     2000.0,
+     2000.0,
+     2000.0,
+     2000.0,
+     2000.0,
+     2000.0,
+     2000.0
+    ],
+    "value_unit": "cm",
+    "source": "https://github.com/LArSoft/lardataalg/blob/50d12060230b51e0e8a69e8e9a79d1a1983d3050/lardataalg/DetectorInfo/larproperties.fcl"
+   },
+   "fast_scint_energies_eV_pre2021": [
+    6.0,
+    6.7,
+    7.1,
+    7.4,
+    7.7,
+    7.9,
+    8.1,
+    8.4,
+    8.5,
+    8.6,
+    8.8,
+    9.0,
+    9.1,
+    9.4,
+    9.8,
+    10.4,
+    10.7
+   ]
+  },
+  "sbnd_overrides_fcl": {
+   "source": "https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/LArSoftConfigurations/opticalproperties_sbnd.fcl",
+   "slow_time_constant": {
+    "value": 1300.0,
+    "unit": "ns",
+    "source": "https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/LArSoftConfigurations/opticalproperties_sbnd.fcl",
+    "note": "cites Phys. Rev. C 91, 035503"
+   },
+   "scint_prescale": {
+    "value": 0.0392,
+    "unit": "1",
+    "source": "https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/LArSoftConfigurations/opticalproperties_sbnd.fcl",
+    "note": "must be >= largest DetSim efficiency (coated PMT VUV 0.0392)"
+   },
+   "scint_by_particle_type": true,
+   "cerenkov_enabled": false,
+   "load_extra_mat_properties": true,
+   "tpb_time_constant": {
+    "value": 0.0,
+    "unit": "ns",
+    "source": "https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/LArSoftConfigurations/opticalproperties_sbnd.fcl",
+    "note": "TPB delay applied at digitisation instead"
+   }
+  },
+  "sbnd_full_sim_gdml": {
+   "source": "https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/Geometry/gdml/sbnd_v02_00_full_simulation.gdml",
+   "note": "Optical properties embedded in the GDML (<matrix>/<property>) for the refactored larg4 + artg4tk job g4_full_simulation_sbnd.fcl; these, not the fcl, are what Geant4 uses there.",
+   "rindex": {
+    "energy": [
+     1.18626,
+     1.68626,
+     2.18626,
+     2.68626,
+     3.18626,
+     3.68626,
+     4.18626,
+     4.68626,
+     5.18626,
+     5.68626,
+     6.18626,
+     6.68626,
+     7.18626,
+     7.68626,
+     8.18626,
+     8.68626,
+     9.18626,
+     9.68626,
+     10.1863,
+     10.6863,
+     11.1863
+    ],
+    "energy_unit": "eV",
+    "values": [
+     1.24664,
+     1.2205,
+     1.22694,
+     1.22932,
+     1.23124,
+     1.23322,
+     1.23545,
+     1.23806,
+     1.24116,
+     1.24489,
+     1.24942,
+     1.25499,
+     1.26197,
+     1.2709,
+     1.28263,
+     1.29865,
+     1.32169,
+     1.35747,
+     1.42039,
+     1.56011,
+     2.16626
+    ],
+    "value_unit": "1",
+    "source": "https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/Geometry/gdml/sbnd_v02_00_full_simulation.gdml",
+    "note": "ArINDEX; same as larproperties.fcl; also used for GAr and TPB"
+   },
+   "rayleigh_length": {
+    "energy": [
+     1.18626,
+     1.68626,
+     2.18626,
+     2.68626,
+     3.18626,
+     3.68626,
+     4.18626,
+     4.68626,
+     5.18626,
+     5.68626,
+     6.18626,
+     6.68626,
+     7.18626,
+     7.68626,
+     8.18626,
+     8.68626,
+     9.18626,
+     9.68626,
+     10.1863,
+     10.6863,
+     11.1863
+    ],
+    "energy_unit": "eV",
+    "values": [
+     1200800.0,
+     390747.0,
+     128633.0,
+     54969.1,
+     27191.8,
+     14853.7,
+     8716.9,
+     5397.42,
+     3481.37,
+     2316.51,
+     1577.63,
+     1092.02,
+     763.045,
+     534.232,
+     371.335,
+     252.942,
+     165.38,
+     99.9003,
+     51.2653,
+     17.495,
+     0.964341
+    ],
+    "value_unit": "cm",
+    "source": "https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/Geometry/gdml/sbnd_v02_00_full_simulation.gdml",
+    "note": "RAYL; same as larproperties.fcl"
+   },
+   "abs_length": {
+    "energy": [
+     4.0,
+     5.0,
+     6.0,
+     7.0,
+     8.0,
+     9.0,
+     10.0,
+     11.0
+    ],
+    "energy_unit": "eV",
+    "values": [
+     2000.0,
+     2000.0,
+     2000.0,
+     2000.0,
+     2000.0,
+     2000.0,
+     2000.0,
+     2000.0
+    ],
+    "value_unit": "cm",
+    "source": "https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/Geometry/gdml/sbnd_v02_00_full_simulation.gdml",
+    "note": "ABSORP; 2000 cm everywhere (pre-2023 larproperties value)"
+   },
+   "fast_scint_spectrum": {
+    "energy": [
+     7.2,
+     7.9,
+     8.3,
+     8.6,
+     8.9,
+     9.1,
+     9.3,
+     9.6,
+     9.7,
+     9.8,
+     10.0,
+     10.2,
+     10.3,
+     10.6,
+     11.0,
+     11.6,
+     11.9
+    ],
+    "energy_unit": "eV",
+    "values": [
+     0.0,
+     0.04,
+     0.12,
+     0.27,
+     0.44,
+     0.62,
+     0.8,
+     0.91,
+     0.92,
+     0.85,
+     0.7,
+     0.5,
+     0.31,
+     0.13,
+     0.04,
+     0.01,
+     0.0
+    ],
+    "value_unit": "relative",
+    "source": "https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/Geometry/gdml/sbnd_v02_00_full_simulation.gdml"
+   },
+   "slow_scint_spectrum": {
+    "energy": [
+     7.2,
+     7.9,
+     8.3,
+     8.6,
+     8.9,
+     9.1,
+     9.3,
+     9.6,
+     9.7,
+     9.8,
+     10.0,
+     10.2,
+     10.3,
+     10.6,
+     11.0,
+     11.6,
+     11.9
+    ],
+    "energy_unit": "eV",
+    "values": [
+     0.0,
+     0.04,
+     0.12,
+     0.27,
+     0.44,
+     0.62,
+     0.8,
+     0.91,
+     0.92,
+     0.85,
+     0.7,
+     0.5,
+     0.31,
+     0.13,
+     0.04,
+     0.01,
+     0.0
+    ],
+    "value_unit": "relative",
+    "source": "https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/Geometry/gdml/sbnd_v02_00_full_simulation.gdml"
+   },
+   "scint_yield": {
+    "value": 720,
+    "unit": "photons/MeV",
+    "source": "https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/Geometry/gdml/sbnd_v02_00_full_simulation.gdml",
+    "note": "SY = 720/MeV = 24000 x 0.03 (already prescaled; note 0.03, not the 0.0392 ScintPreScale of opticalproperties_sbnd.fcl)"
+   },
+   "fast_time_constant": {
+    "value": 6.0,
+    "unit": "ns",
+    "source": "https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/Geometry/gdml/sbnd_v02_00_full_simulation.gdml"
+   },
+   "slow_time_constant": {
+    "value": 1300.0,
+    "unit": "ns",
+    "source": "https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/Geometry/gdml/sbnd_v02_00_full_simulation.gdml"
+   },
+   "yield_ratio": {
+    "value": 0.27,
+    "unit": "1",
+    "source": "https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/Geometry/gdml/sbnd_v02_00_full_simulation.gdml",
+    "note": "YR (fast fraction)"
+   },
+   "birks_constant": {
+    "value": 0.069,
+    "unit": "unitless in GDML",
+    "source": "https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/Geometry/gdml/sbnd_v02_00_full_simulation.gdml",
+    "note": "SBC matrix without unit"
+   },
+   "resolution_scale": {
+    "value": 1.0,
+    "unit": "1",
+    "source": "https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/Geometry/gdml/sbnd_v02_00_full_simulation.gdml"
+   },
+   "geant4_property_names": "Geant4-10 style keys (FASTCOMPONENT, SLOWCOMPONENT, YIELDRATIO, FASTTIMECONSTANT, SLOWTIMECONSTANT)"
+  },
+  "microboone_overrides": {
+   "source": "https://github.com/uboone/ubevt/blob/14ad3eb1397a6ced617eba36dc5d035a64bd196e/ubevt/Utilities/services_microboone_simulation.fcl",
+   "base": "microboone_properties = standard_properties (https://github.com/uboone/ubevt/blob/14ad3eb1397a6ced617eba36dc5d035a64bd196e/ubevt/Utilities/larproperties_microboone.fcl)",
+   "scint_yield": {
+    "value": 40000,
+    "unit": "photons/MeV",
+    "source": "https://github.com/uboone/ubevt/blob/14ad3eb1397a6ced617eba36dc5d035a64bd196e/ubevt/Utilities/services_microboone_simulation.fcl",
+    "note": "comment: DocDB 4914"
+   },
+   "scint_prescale": {
+    "value": 0.0093,
+    "unit": "1",
+    "source": "https://github.com/uboone/ubevt/blob/14ad3eb1397a6ced617eba36dc5d035a64bd196e/ubevt/Utilities/services_microboone_simulation.fcl",
+    "note": "must match the per-PMT QE (0.0093) in pmtconfig_microboone.fcl"
+   },
+   "yield_ratio": {
+    "value": 0.23,
+    "unit": "1",
+    "source": "https://github.com/uboone/ubevt/blob/14ad3eb1397a6ced617eba36dc5d035a64bd196e/ubevt/Utilities/services_microboone_simulation.fcl"
+   },
+   "scint_by_particle_type": true,
+   "cerenkov_enabled": false,
+   "per_particle": {
+    "Muon": [
+     40000,
+     0.23
+    ],
+    "Pion": [
+     40000,
+     0.23
+    ],
+    "Electron": [
+     33333,
+     0.27
+    ],
+    "Kaon": [
+     40000,
+     0.23
+    ],
+    "Proton": [
+     32000,
+     0.29
+    ],
+    "Alpha": [
+     28000,
+     0.56
+    ],
+    "format": "[yield_per_MeV, fast_fraction]"
+   }
+  },
+  "measurements": {
+   "babicz_2020": {
+    "source": "https://arxiv.org/abs/2002.09346",
+    "journal": "JINST 15 P09009 (2020)",
+    "group_velocity_inverse": [
+     7.46,
+     0.08,
+     "ns/m"
+    ],
+    "n_128nm": [
+     1.358,
+     0.003
+    ],
+    "rayleigh_128nm_cm": [
+     99.1,
+     2.3
+    ]
+   },
+   "grace_2017": {
+    "source": "https://arxiv.org/abs/1502.04213",
+    "journal": "NIM A 867 (2017) 204 (arXiv:1502.04213)",
+    "sellmeier": "n^2 = a0 + aUV*l^2/(l^2-lUV^2) + aIR*l^2/(l^2-lIR^2), lUV=106.6 nm, lIR=908.3 nm (Eq. 3, Table 1)",
+    "LAr_90K": {
+     "a0": [
+      1.26,
+      0.09
+     ],
+     "aUV": [
+      0.23,
+      0.09
+     ],
+     "aIR": [
+      0.0023,
+      0.007
+     ]
+    },
+    "LAr_83.81K": {
+     "a0": [
+      1.24,
+      0.09
+     ],
+     "aUV": [
+      0.27,
+      0.09
+     ],
+     "aIR": [
+      0.00047,
+      0.007
+     ]
+    },
+    "n_128nm": [
+     1.45,
+     0.07
+    ],
+    "rayleigh_128nm_cm": [
+     55,
+     5
+    ],
+    "note": "Table 3; previous calculation n=1.37, L_R=90 cm; Ishida et al. measured 66+-3 cm"
+   },
+   "neumeier_2015": {
+    "source": "https://arxiv.org/abs/1511.07726",
+    "journal": "NIM A 800 (2015) 70",
+    "attenuation_length_lower_limit_m": 1.1
+   },
+   "heindl_2010": {
+    "source": "https://arxiv.org/abs/1511.07718",
+    "journal": "EPL 91 62002 (2010)",
+    "peak_nm": 126.8,
+    "fwhm_nm": 7.8,
+    "slow_decay_ns": [
+     1300,
+     60
+    ],
+    "fast_decay_ns": "< 6.2 (resolution-limited)"
+   },
+   "sbnd_pds_2024": {
+    "source": "https://arxiv.org/abs/2406.07514",
+    "yield": "O(20000) ph/MeV at 500 V/cm",
+    "tau_fast_ns": 6,
+    "tau_slow_ns": 1300,
+    "rayleigh_cm": "about 100",
+    "group_velocity_cm_per_ns": {
+     "VUV": 13.5,
+     "visible": 23.9
+    }
+   }
+  }
+ },
+ "surfaces": {
+  "larsoft_standard": {
+   "source": "https://github.com/LArSoft/lardataalg/blob/03f5e9a2e1cec38be040f91fdd662c9d54ee0667/lardataalg/DetectorInfo/larproperties.fcl",
+   "energies_eV": [
+    7,
+    9,
+    10
+   ],
+   "surfaces": {
+    "STEEL_STAINLESS_Fe7Cr2Ni": {
+     "reflectance": [
+      0.25,
+      0.25,
+      0.25
+     ],
+     "diffuse_fraction": [
+      0.5,
+      0.5,
+      0.5
+     ]
+    }
+   },
+   "used_by": "MicroBooNE (microboone_properties = standard_properties)"
+  },
+  "sbnd_fcl": {
+   "source": "https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/LArSoftConfigurations/opticalproperties_sbnd.fcl",
+   "energies_eV": [
+    1.77,
+    2.0675,
+    2.481,
+    2.819,
+    2.953,
+    3.1807,
+    3.54,
+    4.135,
+    4.962,
+    5.39,
+    7.0,
+    15.0
+   ],
+   "surfaces": {
+    "STEEL_STAINLESS_Fe7Cr2Ni": {
+     "reflectance": [
+      0.66,
+      0.64,
+      0.62,
+      0.6,
+      0.59,
+      0.57,
+      0.53,
+      0.47,
+      0.39,
+      0.36,
+      0.27,
+      0.25
+     ],
+     "diffuse_fraction": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    "Copper_Beryllium_alloy25": {
+     "reflectance": [
+      0.902,
+      0.841,
+      0.464,
+      0.379,
+      0.345,
+      0.299,
+      0.287,
+      0.264,
+      0.337,
+      0.3,
+      0.0,
+      0.0
+     ],
+     "diffuse_fraction": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    "G10": {
+     "reflectance": [
+      0.393,
+      0.405,
+      0.404,
+      0.352,
+      0.323,
+      0.243,
+      0.127,
+      0.065,
+      0.068,
+      0.068,
+      0.0,
+      0.0
+     ],
+     "diffuse_fraction": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    "vm2000": {
+     "reflectance": [
+      0.93,
+      0.93,
+      0.93,
+      0.93,
+      0.93,
+      0.93,
+      0.1,
+      0.1,
+      0.7,
+      0.3,
+      0.0,
+      0.0
+     ],
+     "diffuse_fraction": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    "ALUMINUM_Al": {
+     "reflectance": [
+      0.9,
+      0.9,
+      0.9,
+      0.9,
+      0.9,
+      0.9,
+      0.9,
+      0.47,
+      0.39,
+      0.36,
+      0.27,
+      0.25
+     ],
+     "diffuse_fraction": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+     ]
+    }
+   },
+   "note": "Used only by the legacy LArG4 MaterialPropertyLoader. GDML material is named \"G10 \" (trailing space), so the \"G10\" entry matches no material; with SimpleBoundaryProcess the boundary looks up REFLECTANCE_\"G10 \" and absorbs."
+  },
+  "sbnd_full_sim_gdml": {
+   "source": "https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/Geometry/gdml/sbnd_v02_00_full_simulation.gdml",
+   "reflectivity_steel": {
+    "energy": [
+     1.77,
+     2.0675,
+     2.481,
+     2.819,
+     2.953,
+     3.1807,
+     3.54,
+     4.135,
+     4.962,
+     5.39,
+     7.0,
+     15.0
+    ],
+    "energy_unit": "eV",
+    "values": [
+     0.66,
+     0.64,
+     0.62,
+     0.6,
+     0.59,
+     0.57,
+     0.53,
+     0.47,
+     0.39,
+     0.36,
+     0.27,
+     0.25
+    ],
+    "value_unit": "1",
+    "source": "https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/Geometry/gdml/sbnd_v02_00_full_simulation.gdml",
+    "note": "the ONLY REFLECTIVITY table in the GDML; used by every optical surface, including the vm2000 cathode foil"
+   },
+   "optical_surfaces": {
+    "Surface_Steel_1..10": {
+     "model": "glisur",
+     "finish": "ground",
+     "type": "dielectric_metal",
+     "polish": 0.5,
+     "REFLECTIVITY": "REFLECTIVITY_STEEL_STAINLESS_Fe7Cr2Ni"
+    },
+    "Surface_vm2000": {
+     "model": "unified",
+     "finish": "groundfrontpainted",
+     "type": "dielectric_dielectric",
+     "sigma_alpha": 0.8,
+     "REFLECTIVITY": "REFLECTIVITY_STEEL_STAINLESS_Fe7Cr2Ni"
+    }
+   },
+   "skin_surfaces": {
+    "Surface_Steel_1": [
+     "volBuldingTube_H_1",
+     "volBuldingTube_H_2",
+     "volBuldingTube_V_1",
+     "volWallMetalPlate_NorthSouth",
+     "volWallMetalPlate_West",
+     "volWallMetalPlate_East"
+    ],
+    "Surface_Steel_2": [
+     "volDewarOuter",
+     "volDewarInner"
+    ],
+    "Surface_Steel_3": [
+     "volCPA_Around",
+     "volCPA_East",
+     "volCPA_West"
+    ],
+    "Surface_Steel_4": [
+     "volCPAMesh"
+    ],
+    "Surface_vm2000": [
+     "volCPAFoil"
+    ],
+    "Surface_Steel_5": [
+     "volFC_IStructure",
+     "volFC_strip_hor",
+     "volFC_strip_ver"
+    ],
+    "Surface_Steel_6": [
+     "vol_PMT_Back"
+    ],
+    "Surface_Steel_7": [
+     "volOneAPAFrame"
+    ],
+    "Surface_Steel_8": [
+     "volCryoExt"
+    ],
+    "Surface_Steel_9": [
+     "volCryoLid_Larger",
+     "volCryoLid_Smaller"
+    ],
+    "Surface_Steel_10": [
+     "volCryoMembrane"
+    ]
+   },
+   "materials_with_RINDEX": [
+    "LAr",
+    "GAr",
+    "TPB"
+   ],
+   "note": "Every other material has no RINDEX: a LAr photon reaching it with no skin surface is killed by G4OpBoundaryProcess (NoRINDEX). No EFFICIENCY on any surface."
+  },
+  "boundary_models": {
+   "legacy_simple": {
+    "source": "https://github.com/LArSoft/larsim/blob/0c42311b0925a0d1e1f4e734bcc53fe092d22689/larsim/LegacyLArG4/OpBoundaryProcessSimple.cxx",
+    "default_on": "DetectorProperties SimpleBoundaryProcess: true (https://github.com/LArSoft/lardataalg/blob/03f5e9a2e1cec38be040f91fdd662c9d54ee0667/lardataalg/DetectorInfo/detectorproperties.fcl)",
+    "rule": "at a step ending on a boundary between DIFFERENT materials M1->M2: look up REFLECTANCE_<M2> and DIFFUSE_REFLECTANCE_FRACTION_<M2> on M1 (only LAr carries them). If absent: kill. Else reflect with prob R(E) (else kill); reflected photons are Lambertian about the inward normal with prob f_diff, otherwise mirror-specular. No refraction or transmission ever; same material: no action."
+   },
+   "legacy_g4": {
+    "source": "https://github.com/LArSoft/larsim/blob/0c42311b0925a0d1e1f4e734bcc53fe092d22689/larsim/LegacyLArG4/MaterialPropertyLoader.cxx",
+    "rule": "SimpleBoundaryProcess false: G4OpBoundaryProcess with skin surfaces built in code for Copper (glisur ground dielectric_metal polish 0.2), G10 (glisur ground dielectric_metal polish 0.1), vm2000 (unified groundfrontpainted dielectric_dielectric sigma_alpha 0.8), ALUMINUM_Al and STEEL_STAINLESS_Fe7Cr2Ni (glisur ground dielectric_metal polish 0.5), REFLECTIVITY = ReflectiveSurfaceReflectances of that material."
+   },
+   "geant4_glisur_ground_metal": {
+    "source": "https://github.com/Geant4/geant4/blob/v11.2.2/source/processes/optical/src/G4OpBoundaryProcess.cc",
+    "rule": "prob R: reflect specularly about a facet normal n_f = unit(n + (1-polish)*s), s uniform in the unit ball, resampled until p.n_f < 0; else absorb (Detection with prob EFFICIENCY, here 0)."
+   },
+   "geant4_groundfrontpainted": {
+    "source": "https://github.com/Geant4/geant4/blob/v11.2.2/source/processes/optical/src/G4OpBoundaryProcess.cc",
+    "rule": "prob R: Lambertian about the global normal; prob TRANSMITTANCE (0): pass; else absorb."
+   }
+  }
+ },
+ "tpb": {
+  "larsoft_standard": {
+   "source": "https://github.com/LArSoft/lardataalg/blob/03f5e9a2e1cec38be040f91fdd662c9d54ee0667/lardataalg/DetectorInfo/larproperties.fcl",
+   "emission_spectrum": {
+    "energy": [
+     0.05,
+     1.0,
+     1.5,
+     2.25,
+     2.481,
+     2.819,
+     2.952,
+     2.988,
+     3.024,
+     3.1,
+     3.14,
+     3.1807,
+     3.54,
+     5.5,
+     50.39
+    ],
+    "energy_unit": "eV",
+    "values": [
+     0.0,
+     0.0,
+     0.0,
+     0.0588,
+     0.235,
+     0.853,
+     1.0,
+     1.0,
+     0.9259,
+     0.704,
+     0.0296,
+     0.011,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "value_unit": "relative",
+    "source": "https://github.com/LArSoft/lardataalg/blob/03f5e9a2e1cec38be040f91fdd662c9d54ee0667/lardataalg/DetectorInfo/larproperties.fcl",
+    "note": "TpbEmmisionSpectrum -> G4 WLSCOMPONENT of material \"TPB\""
+   },
+   "wls_abs_length": {
+    "energy": [
+     0.05,
+     1.77,
+     2.0675,
+     7.42,
+     7.75,
+     8.16,
+     8.73,
+     9.78,
+     10.69,
+     50.39
+    ],
+    "energy_unit": "eV",
+    "values": [
+     100000.0,
+     100000.0,
+     100000.0,
+     0.001,
+     1e-11,
+     1e-11,
+     1e-11,
+     1e-11,
+     1e-11,
+     1e-11
+    ],
+    "value_unit": "m",
+    "source": "https://github.com/LArSoft/lardataalg/blob/03f5e9a2e1cec38be040f91fdd662c9d54ee0667/lardataalg/DetectorInfo/larproperties.fcl",
+    "note": "TpbAbsorptionSpectrum, loaded with CLHEP::m (MaterialPropertyLoader.cxx l.373)"
+   },
+   "time_constant": {
+    "value": 2.5,
+    "unit": "ns",
+    "source": "https://github.com/LArSoft/lardataalg/blob/03f5e9a2e1cec38be040f91fdd662c9d54ee0667/lardataalg/DetectorInfo/larproperties.fcl",
+    "note": "fcl comment says \"s\"; MaterialPropertyLoader multiplies by CLHEP::ns"
+   },
+   "rindex": "LAr RIndexSpectrum reused",
+   "loaded_only_if": "LoadExtraMatProperties: true (default false)",
+   "quantum_yield": "not set (no WLSMEANNUMBERPHOTONS) -> Geant4 emits exactly 1 photon per absorbed photon"
+  },
+  "sbnd_full_sim_gdml": {
+   "source": "https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/Geometry/gdml/sbnd_v02_00_full_simulation.gdml",
+   "emission_spectrum": {
+    "energy": [
+     0.05,
+     1.0,
+     1.5,
+     2.25,
+     2.481,
+     2.819,
+     2.952,
+     2.988,
+     3.024,
+     3.1,
+     3.14,
+     3.1807,
+     3.54,
+     5.5,
+     50.39
+    ],
+    "energy_unit": "eV",
+    "values": [
+     0.0,
+     0.0,
+     0.0,
+     0.0588,
+     0.235,
+     0.853,
+     1.0,
+     1.0,
+     0.9259,
+     0.704,
+     0.0296,
+     0.011,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "value_unit": "relative",
+    "source": "https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/Geometry/gdml/sbnd_v02_00_full_simulation.gdml",
+    "note": "WLE (same as larproperties)"
+   },
+   "wls_abs_length": {
+    "energy": [
+     0.05,
+     1.77,
+     2.0675,
+     3.0675,
+     4.0675,
+     5.0675,
+     7.42,
+     7.75,
+     8.16,
+     8.73,
+     9.78,
+     10.69,
+     50.39
+    ],
+    "energy_unit": "eV",
+    "values": [
+     100000.0,
+     100000.0,
+     100000.0,
+     100000.0,
+     100000.0,
+     100000.0,
+     0.001,
+     1e-11,
+     1e-11,
+     1e-11,
+     1e-11,
+     1e-11,
+     1e-11
+    ],
+    "value_unit": "mm",
+    "source": "https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/Geometry/gdml/sbnd_v02_00_full_simulation.gdml",
+    "note": "WLA in mm (larproperties uses m), with extra points 3.0675, 4.0675, 5.0675 eV"
+   },
+   "time_constant": {
+    "value": 0.0,
+    "unit": "ns",
+    "source": "https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/Geometry/gdml/sbnd_v02_00_full_simulation.gdml"
+   },
+   "rindex": "ArINDEX",
+   "material_note": "TPB material composition is argon, density 1.40 g/cm3",
+   "cathode_geometry": {
+    "foil": "volCPAFoil, vm2000, 0.0508 x 932 x 1172 mm",
+    "tpb": "volCPATPB, TPB, 2.3e-05 mm (23 nm) x 932 x 1172 mm, on the foil face",
+    "mother": "volCPA_FoilTPB (LAr), placed with rotateP180Y on both CPA faces"
+   }
+  },
+  "sbnd_digitiser_time": {
+   "source": "https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/OpDetSim/DigiPMTSBNDAlg.cc",
+   "rule": "TPB emission delay sampled from vector \"timeTPB\" in sbnd_data files OpDetSim/digi_pmt_sbnd_v2int0.root and OpDetSim/digi_arapuca_sbnd.root (not on GitHub)"
+  },
+  "measurements": {
+   "segreto_2015": {
+    "source": "https://arxiv.org/abs/1411.4524",
+    "journal": "Phys. Rev. C 91, 035503",
+    "components": [
+     {
+      "tau_ns": "1-10",
+      "fraction": [
+       0.6,
+       0.01
+      ]
+     },
+     {
+      "tau_ns": [
+       49,
+       1
+      ],
+      "fraction": [
+       0.3,
+       0.01
+      ]
+     },
+     {
+      "tau_ns": [
+       3550,
+       500
+      ],
+      "fraction": [
+       0.08,
+       0.01
+      ]
+     },
+     {
+      "tau_ns": [
+       309,
+       10
+      ],
+      "fraction": [
+       0.02,
+       0.01
+      ]
+     }
+    ],
+    "note": "Table 1; also quoted in SBND PDS paper Sec. 3.2"
+   },
+   "gehman_2011": {
+    "source": "https://arxiv.org/abs/1104.3259",
+    "journal": "NIM A 654 (2011) 116",
+    "efficiency_128nm": "about 1.2 (Lambertian assumption, 1.5 um film)",
+    "range": "0.7 (190 nm) to 1.35",
+    "spectrum": "no strong dependence on excitation wavelength; cutoff about 400 nm"
+   },
+   "benson_2018": {
+    "source": "https://arxiv.org/abs/1709.05002",
+    "journal": "EPJC 78:329 (2018)",
+    "secondary_QE": [
+     0.9,
+     0.1
+    ],
+    "note": "intrinsic VUV QE vs wavelength only in Fig. 19 (not tabulated in text); about 8 % uncertainty"
+   },
+   "microboone_plate": {
+    "source": "https://arxiv.org/abs/1612.05824",
+    "conversion_128nm": [
+     0.98,
+     0.17
+    ],
+    "note": "visible photons per incident 128 nm photon, TPB:polystyrene 1:1 on 305 mm acrylic"
+   }
+  }
+ },
+ "ptp": {
+  "larsoft": "No pTP optical property exists in larproperties.fcl, opticalproperties_sbnd.fcl or the SBND GDMLs (searched). X-ARAPUCA internals are not simulated; the X-ARAPUCA is a LAr sensitive box and its response is an efficiency applied in DetSim.",
+  "literature": {
+   "xarapuca_sim_2020": {
+    "source": "https://arxiv.org/abs/1912.09191",
+    "journal": "JINST 15 C01047",
+    "pTP_thickness_um": 2.0,
+    "filter_cutoff_nm": {
+     "VUV_with_pTP": 400,
+     "VIS_no_pTP": 450
+    },
+    "esr_reflectivity": 0.98,
+    "sbnd_vis_xa_efficiency_pct": {
+     "EJ280 inf att": 3.5,
+     "EJ280 1 m": 2.2,
+     "EJ282 inf": 2.6,
+     "EJ282 1 m": 1.9
+    }
+   },
+   "sbnd_pds_2024": {
+    "source": "https://arxiv.org/abs/2406.07514",
+    "pTP_tau_ns": 1.14,
+    "EJ286_tau_ns": 1.2,
+    "EJ280_tau_ns": 8.5
+   }
+  }
+ },
+ "sensors": {
+  "sbnd": {
+   "counts": {
+    "pmt_coated": 96,
+    "pmt_uncoated": 24,
+    "xarapuca_vuv": 96,
+    "xarapuca_vis": 96,
+    "source": "https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/OpDetSim/sbnd_pds_mapping.json"
+   },
+   "channels": {
+    "pmt_uncoated": [
+     36,
+     37,
+     38,
+     39,
+     40,
+     41,
+     114,
+     115,
+     116,
+     117,
+     118,
+     119,
+     192,
+     193,
+     194,
+     195,
+     196,
+     197,
+     270,
+     271,
+     272,
+     273,
+     274,
+     275
+    ],
+    "note": "full lists of every type in sbnd_pds_mapping.json; pmt_coated sensitive_to vuv+vis, pmt_uncoated vis only, xarapuca_vuv vuv only (flag), xarapuca_vis vis only"
+   },
+   "full_sim_sensitive_volumes": {
+    "pmt": "volOpDetSensitive: LAr hemispherical shell, sphere rmin 96.6 mm, rmax 101.6 mm, theta 0-90 deg, at z=-48.5 mm in volPMT<N> (LAr tube r=102 mm, h=107 mm); inside it vol_PMT_in (matVacuum, r<96.6 mm, no RINDEX -> absorbs); behind it vol_PMT_Back (steel disc r=101.6 mm, 5 mm, Surface_Steel_6). No glass, no TPB layer.",
+    "xarapuca": "volOpDetSensitiveXArapucaFilter: LAr box 2 x 206 x 76 mm inside volXArapuca<N> (LAr box 20 x 240 x 96 mm), with G10 walls (XArapucaOut minus a 3 x 206 x 76 mm hole) and a G10 cover; G10 has no RINDEX -> absorbing.",
+    "sd": "auxiliary SensDet=PhotonDetector -> artg4tk PhotonSD; larsim PhotonHitConverter splits hits at 6.19 eV (above: Direct/VUV, at or below: \"Reflected\"/visible).",
+    "source": "https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/Geometry/gdml/sbnd_v02_00_full_simulation.gdml"
+   },
+   "efficiencies": {
+    "source_pmt": "https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/OpDetSim/digi_pmt_sbnd.fcl",
+    "source_xa": "https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/OpDetSim/digi_arapuca_sbnd.fcl",
+    "pmt_coated_vuv": 0.0392,
+    "pmt_coated_vis": 0.026,
+    "pmt_uncoated_vis": 0.0357,
+    "xa_vuv_on_vuv": 0.01752,
+    "xa_vuv_on_vis": 0.00271,
+    "xa_vis_on_vis": 0.01264,
+    "scint_prescale": 0.0392,
+    "applied_probability_per_simphoton": {
+     "pmt_coated_vuv": 1.0,
+     "pmt_coated_vis": 0.6633,
+     "pmt_uncoated_vis": 0.9107,
+     "xa_vuv_on_vuv": 0.4469,
+     "xa_vuv_on_vis": 0.0691,
+     "xa_vis_on_vis": 0.3224
+    },
+    "routing": "pmt_coated: Direct x VUV eff + Reflected x VIS eff; pmt_uncoated: Reflected only; xarapuca_vuv: Direct x EffVUV + Reflected x EffVis; xarapuca_vis: Reflected only (https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/OpDetSim/opDetDigitizerWorker.cc)",
+    "fcl_comments": {
+     "xa_vuv_on_vuv": "2.19% x 0.8 (APA mesh transparency not simulated in G4), CIEMAT",
+     "xa_vuv_on_vis": "0.43% x 0.8 x 0.79 (mesh + CPA TPB area factor)",
+     "xa_vis_on_vis": "2.00% x 0.8 x 0.79",
+     "pmt_coated_vuv": "docdb-40444 (not public)"
+    },
+    "paper_PDEs_table1": {
+     "source": "https://arxiv.org/abs/2406.07514",
+     "pmt_coated_vuv": 0.12,
+     "pmt_coated_vis": 0.17,
+     "pmt_uncoated_vuv": 0.0,
+     "pmt_uncoated_vis": 0.25,
+     "xa_vuv_on_vuv": 0.0219,
+     "xa_vuv_on_vis": 0.0043,
+     "xa_vis_on_vuv": 0.0,
+     "xa_vis_on_vis": 0.02
+    }
+   },
+   "timing": {
+    "pmt_tts_ns": 2.4,
+    "pmt_transit_ns": 55.1,
+    "xa_vis_ej280_decay_ns": 8.5,
+    "xa_vuv_time": "sampled from TimeXArapucaVUV in sbnd_data digi_arapuca_sbnd.root",
+    "source": "https://github.com/SBNSoftware/sbndcode/blob/4e41b3d89fca4960ce656499270bf2b996e5dfa0/sbndcode/OpDetSim/digi_pmt_sbnd.fcl"
+   }
+  },
+  "microboone": {
+   "pmts": "32 Hamamatsu R5912-02mod 8-inch behind TPB-coated 305 mm acrylic plates (https://arxiv.org/abs/1612.05824)",
+   "sensitive_volume": {
+    "source": "https://github.com/uboone/ubcore/blob/078fb06f05e5eeb2b9fcb3c559c138de1e292148/ubcore/Geometry/gdml/microboone/micro-pmtdef.gdml",
+    "volOpDetSensitive": "LAr disc, tube rmax 15.24 cm, z 0.2 cm (solid PMT_AcrylicPlate), centred at z=13.87 cm in volPMT; the Acrylic plate (same solid) is at z=13.67 cm, so the sensitive LAr disc sits directly on the plate face toward the TPC",
+    "others": "vol_PMT_Underside (Glass tube r 10.16 cm), vol_PMT_Stalk (Glass), vol_PMT_SteelBase (steel), vol_PMT_Lens (LAr). No TPB volume is placed (material TPB exists but is unused).",
+    "optical_gdml": "https://github.com/uboone/ubcore/blob/078fb06f05e5eeb2b9fcb3c559c138de1e292148/ubcore/Geometry/gdml/microboonev10_opticalSim.gdml (no optical properties inside; properties come from LArProperties via MaterialPropertyLoader)"
+   },
+   "efficiency": {
+    "qe_per_pmt": 0.0093,
+    "source": "https://github.com/uboone/ubevt/blob/14ad3eb1397a6ced617eba36dc5d035a64bd196e/ubevt/Utilities/pmtconfig_microboone.fcl",
+    "scint_prescale": 0.0093,
+    "applied_probability_per_simphoton": 1.0,
+    "note": "UBOpticalChConfig divides QE by ScintPreScale (https://github.com/uboone/ubsim/blob/df3e2431947564443289d1a9e2cc1bedb0fec642/ubsim/OpticalDetectorSim/UBOpticalChConfig.cc); MicrobooneOpDetResponse has QuantumEfficiency 0.03 in fcl but its QE code is commented out (\"applied in the uboone electronics simulation\"); per-channel LightYieldService scaling from a DB (LYSimPhotonScaling)."
+   },
+   "production_light_sim": "FastOptical + photon library uboone_photon_library_v6_70kV.root (https://github.com/uboone/ubsim/blob/df3e2431947564443289d1a9e2cc1bedb0fec642/ubsim/PhotonPropagation/photpropservices_microboone.fcl); not the full optical simulation",
+   "literature": {
+    "pmt_qe_visible": [
+     0.153,
+     0.008
+    ],
+    "tpb_conversion_128nm": [
+     0.98,
+     0.17
+    ],
+    "photocathode_coverage": 0.009,
+    "source": "https://arxiv.org/abs/1612.05824"
+   }
+  },
+  "legacy_detection": {
+   "source": "https://github.com/LArSoft/larsim/blob/0c42311b0925a0d1e1f4e734bcc53fe092d22689/larsim/LegacyLArG4/OpDetSensitiveDetector.cxx",
+   "rule": "volumes named geom->Cryostat().OpDetGeoName() (default volOpDetSensitive) are copied into a parallel world with OpDetSensitiveDetector; ProcessHits records the photon (time, vertex energy) and kills it. LitePhotons flag \"reflected\" when the creation wavelength > 200 nm. No QE in G4."
+  }
+ }
+}
