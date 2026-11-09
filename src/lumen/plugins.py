@@ -3,13 +3,15 @@
 Each registry maps ``distribution:name`` (or a bare built-in name) to an object. lumen's own entries are registered
 in the package; other packages add theirs through the entry-point groups ``lumen.detectors``,
 ``lumen.sensor_models`` and ``lumen.optics_models``. An unknown name fails closed, naming what is registered.
+
+``sensor_models`` holds the after-tracking sensor models (detection, electronics, hit coordinates); how a detecting
+surface behaves during tracking is optics (``lumen.rules.optics.SENSOR_SURFACES``).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from importlib import metadata
-from pathlib import Path
 
 GROUPS = ("lumen.detectors", "lumen.sensor_models", "lumen.optics_models")
 
@@ -29,9 +31,6 @@ class DetectorPackage:
     recipe: object
     source_dataset: str
     inputs: dict = field(default_factory=dict)
-    detector_dataset: str | None = None
-    validation_specs: dict = field(default_factory=dict)
-    references: Path | None = None
 
 
 class Registry:
