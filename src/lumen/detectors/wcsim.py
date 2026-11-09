@@ -190,6 +190,11 @@ def annie_wcsim_detection(det, energy_ev: float) -> np.ndarray:
     return np.array([min(qe[ty] * ratio, max_all * ratio) for ty in types])
 
 
-SK = recipe("sk")
-WCTE = recipe("wcte")
-ANNIE = recipe("annie", inputs=("wcsim_source", "wcsim_tuning"), sensor_columns=annie_columns, calibrations=annie_qe)
+# The GDML repairs (lumen.gdml.reader.REPAIRS), for the defects each export has (Geant4 refuses each): SK and WCTE
+# write inf in one GROUPVEL table (3 values; on surfaces, which no Geant4 process reads), ANNIE writes 40 denormal
+# RINDEX values (in one table). WCTE's and ANNIE's g4ref references loaded the same repairs (wcte_probe.gdml,
+# annie_v2_g4clean.gdml: inf -> 1e30, denormal -> 0, nothing else changed).
+SK = recipe("sk", repairs={"non_finite"})
+WCTE = recipe("wcte", repairs={"non_finite"})
+ANNIE = recipe("annie", inputs=("wcsim_source", "wcsim_tuning"), sensor_columns=annie_columns, calibrations=annie_qe,
+               repairs={"denormal"})  # fmt: skip

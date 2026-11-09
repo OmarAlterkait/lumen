@@ -14,6 +14,9 @@ Fails closed (``ImportRefused``) where Geant4's reading is ambiguous or lumen's 
   repeat only once the ``0x`` suffix is stripped are distinct to both Geant4 and lumen and are accepted);
 - two skins on one logical volume;
 - a material without a composition (density and components, or Z and molar mass).
+
+Before these, the reader refuses the exporter defects Geant4 refuses (``reader.GDMLDefectError``) unless the recipe
+opts into their repairs (``Recipe.repairs``, ``reader.REPAIRS``).
 """
 
 from __future__ import annotations
@@ -205,11 +208,7 @@ def _properties(doc, props, what, rep, skip=(), inert: _Inert | None = None):
         if key in skip:
             continue
         if inert is not None and key not in inert.keep:
-            try:
-                inert.found[key] = doc.matrix(ref)
-            except reader.GDMLError as err:  # a non-optical key may name a matrix the file lacks: kept empty
-                inert.found[key] = np.zeros((0, 1))
-                rep.append(f"{what}.{key}: inert, and its matrix cannot be read ({err})")
+            inert.found[key] = doc.matrix(ref)  # the reader has refused (or, repaired, dropped) a ref to no matrix
             continue
         out[key] = read_property(doc, key, ref, what, rep)
     return out
@@ -305,14 +304,15 @@ def _known(surfaces_, surf, name):
 
 
 # ----------------------------------------------------------------------------------------------------- the import
-def read_gdml(path, material_keys=None) -> schema.DetectorFile:
+def read_gdml(path, material_keys=None, repairs=()) -> schema.DetectorFile:
     """Return the detector file of a GDML file before any recipe decision (the detector volume is the world).
 
     ``material_keys``: the material property keys to read as optical properties (None: all); see ``materials``.
+    ``repairs``: the exporter-defect repairs to apply (``reader.REPAIRS``; recorded in the provenance and report).
     """
     import hashlib
 
-    doc = reader.read(path)
+    doc = reader.read(path, repairs)
     rep = list(doc.report)
     sol, meshes, r2 = solids(doc)
     rep += r2
@@ -324,6 +324,8 @@ def read_gdml(path, material_keys=None) -> schema.DetectorFile:
     sha = hashlib.sha256(Path(path).read_bytes()).hexdigest()
     prov = dict(importer="lumen.gdml.import_gdml", importer_version=IMPORTER_VERSION,
                 source=dict(file=Path(path).name, sha256=f"sha256:{sha}"))  # fmt: skip
+    if doc.repairs:
+        prov["repairs"] = sorted(doc.repairs)
     world = str(doc.world)
     return schema.DetectorFile(name=Path(path).stem, world=world, detector_volume=world,
                           wavelength_range=(0.0, 0.0), solids=sol, volumes=vols, placements=pls, materials=mats,
@@ -337,5 +339,5 @@ def import_gdml(path, recipe, inputs: dict | None = None) -> ImportResult:
 
     ``inputs`` gives the extra files the recipe's decisions read, by name.
     """
-    df = read_gdml(path, getattr(recipe, "material_keys", None))
+    df = read_gdml(path, getattr(recipe, "material_keys", None), getattr(recipe, "repairs", ()))
     return recipe.apply(df, Path(path), inputs)

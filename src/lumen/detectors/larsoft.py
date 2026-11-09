@@ -161,6 +161,7 @@ def sbnd_columns(df, loaded, tree, inputs) -> dict:
     return {"channel": ch, "type": ty, "lv": lv}
 
 
+# Neither SBND's nor MicroBooNE's GDML has an exporter defect Geant4 refuses (lumen.gdml.reader.REPAIRS): no repairs.
 SBND = Recipe(
     name="sbnd", detector_volume="auto:argon,lar", wavelength_range=SBND_WAVELENGTHS,
     groups=(SensorGroup("pmt", "any_entry", "lumen:counting", lv="volOpDetSensitive", settings={"eff": 1.0}),

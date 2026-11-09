@@ -3,8 +3,9 @@
 Points: uniform in the detector volume's world box, and pairs straddling surfaces (a random solid instance near the
 detector, a random ray through its box, one of its leaf roots, the points at +- ``DELTA`` along the ray). lumen's
 answer comes from the whole world as the detector file lowers it (every placement kept, as Geant4 has it) and the
-float64 oracle; Geant4's from g4ref ``--probe`` (G4Navigator::LocateGlobalPointAndSetup) on the same GDML, or its
-normalised copy when the reader normalised an exporter defect. Compared per point: the material, and the placement
+float64 oracle; Geant4's from g4ref ``--probe`` (G4Navigator::LocateGlobalPointAndSetup) on the same GDML, or, when
+the detector file was converted with exporter-defect repairs (its provenance ``repairs``), on the copy
+``lumen.gdml.repair`` writes with the same repairs. Compared per point: the material, and the placement
 name where both place the point inside some placed volume (both stripped of the ``0x`` suffix, as Geant4 strips
 them). Then the scene as used (the detector volume only, envelopes dissolved, the sensors kept): its material where
 it places the point inside the detector.
@@ -137,7 +138,7 @@ def check(path, gdml, g4ref, out, n_uniform=20000, n_surface=20000) -> dict:
     """
     from lumen.build import lowering
     from lumen.format import io, sensorsets
-    from lumen.gdml import reader
+    from lumen.gdml import reader, repair
     from lumen.validate import oracle
 
     out = Path(out)
@@ -149,11 +150,11 @@ def check(path, gdml, g4ref, out, n_uniform=20000, n_surface=20000) -> dict:
     world_mat = df.volumes[df.world].material
     o_mat, o_pv, inst = ours(orc, world, pts, world_mat)
     t_ours = time.time() - t1
-    doc = reader.read(gdml)
+    repairs = df.provenance.get("repairs", [])
     g4file = gdml
-    if any(r.startswith("normalised") for r in doc.report):
-        g4file = out / (Path(gdml).stem + "_normalised.gdml")
-        reader.write_normalised(gdml, g4file)
+    if repairs:  # Geant4 loads the GDML with the repairs the detector file was converted with, as text edits
+        g4file = out / (Path(gdml).stem + "_repaired.gdml")
+        g4file.write_text(repair.repair(Path(gdml).read_text(), repairs)[0])
     g_mat, g_pv, g_dep, t_g4 = geant4_probe(g4ref, g4file, pts, str(out / "g4"))
     bad_m = o_mat != g_mat
     meshes = {lv for lv, v in df.volumes.items() if v.solid and df.solids[v.solid].type == "tessellated"}

@@ -113,15 +113,22 @@ def test_export_order_is_a_function_of_the_content(tmp_path):
     assert a.sha256 == b.sha256
 
 
-def test_inert_matrices_and_unreadable_ones_round_trip(tmp_path):
+def test_inert_matrices_round_trip_and_refs_geant4_cannot_read_are_refused(tmp_path):
+    """A property naming no matrix, or a matrix that does not evaluate, is refused, as Geant4 refuses both."""
     text = GDML.replace('<property name="ABSLENGTH" ref="ABS0x2"/>',
                         '<property name="ABSLENGTH" ref="ABS0x2"/><property name="USERKEY" ref="NOPE"/>')  # fmt: skip
-    df = importer.read_gdml(write(tmp_path, text), material_keys=frozenset({"RINDEX"}))
+    keys = frozenset({"RINDEX"})
+    with pytest.raises(reader.GDMLDefectError, match="undefined_matrix_property"):  # Matrix 'NOPE' was not found!
+        importer.read_gdml(write(tmp_path, text), material_keys=keys)
+    broken = text.replace("</define>", '<matrix name="NOPE" coldim="1" values="UNKNOWN"/>\n</define>', 1)
+    with pytest.raises(reader.GDMLError, match="'NOPE'"):  # Error in expression: UNKNOWN
+        importer.read_gdml(write(tmp_path, broken, "broken.gdml"), material_keys=keys)
+    df = importer.read_gdml(write(tmp_path, text), material_keys=keys, repairs={"undefined_matrix_property"})
     water = df.materials["Water"]
-    assert set(water.inert) == {"ABSLENGTH", "USERKEY"} and water.inert["USERKEY"].shape == (0, 1)
+    assert set(water.inert) == {"ABSLENGTH"} and any("USERKEY names 'NOPE'" in ln for ln in df.report)
     _, back, (first, second) = round_trip(tmp_path, df)
     assert contents(back.detector_file) == contents(df) and first == second
-    assert b'name="USERKEY"' not in first  # an empty matrix is fatal in Geant4 (G4GDMLEvaluator::DefineMatrix)
+    assert b'name="USERKEY"' not in first
 
 
 def test_unbound_borders_and_surface_inert_keys_round_trip(tmp_path):

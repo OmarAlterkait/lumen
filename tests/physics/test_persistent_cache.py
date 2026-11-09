@@ -64,8 +64,7 @@ def test_a_program_loaded_from_the_cache_is_bitwise_a_fresh_compile(tmp_path):
 
     import lumen
 
-    gdml = _toy().replace("4.5*eV inf", "4.5*eV 220")  # a finite GROUPVEL: this test is about the cache, not the reader
-    det_path = lumen.convert(write(tmp_path, gdml), RECIPE, tmp_path / "toy.lumen")
+    det_path = lumen.convert(write(tmp_path, _toy()), RECIPE, tmp_path / "toy.lumen")
     cache_root = tmp_path / "lumen_cache"  # fresh: lumen's default puts the XLA cache in <LUMEN_CACHE>/xla
     every = {"JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS": "0", "JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES": "0"}
     fresh = _process(det_path, tmp_path / "a.npz", {"JAX_ENABLE_COMPILATION_CACHE": "false",

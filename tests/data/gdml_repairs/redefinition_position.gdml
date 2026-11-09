@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<gdml>
+<define>
+  <constant name="HALF" value="500"/>
+  <matrix name="RIX" coldim="2" values="2e-06 1.33 4e-06 1.34"/>
+  <position name="P1" x="1" y="0" z="0" unit="mm"/>
+  <position name="P1" x="1" y="0" z="0" unit="mm"/>
+</define>
+<materials>
+  <element name="H" formula="H" Z="1"> <atom value="1.008"/> </element>
+  <element name="O" formula="O" Z="8"> <atom value="15.999"/> </element>
+  <material name="Water" state="liquid">
+    <property name="RINDEX" ref="RIX"/>
+
+    <D value="1.0" unit="g/cm3"/>
+    <composite n="2" ref="H"/> <composite n="1" ref="O"/>
+  </material>
+</materials>
+<solids>
+  <box name="World" x="4000" y="4000" z="4000" lunit="mm"/>
+  <box name="Tank" x="HALF" y="HALF" z="HALF" lunit="mm"/>
+</solids>
+<structure>
+  <volume name="TankLV"> <materialref ref="Water"/> <solidref ref="Tank"/> </volume>
+  <volume name="WorldLV"> <materialref ref="Water"/> <solidref ref="World"/>
+    <physvol name="tank"> <volumeref ref="TankLV"/> <position name="tp" x="0" y="0" z="0" unit="mm"/> </physvol>
+  </volume>
+</structure>
+<setup name="Default" version="1.0"> <world ref="WorldLV"/> </setup>
+</gdml>

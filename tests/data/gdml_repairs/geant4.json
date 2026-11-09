@@ -1,0 +1,522 @@
+{
+ "what": "Stock Geant4's GDML reader on one toy per exporter-defect case (tests/data/gdml_repairs/*.gdml), and on each toy repaired by refs/gdml_repair.py with its case's repair (sha256 of the repaired text)",
+ "how": "g4ref --gdml TOY --dump '^lumen_no_such_volume$' (load, then exit), G4GDMLParser::Read(file, false)",
+ "geant4": {
+  "10.7.4": "develop.sif (Geant4 10.7.4), g4ref built against it (lumen's g4ref/build)",
+  "11.2.2": "geant4-11.2.2.sif, g4ref built against it (refs_new/g4_11/build)"
+ },
+ "measured": "2026-11-09",
+ "toys": {
+  "clean": {
+   "case": "accepted",
+   "geant4": {
+    "10.7.4": {
+     "loads": true
+    },
+    "11.2.2": {
+     "loads": true
+    }
+   }
+  },
+  "constant_property": {
+   "case": "constant_property",
+   "geant4": {
+    "10.7.4": {
+     "loads": false,
+     "exception": "ReadError",
+     "issued_by": "G4GDMLReadDefine::getMatrix()",
+     "message": "Matrix 'YIELD' was not found!"
+    },
+    "11.2.2": {
+     "loads": false,
+     "exception": "ReadError",
+     "issued_by": "G4GDMLReadDefine::getMatrix()",
+     "message": "Matrix 'YIELD' was not found!"
+    }
+   },
+   "repaired": {
+    "repairs": [
+     "constant_property"
+    ],
+    "sha256": "3be36bdd60bc97c0c69712dc1306847d623e01a24a274a31c66c9929e0aab662",
+    "geant4": {
+     "10.7.4": true,
+     "11.2.2": true
+    }
+   }
+  },
+  "constant_property_one_value_matrix": {
+   "case": "accepted",
+   "geant4": {
+    "10.7.4": {
+     "loads": true
+    },
+    "11.2.2": {
+     "loads": true
+    }
+   }
+  },
+  "constant_property_optical": {
+   "case": "constant_property",
+   "geant4": {
+    "10.7.4": {
+     "loads": false,
+     "exception": "ReadError",
+     "issued_by": "G4GDMLReadDefine::getMatrix()",
+     "message": "Matrix 'RCONST' was not found!"
+    },
+    "11.2.2": {
+     "loads": false,
+     "exception": "ReadError",
+     "issued_by": "G4GDMLReadDefine::getMatrix()",
+     "message": "Matrix 'RCONST' was not found!"
+    }
+   },
+   "repaired": {
+    "repairs": [
+     "constant_property"
+    ],
+    "sha256": "eb6727585710b72dfc2e2e7f2d33c7b59ab4dd54d4f2819c751d2b5f116f87c4",
+    "geant4": {
+     "10.7.4": true,
+     "11.2.2": true
+    }
+   }
+  },
+  "denormal_attribute": {
+   "case": "denormal",
+   "geant4": {
+    "10.7.4": {
+     "loads": false,
+     "exception": "InvalidExpression",
+     "issued_by": "G4GDMLEvaluator::Evaluate()",
+     "message": "Error in expression: 2.2305392e-316"
+    },
+    "11.2.2": {
+     "loads": false,
+     "exception": "InvalidExpression",
+     "issued_by": "G4GDMLEvaluator::Evaluate()",
+     "message": "Error in expression: 2.2305392e-316"
+    }
+   },
+   "repaired": {
+    "repairs": [
+     "denormal"
+    ],
+    "sha256": "44b2d2112286583b05bf0092d72937623195d2b77fff8fdb81de04e714dcfead",
+    "geant4": {
+     "10.7.4": true,
+     "11.2.2": true
+    }
+   }
+  },
+  "denormal_constant": {
+   "case": "denormal",
+   "geant4": {
+    "10.7.4": {
+     "loads": false,
+     "exception": "InvalidExpression",
+     "issued_by": "G4GDMLEvaluator::Evaluate()",
+     "message": "Error in expression: 2.2305392e-316"
+    },
+    "11.2.2": {
+     "loads": false,
+     "exception": "InvalidExpression",
+     "issued_by": "G4GDMLEvaluator::Evaluate()",
+     "message": "Error in expression: 2.2305392e-316"
+    }
+   },
+   "repaired": {
+    "repairs": [
+     "denormal"
+    ],
+    "sha256": "b044bdf013983f6a6447e25e954ad58c38f015ef4b5852ad3729f2acbd575f68",
+    "geant4": {
+     "10.7.4": true,
+     "11.2.2": true
+    }
+   }
+  },
+  "denormal_matrix": {
+   "case": "denormal",
+   "geant4": {
+    "10.7.4": {
+     "loads": false,
+     "exception": "InvalidExpression",
+     "issued_by": "G4GDMLEvaluator::Evaluate()",
+     "message": "Error in expression: 2.2305392e-316"
+    },
+    "11.2.2": {
+     "loads": false,
+     "exception": "InvalidExpression",
+     "issued_by": "G4GDMLEvaluator::Evaluate()",
+     "message": "Error in expression: 2.2305392e-316"
+    }
+   },
+   "repaired": {
+    "repairs": [
+     "denormal"
+    ],
+    "sha256": "4da43ff2e5a2e240353aa12510d834a55a6124fe5eb07d6a1f3f7dfc6ec479d4",
+    "geant4": {
+     "10.7.4": true,
+     "11.2.2": true
+    }
+   }
+  },
+  "infinite_matrix": {
+   "case": "non_finite",
+   "geant4": {
+    "10.7.4": {
+     "loads": false,
+     "exception": "InvalidExpression",
+     "issued_by": "G4GDMLEvaluator::Evaluate()",
+     "message": "Error in expression: inf"
+    },
+    "11.2.2": {
+     "loads": false,
+     "exception": "InvalidExpression",
+     "issued_by": "G4GDMLEvaluator::Evaluate()",
+     "message": "Error in expression: inf"
+    }
+   },
+   "repaired": {
+    "repairs": [
+     "non_finite"
+    ],
+    "sha256": "74b2a041e1616d94001ff00ff66ec1f8a4847b6f086a5e022736736c08e4d046",
+    "geant4": {
+     "10.7.4": true,
+     "11.2.2": true
+    }
+   }
+  },
+  "matrix_tail": {
+   "case": "matrix_tail",
+   "geant4": {
+    "10.7.4": {
+     "loads": false,
+     "exception": "InvalidSize",
+     "issued_by": "G4GDMLEvaluator::DefineMatrix()",
+     "message": "Matrix 'ABS' is not filled correctly!"
+    },
+    "11.2.2": {
+     "loads": false,
+     "exception": "InvalidSize",
+     "issued_by": "G4GDMLEvaluator::DefineMatrix()",
+     "message": "Matrix 'ABS' is not filled correctly!"
+    }
+   },
+   "repaired": {
+    "repairs": [
+     "matrix_tail"
+    ],
+    "sha256": "291140b8c913bcc64f06e203b8bb583b43249c7b15d4643c5f777c5836124a18",
+    "geant4": {
+     "10.7.4": true,
+     "11.2.2": true
+    }
+   }
+  },
+  "matrix_tail_unused": {
+   "case": "matrix_tail",
+   "geant4": {
+    "10.7.4": {
+     "loads": false,
+     "exception": "InvalidSize",
+     "issued_by": "G4GDMLEvaluator::DefineMatrix()",
+     "message": "Matrix 'ABS' is not filled correctly!"
+    },
+    "11.2.2": {
+     "loads": false,
+     "exception": "InvalidSize",
+     "issued_by": "G4GDMLEvaluator::DefineMatrix()",
+     "message": "Matrix 'ABS' is not filled correctly!"
+    }
+   },
+   "repaired": {
+    "repairs": [
+     "matrix_tail"
+    ],
+    "sha256": "5e9f649988a1e7ec1e6327eb7d669c7c193e0880608573693c1973b70855d90c",
+    "geant4": {
+     "10.7.4": true,
+     "11.2.2": true
+    }
+   }
+  },
+  "matrix_trailing_space_even": {
+   "case": "matrix_tail",
+   "geant4": {
+    "10.7.4": {
+     "loads": false,
+     "exception": "InvalidSize",
+     "issued_by": "G4GDMLEvaluator::DefineMatrix()",
+     "message": "Matrix 'ABS' is not filled correctly!"
+    },
+    "11.2.2": {
+     "loads": false,
+     "exception": "InvalidSize",
+     "issued_by": "G4GDMLEvaluator::DefineMatrix()",
+     "message": "Matrix 'ABS' is not filled correctly!"
+    }
+   },
+   "repaired": {
+    "repairs": [
+     "matrix_tail"
+    ],
+    "sha256": "291140b8c913bcc64f06e203b8bb583b43249c7b15d4643c5f777c5836124a18",
+    "geant4": {
+     "10.7.4": true,
+     "11.2.2": true
+    }
+   }
+  },
+  "matrix_trailing_space_odd": {
+   "case": "accepted",
+   "geant4": {
+    "10.7.4": {
+     "loads": true
+    },
+    "11.2.2": {
+     "loads": true
+    }
+   }
+  },
+  "min_normal_matrix": {
+   "case": "accepted",
+   "geant4": {
+    "10.7.4": {
+     "loads": true
+    },
+    "11.2.2": {
+     "loads": true
+    }
+   }
+  },
+  "nan_matrix": {
+   "case": "refused (no repair)",
+   "geant4": {
+    "10.7.4": {
+     "loads": false,
+     "exception": "InvalidExpression",
+     "issued_by": "G4GDMLEvaluator::Evaluate()",
+     "message": "Error in expression: nan"
+    },
+    "11.2.2": {
+     "loads": false,
+     "exception": "InvalidExpression",
+     "issued_by": "G4GDMLEvaluator::Evaluate()",
+     "message": "Error in expression: nan"
+    }
+   }
+  },
+  "neg_inf_matrix": {
+   "case": "non_finite",
+   "geant4": {
+    "10.7.4": {
+     "loads": false,
+     "exception": "InvalidExpression",
+     "issued_by": "G4GDMLEvaluator::Evaluate()",
+     "message": "Error in expression: -inf"
+    },
+    "11.2.2": {
+     "loads": false,
+     "exception": "InvalidExpression",
+     "issued_by": "G4GDMLEvaluator::Evaluate()",
+     "message": "Error in expression: -inf"
+    }
+   },
+   "repaired": {
+    "repairs": [
+     "non_finite"
+    ],
+    "sha256": "3a33597721b0a3198d7927de0edd168153be37b4c5048ce20908e9ab98c2b160",
+    "geant4": {
+     "10.7.4": true,
+     "11.2.2": true
+    }
+   }
+  },
+  "overflow_attribute": {
+   "case": "refused (no repair)",
+   "geant4": {
+    "10.7.4": {
+     "loads": false,
+     "exception": "InvalidExpression",
+     "issued_by": "G4GDMLEvaluator::Evaluate()",
+     "message": "Error in expression: 1e400"
+    },
+    "11.2.2": {
+     "loads": false,
+     "exception": "InvalidExpression",
+     "issued_by": "G4GDMLEvaluator::Evaluate()",
+     "message": "Error in expression: 1e400"
+    }
+   }
+  },
+  "redefinition_constant": {
+   "case": "identical_redefinition",
+   "geant4": {
+    "10.7.4": {
+     "loads": false,
+     "exception": "InvalidExpression",
+     "issued_by": "G4GDMLEvaluator::DefineConstant()",
+     "message": "Redefinition of constant or variable: C1"
+    },
+    "11.2.2": {
+     "loads": false,
+     "exception": "InvalidExpression",
+     "issued_by": "G4GDMLEvaluator::DefineConstant()",
+     "message": "Redefinition of constant or variable: C1"
+    }
+   },
+   "repaired": {
+    "repairs": [
+     "identical_redefinition"
+    ],
+    "sha256": "193b80b048b50f310fd20e4b20fc84c373dd85a78d32e3704bf4735e262ad0f8",
+    "geant4": {
+     "10.7.4": true,
+     "11.2.2": true
+    }
+   }
+  },
+  "redefinition_matrix": {
+   "case": "identical_redefinition",
+   "geant4": {
+    "10.7.4": {
+     "loads": false,
+     "exception": "InvalidExpression",
+     "issued_by": "G4GDMLEvaluator::DefineConstant()",
+     "message": "Redefinition of constant or variable: ABS_0_0"
+    },
+    "11.2.2": {
+     "loads": false,
+     "exception": "InvalidExpression",
+     "issued_by": "G4GDMLEvaluator::DefineConstant()",
+     "message": "Redefinition of constant or variable: ABS_0_0"
+    }
+   },
+   "repaired": {
+    "repairs": [
+     "identical_redefinition"
+    ],
+    "sha256": "223ae816ca5dd23331380d22e113c6d3a73ce92b9d2fa93f26c525fba53f1a3a",
+    "geant4": {
+     "10.7.4": true,
+     "11.2.2": true
+    }
+   }
+  },
+  "redefinition_position": {
+   "case": "accepted",
+   "geant4": {
+    "10.7.4": {
+     "loads": true
+    },
+    "11.2.2": {
+     "loads": true
+    }
+   }
+  },
+  "redefinition_quantity": {
+   "case": "identical_redefinition",
+   "geant4": {
+    "10.7.4": {
+     "loads": false,
+     "exception": "InvalidExpression",
+     "issued_by": "G4GDMLEvaluator::DefineConstant()",
+     "message": "Redefinition of constant or variable: Q1"
+    },
+    "11.2.2": {
+     "loads": false,
+     "exception": "InvalidExpression",
+     "issued_by": "G4GDMLEvaluator::DefineConstant()",
+     "message": "Redefinition of constant or variable: Q1"
+    }
+   },
+   "repaired": {
+    "repairs": [
+     "identical_redefinition"
+    ],
+    "sha256": "e2f538ed619944ca078f70c506ef208dc17d7bf1554c5f8581a700250acad92e",
+    "geant4": {
+     "10.7.4": true,
+     "11.2.2": true
+    }
+   }
+  },
+  "undefined_matrix_property": {
+   "case": "undefined_matrix_property",
+   "geant4": {
+    "10.7.4": {
+     "loads": false,
+     "exception": "ReadError",
+     "issued_by": "G4GDMLReadDefine::getMatrix()",
+     "message": "Matrix 'NOPE' was not found!"
+    },
+    "11.2.2": {
+     "loads": false,
+     "exception": "ReadError",
+     "issued_by": "G4GDMLReadDefine::getMatrix()",
+     "message": "Matrix 'NOPE' was not found!"
+    }
+   },
+   "repaired": {
+    "repairs": [
+     "undefined_matrix_property"
+    ],
+    "sha256": "2d517ba119ad837b5480a0298dc58525a4d562164923c8573711886a3284a94b",
+    "geant4": {
+     "10.7.4": true,
+     "11.2.2": true
+    }
+   }
+  },
+  "underflow_attribute": {
+   "case": "denormal",
+   "geant4": {
+    "10.7.4": {
+     "loads": false,
+     "exception": "InvalidExpression",
+     "issued_by": "G4GDMLEvaluator::Evaluate()",
+     "message": "Error in expression: 1e-400"
+    },
+    "11.2.2": {
+     "loads": false,
+     "exception": "InvalidExpression",
+     "issued_by": "G4GDMLEvaluator::Evaluate()",
+     "message": "Error in expression: 1e-400"
+    }
+   },
+   "repaired": {
+    "repairs": [
+     "denormal"
+    ],
+    "sha256": "44b2d2112286583b05bf0092d72937623195d2b77fff8fdb81de04e714dcfead",
+    "geant4": {
+     "10.7.4": true,
+     "11.2.2": true
+    }
+   }
+  },
+  "unevaluable_matrix_unused": {
+   "case": "refused (no repair)",
+   "geant4": {
+    "10.7.4": {
+     "loads": false,
+     "exception": "InvalidExpression",
+     "issued_by": "G4GDMLEvaluator::Evaluate()",
+     "message": "Error in expression: UNKNOWN"
+    },
+    "11.2.2": {
+     "loads": false,
+     "exception": "InvalidExpression",
+     "issued_by": "G4GDMLEvaluator::Evaluate()",
+     "message": "Error in expression: UNKNOWN"
+    }
+   }
+  }
+ }
+}

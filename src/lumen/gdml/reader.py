@@ -2,8 +2,8 @@
 
 The file is untrusted input: no ``eval``; expressions go through a small recursive-descent parser with CLHEP units.
 
-    doc = read(path)            # GDMLDocument: defines, materials, elements, isotopes, solids, volumes, surfaces
-    write_normalised(src, dst)  # a copy Geant4's own reader accepts (the exporter defects below fixed)
+    doc = read(path)                            # GDMLDocument: defines, materials, solids, volumes, surfaces
+    doc = read(path, repairs={"denormal"})      # with the named repairs of exporter defects (REPAIRS)
 
 Values: lengths are in m, a plain literal in a decimal length unit converted exactly (``12.5`` mm is exactly 0.0125,
 rounded once) and anything else evaluated as Geant4 does and divided by 1000 once; angles in rad as Geant4 computes
@@ -14,11 +14,13 @@ Fail closed: an expression that does not evaluate, a reference to a missing posi
 every construct lumen does not support -- ``<loop>``, replicavol, divisionvol, paramvol, a physvol ``<file>`` -- raise
 GDMLError.
 
-Exporter defects (WCSim and experiment exports; Geant4's reader refuses each) are normalised and listed in
-``doc.report``, never silently: a denormal number is 0; an identical re-definition of a define is one definition (a
-conflicting one is an error); a matrix whose value count is not a multiple of its coldim loses the unpaired tail;
-a non-finite matrix value is read as is and reported (``write_normalised`` writes +-1e30). A matrix that does not
-evaluate raises only where it is used (``doc.matrix(name)``).
+Exporter defects (``REPAIRS``) are constructs stock Geant4 (10.7.4 and 11.2.2, measured: tests/data/gdml_repairs)
+refuses. Each raises GDMLDefectError (``.kind``) unless the recipe opts into its repair (``Recipe.repairs``); an
+applied repair is a ``repaired (<kind>): ...`` line of ``doc.report``. ``refs/gdml_repair.py`` applies the same
+repairs to the GDML a Geant4 reference loads, so both sides read the same file. A matrix's values are counted as
+Geant4 counts them: a values attribute that ends in whitespace (or is empty) has one more value, 0 (G4GDMLReadDefine
+reads with ``while (!eof) stream >> token``). A conflicting re-definition is a GDMLError, as are an overflowing literal
+and a matrix with a value that does not evaluate (a NaN, an unknown name), used or not, as in Geant4.
 
 Notes
 -----
@@ -35,6 +37,7 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
+from decimal import Decimal
 
 import numpy as np
 
@@ -43,6 +46,41 @@ from lumen.gdml.units import ENERGY_EV, LENGTH_M, MM_PER_M, UNITS, exact, is_lit
 
 class GDMLError(ValueError):
     """A GDML file lumen cannot read as Geant4 would: the message names the element and the reason."""
+
+
+# kind -> (the case, what Geant4 10.7.4 and 11.2.2 do (both FatalException), what the repair does)
+REPAIRS = {
+    "matrix_tail": ("a <matrix> whose value count is not a multiple of its coldim",
+                    "G4GDMLEvaluator::DefineMatrix: InvalidSize, 'Matrix ... is not filled correctly!'",
+                    "the unpaired tail values are dropped"),
+    "identical_redefinition": ("a constant, variable, quantity, expression or matrix defined again, identically",
+                               "G4GDMLEvaluator::DefineConstant / DefineVariable: InvalidExpression, 'Redefinition "
+                               "of constant or variable'", "the first definition is kept, the others dropped"),
+    "constant_property": ("a <property> whose ref names a define that is not a <matrix> (e.g. a <constant>)",
+                          "G4GDMLReadDefine::GetMatrix: ReadError, 'Matrix ... was not found!'",
+                          "the property is dropped (not read as a constant property)"),
+    "undefined_matrix_property": ("a <property> whose ref names no define at all",
+                                  "G4GDMLReadDefine::GetMatrix: ReadError, 'Matrix ... was not found!'",
+                                  "the property is dropped"),
+    "denormal": ("a nonzero number literal below the smallest normal double (strtod sets ERANGE)",
+                 "G4GDMLEvaluator::Evaluate: InvalidExpression, 'Error in expression'", "the literal is written 0"),
+    "non_finite": ("an inf or -inf <matrix> value", "G4GDMLEvaluator::Evaluate: InvalidExpression, 'Error in "
+                   "expression: inf'", "the value is written +-1e30, as the importer stores a non-finite table value"),
+}  # fmt: skip
+SKIP_LITERALS = {"name", "ref", "formula", "state", "surfaceproperty", "auxtype", "auxvalue", "auxunit", "version"}
+LITERAL_NUMBER = re.compile(r"(?<![\w.])(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?(?![\w.])")
+_BIG_EXPONENT = re.compile(r"\d[eE][-+]?\d{3}")  # a literal out of range has one (or > 300 digits)
+
+
+class GDMLDefectError(GDMLError):
+    """An exporter defect Geant4 refuses (``kind``: a key of REPAIRS); the recipe may opt into its repair."""
+
+    def __init__(self, kind, where):
+        self.kind = kind
+        case, g4, fix = REPAIRS[kind]
+        super().__init__(f"{where}: exporter defect {kind!r}, {case}. Stock Geant4 refuses it ({g4}). To read it, "
+                         f"opt into the repair (Recipe(repairs={{{kind!r}}}): {fix}) and give any Geant4 reference the "
+                         f"same repair: python refs/gdml_repair.py SRC DST {kind}")  # fmt: skip
 
 
 FUNCS = {
@@ -65,8 +103,10 @@ UNSUPPORTED = ("replicavol", "divisionvol", "paramvol", "loop")
 PASCAL_PA = {"pascal": "1", "Pa": "1"}  # the pressure units that are exact multiples of a pascal
 
 
-def _denormal(v: float) -> bool:
-    return v != 0.0 and abs(v) < TINY
+def _out_of_range(lit: str) -> str | None:
+    """Return "denormal" or "overflow" for a number literal Geant4's strtod reports out of range (ERANGE)."""
+    v = abs(float(lit))
+    return "overflow" if math.isinf(v) else "denormal" if v < TINY and Decimal(lit) != 0 else None
 
 
 def tag(el) -> str:
@@ -95,7 +135,6 @@ class Evaluator:
         self.cache = {}
         self.matrices = {}  # name -> (coldim, [floats]) normalised
         self.busy = set()
-        self.n_denormal = 0
 
     def define(self, name, expr, unit=None):
         """Record a define (evaluated when first used)."""
@@ -129,14 +168,8 @@ class Evaluator:
         if s is None:
             raise GDMLError("missing value")
         s = s.strip()
-        try:
-            v = float(s)
-            if _denormal(v):
-                self.n_denormal += 1
-                return 0.0
-            return v
-        except ValueError:
-            pass
+        if is_literal(s):
+            return float(s)
         toks: list[tuple[str, object]] = []
         pos = 0
         while pos < len(s):
@@ -378,8 +411,11 @@ class OpticalSurface:
 class GDMLDocument:
     """A parsed GDML file. See the module docstring for units; ``report`` lists every normalisation."""
 
-    def __init__(self, path):
+    def __init__(self, path, repairs=()):
         self.path = str(path)
+        self.repairs = frozenset(repairs)
+        if self.repairs - set(REPAIRS):
+            raise ValueError(f"unknown GDML repairs {sorted(self.repairs - set(REPAIRS))}; known: {sorted(REPAIRS)}")
         self.ev = Evaluator()
         self.positions, self.rotations, self.scales = {}, {}, {}
         self.solids = collections.OrderedDict()
@@ -395,8 +431,13 @@ class GDMLDocument:
         self.position_text = {}  # name -> (unit or None, (x, y, z) texts) of a defined position
         self.world = None
         self.report = []
-        self._matrix_err = {}
         self._defs = {}
+
+    def defect(self, kind, where, done):
+        """Refuse an exporter defect (GDMLDefectError), or record its repair (``done``) when the recipe opts in."""
+        if kind not in self.repairs:
+            raise GDMLDefectError(kind, f"gdml {self.path}: {where}")
+        self.report.append(f"repaired ({kind}): {where}: {done}")
 
     # ---- numbers
     def num(self, s, what):
@@ -410,9 +451,6 @@ class GDMLDocument:
         """Return a length in m: exact for a plain literal in a decimal unit, else Geant4's value / 1000 once."""
         unit = "mm" if unit is None else unit.strip()
         if is_literal(text) and unit in LENGTH_M:
-            if _denormal(float(text)):
-                self.ev.n_denormal += 1
-                return 0.0
             return exact(text, LENGTH_M[unit])
         return self.num(text, what) * self.num(unit, what) / MM_PER_M
 
@@ -465,9 +503,7 @@ class GDMLDocument:
         return Transform(t, r, sc, text)
 
     def matrix(self, name):
-        """Return a matrix as (rows, coldim) float64 in Geant4's internal units; raise if undefined or unreadable."""
-        if name in self._matrix_err:
-            raise GDMLError(f"matrix {name!r}: {self._matrix_err[name]}")
+        """Return a matrix as (rows, coldim) float64 in Geant4's internal units; raise if undefined."""
         if name not in self.ev.matrices:
             raise GDMLError(f"matrix {name!r} is not defined")
         cd, vals = self.ev.matrices[name]
@@ -483,6 +519,7 @@ class GDMLDocument:
         for el in root.iter():
             if tag(el) in UNSUPPORTED:
                 raise GDMLError(f"gdml {self.path}: <{tag(el)}> {el.get('name')!r} is not supported")
+        self._literals(root)
         sections = collections.defaultdict(list)
         for sec in root:
             sections[tag(sec)].append(sec)
@@ -499,9 +536,51 @@ class GDMLDocument:
         self.world = self._world(sections["setup"])
         if self.world not in self.volumes:
             raise GDMLError(f"gdml {self.path}: world volume {self.world!r} is not defined")
-        if self.ev.n_denormal:
-            self.report.append(f"normalised: {self.ev.n_denormal} denormal literal(s) outside matrices read as 0")
+        self._property_refs()
         return self
+
+    def _property_refs(self):
+        """Refuse (or, repaired, drop) a property whose ref names a define not a matrix, or nothing."""
+        owners = [(f"material {n!r}", m.props) for n, m in self.materials.items()]
+        for owner, props in owners + [(f"opticalsurface {n!r}", s.props) for n, s in self.surfaces.items()]:
+            for name, ref in list(props):
+                if ref not in self._defs:
+                    self.defect("undefined_matrix_property", f"{owner}: property {name} names {ref!r}, not defined",
+                                "dropped")  # fmt: skip
+                elif self._defs[ref][0] != "matrix":
+                    what = f"{owner}: property {name} names {self._defs[ref][0]} {ref!r}"
+                    self.defect("constant_property", what, "dropped")
+                else:
+                    continue
+                props.remove((name, ref))
+
+    def _literals(self, root):
+        """Refuse (or, with the ``denormal`` repair, write 0) each out-of-range literal Geant4 evaluates."""
+        where, n = [""], [0]
+
+        def zero(m):
+            bad = _out_of_range(m.group(0))
+            if bad == "overflow":
+                raise GDMLError(f"gdml {self.path}: {where[0]}: {m.group(0)} overflows a double (Geant4 refuses it)")
+            if bad and "denormal" not in self.repairs:
+                raise GDMLDefectError("denormal", f"gdml {self.path}: {where[0]}: the literal {m.group(0)}")
+            n[0] += bad is not None
+            return "0" if bad else m.group(0)
+
+        outside = 0
+        for el in root.iter():
+            where[0], n[0] = f"{tag(el)} {el.get('name')!r}", 0
+            for k, v in el.attrib.items():
+                if k not in SKIP_LITERALS and "}" not in k and (len(v) > 300 or _BIG_EXPONENT.search(v)):
+                    el.set(k, LITERAL_NUMBER.sub(zero, v))
+            if tag(el) == "expression" and el.text:
+                el.text = LITERAL_NUMBER.sub(zero, el.text)
+            if n[0] and tag(el) == "matrix":
+                self.report.append(f"repaired (denormal): {where[0]}: {n[0]} denormal value(s) read as 0")
+            elif n[0]:
+                outside += n[0]
+        if outside:
+            self.report.append(f"repaired (denormal): {outside} denormal literal(s) outside matrices read as 0")
 
     def _world(self, setups):
         named = [s for s in setups if s.get("name") == "Default"]
@@ -512,7 +591,11 @@ class GDMLDocument:
         return None
 
     def _redefined(self, el):
-        """Whether a define was seen before: identical -> True (read once, reported); conflicting -> GDMLError."""
+        """Whether a define was seen before (identical: the first is kept); a conflicting one is a GDMLError.
+
+        Geant4 refuses an evaluator define's re-definition (``identical_redefinition``); a position, rotation or scale
+        it re-defines (its map keeps the last), so an identical one is read once and reported.
+        """
         nm = el.get("name")
         key = (tag(el), tuple(sorted(el.attrib.items())), (el.text or "").strip())
         if nm not in self._defs:
@@ -520,7 +603,10 @@ class GDMLDocument:
             return False
         if self._defs[nm] != key:
             raise GDMLError(f"gdml {self.path}: conflicting re-definition of {tag(el)} {nm!r}")
-        self.report.append(f"normalised: identical re-definition of {tag(el)} {nm!r} read once")
+        if tag(el) in ("position", "rotation", "scale"):
+            self.report.append(f"identical re-definition of {tag(el)} {nm!r} read once (Geant4 keeps the last)")
+        else:
+            self.defect("identical_redefinition", f"{tag(el)} {nm!r} defined again, identically", "the first kept")
         return True
 
     def read_define(self, sec):
@@ -548,39 +634,36 @@ class GDMLDocument:
                 self.position_text[el.get("name")] = self.vec_text(el)
 
     def read_matrix(self, el):
-        """Read a <matrix>: values evaluated in internal units, the source tokens kept."""
-        nm = el.get("name")
-        toks = (el.get("values") or "").split()
+        """Read a <matrix>: values evaluated in internal units, the source tokens kept (see the module docstring)."""
+        nm, raw = el.get("name"), el.get("values") or ""
+        toks = raw.split() + (["0"] if not raw or raw[-1].isspace() else [])  # Geant4's count: a trailing 0
         if el.get("unit") is not None:
             self.matrix_unit[nm] = el.get("unit")
         try:
             cd = int(round(self.ev.eval(el.get("coldim", "1"))))
             if cd < 1:
                 raise GDMLError(f"coldim {cd}")
-            vals, nd = [], 0
-            for tok in toks:
-                try:
-                    v = float(tok)
-                except ValueError:
-                    v = self.ev.eval(tok)
-                if _denormal(v):
-                    v, nd = 0.0, nd + 1
-                vals.append(v)
-            if nd:
-                self.report.append(f"normalised: matrix {nm!r}: {nd} denormal value(s) read as 0")
-            nf = sum(1 for v in vals if not math.isfinite(v))
-            if nf:
-                self.report.append(f"normalised: matrix {nm!r}: {nf} non-finite value(s) (kept; +-1e30 in "
-                                   "write_normalised)")  # fmt: skip
-            if len(vals) % cd:
-                self.report.append(f"normalised: matrix {nm!r}: {len(vals)} values for coldim {cd}, the unpaired tail "
-                                   f"({len(vals) % cd}) dropped")  # fmt: skip
-                vals = vals[: len(vals) - len(vals) % cd]
-                toks = toks[: len(vals)]
+            if len(toks) % cd:
+                self.defect(
+                    "matrix_tail",
+                    f"matrix {nm!r}: {len(toks)} values (as Geant4 counts them) for coldim {cd}",
+                    f"the unpaired tail ({len(toks) % cd}) dropped",
+                )
+                toks = toks[: len(toks) - len(toks) % cd]
+            elif not raw or raw[-1].isspace():
+                self.report.append(f"matrix {nm!r}: its values end in whitespace; read as Geant4 reads them, with one "
+                                   "more value, 0")  # fmt: skip
+            inf = [k for k, t in enumerate(toks) if t.lower().lstrip("+-") in ("inf", "infinity")]
+            if inf:
+                self.defect("non_finite", f"matrix {nm!r}: {len(inf)} non-finite value(s)", "read as +-1e30")
+                toks = [("-1e30" if t[0] == "-" else "1e30") if k in inf else t for k, t in enumerate(toks)]
+            vals = [self.ev.eval(t) for t in toks]
             self.ev.matrices[nm] = (cd, vals)
             self.matrix_text[nm] = toks
-        except GDMLError as e:
-            self._matrix_err[nm] = str(e)
+        except GDMLDefectError:
+            raise
+        except GDMLError as e:  # Geant4 evaluates each value as it reads the define (used or not) and refuses it
+            raise GDMLError(f"gdml {self.path}: matrix {nm!r}: {e}") from None
 
     def read_materials(self, sec):
         """Read a <materials> section: isotopes, elements, materials with their compositions and properties."""
@@ -818,76 +901,6 @@ class GDMLDocument:
                                         self.transform(c)))  # fmt: skip
 
 
-def read(path) -> GDMLDocument:
-    """Read a GDML file; see the module docstring."""
-    return GDMLDocument(path).parse()
-
-
-# ---------------------------------------------------------------------------------------- a Geant4-readable copy
-_NUM = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)[eE][-+]?\d+")
-
-
-def write_normalised(src, dst):
-    """Write a copy of a GDML file with the exporter defects fixed as ``read`` fixes them; return the report lines.
-
-    Denormal literals become 0, identical re-definitions are dropped (a conflicting one is an error), infinite matrix
-    values become +-1e30 (a NaN is an error) and matrices are trimmed to a multiple of their coldim.
-    """
-    ET.register_namespace("xsi", "http://www.w3.org/2001/XMLSchema-instance")
-    tree = ET.parse(src)
-    root = tree.getroot()
-    rep: list[str] = []
-    nden = [0]
-
-    def fix(text):
-        def f(mo):
-            if _denormal(float(mo.group(0))):
-                nden[0] += 1
-                return "0"
-            return mo.group(0)
-
-        return _NUM.sub(f, text)
-
-    for el in root.iter():
-        for k, v in list(el.attrib.items()):
-            nv = fix(v)
-            if nv != v:
-                el.set(k, nv)
-    seen: dict = {}
-    for sec in root:
-        if tag(sec) == "define":
-            for el in list(sec):
-                _normalise_define(src, sec, el, seen, rep)
-    if nden[0]:
-        rep.append(f"{nden[0]} denormal value(s) written as 0")
-    tree.write(dst, xml_declaration=True, encoding="UTF-8")
-    return rep
-
-
-def _normalise_define(src, sec, el, seen, rep):
-    nm = el.get("name")
-    if nm is None:
-        return
-    key = (tag(el), tuple(sorted(el.attrib.items())), (el.text or "").strip())
-    if nm in seen:
-        if seen[nm] != key:
-            raise GDMLError(f"gdml {src}: conflicting re-definition of {tag(el)} {nm!r}")
-        sec.remove(el)
-        rep.append(f"identical re-definition of {tag(el)} {nm!r} dropped")
-        return
-    seen[nm] = key
-    if tag(el) != "matrix":
-        return
-    vals = (el.get("values") or "").split()
-    nonf = [k for k, v in enumerate(vals) if v.lower().lstrip("+-") in ("inf", "infinity", "nan")]
-    for k in nonf:
-        if "nan" in vals[k].lower():
-            raise GDMLError(f"gdml {src}: matrix {nm!r} has a nan value")
-        vals[k] = "-1e30" if vals[k].startswith("-") else "1e30"
-    if nonf:
-        el.set("values", " ".join(vals))
-        rep.append(f"matrix {nm!r}: {len(nonf)} infinite value(s) written as +-1e30")
-    cd = int(round(float(el.get("coldim", "1"))))
-    if len(vals) % cd:
-        el.set("values", " ".join(vals[: len(vals) - len(vals) % cd]))
-        rep.append(f"matrix {nm!r}: {len(vals)} values for coldim {cd}, tail dropped")
+def read(path, repairs=()) -> GDMLDocument:
+    """Read a GDML file with the named exporter-defect repairs (REPAIRS); see the module docstring."""
+    return GDMLDocument(path, repairs).parse()

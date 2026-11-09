@@ -17,7 +17,7 @@ GDML = """<?xml version="1.0" encoding="UTF-8" ?>
   <matrix name="RIX0x1" coldim="2" values="2.0*eV 1.33 3.0*eV 1.34 4.5e-06 1.35"/>
   <matrix name="ABS0x2" coldim="2" values="2.0*eV 1000.0 4.5*eV 20*m"/>
   <matrix name="REF" coldim="2" values="2.0*eV 0.9 4.5*eV 0.8"/>
-  <matrix name="GV" coldim="2" values="2.0*eV 220 4.5*eV inf"/>
+  <matrix name="GV" coldim="2" values="2.0*eV 220 4.5*eV 1e30"/>
 </define>
 <materials>
   <element name="H" formula="H" Z="1"> <atom value="1.008"/> </element>

@@ -1,6 +1,8 @@
 """The GDML reader (lumen.gdml.reader): the expression evaluator, lengths in metres, fail-closed reading, and the
-normalisation of exporter defects (denormal numbers, identical re-definitions, matrices not a multiple of coldim; a
-conflicting re-definition is an error). Ported from the baseline's tests/test_scene_gdml.py."""
+exporter defects Geant4 refuses (denormal numbers, identical re-definitions, matrices not a multiple of coldim,
+non-finite matrix values): each refused unless its repair is named (tests/unit/test_gdml_repairs.py has one toy per
+case and Geant4's verdicts); a conflicting re-definition is an error. Ported from the baseline's
+tests/test_scene_gdml.py."""
 
 import math
 
@@ -125,20 +127,22 @@ DEFECTS = """<matrix name="den" coldim="2" values="1.5e-06 2.2305392e-316 3e-06 
 <matrix name="dup" coldim="2" values="1e-06 1 2e-06 2"/>
 <matrix name="dup" coldim="2" values="1e-06 1 2e-06 2"/>
 <matrix name="odd" coldim="2" values="1e-06 1 2e-06 2 3e-06"/>
-<matrix name="broken" coldim="1" values="NOPE"/>
 <matrix name="gv" coldim="2" values="1e-06 inf 2e-06 299.8"/>"""
 
 
-def test_normalises_exporter_defects(tmp_path):
-    G = reader.read(_gdml(tmp_path, define=DEFECTS))
+def test_repairs_exporter_defects(tmp_path):
+    with pytest.raises(reader.GDMLDefectError):
+        reader.read(_gdml(tmp_path, define=DEFECTS))
+    G = reader.read(_gdml(tmp_path, define=DEFECTS), repairs=reader.REPAIRS)
     np.testing.assert_array_equal(G.matrix("den"), [[1.5e-6, 0.0], [3e-6, 0.25]])
     np.testing.assert_array_equal(G.matrix("dup"), [[1e-6, 1], [2e-6, 2]])
     np.testing.assert_array_equal(G.matrix("odd"), [[1e-6, 1], [2e-6, 2]])
+    np.testing.assert_array_equal(G.matrix("gv"), [[1e-6, 1e30], [2e-6, 299.8]])
     rep = "\n".join(G.report)
-    assert "'den': 1 denormal" in rep and "re-definition of matrix 'dup'" in rep and "'odd': 5 values" in rep
-    assert np.isinf(G.matrix("gv")[0, 1]) and "'gv': 1 non-finite" in rep
-    with pytest.raises(reader.GDMLError, match="broken"):
-        G.matrix("broken")  # an unused broken table does not block the read; its use does
+    assert "(denormal): matrix 'den': 1 denormal" in rep and "(identical_redefinition): matrix 'dup'" in rep
+    assert "(matrix_tail): matrix 'odd': 5 values" in rep and "(non_finite): matrix 'gv': 1 non-finite" in rep
+    with pytest.raises(reader.GDMLError, match="'broken'"):  # unused: Geant4 evaluates every matrix it reads
+        reader.read(_gdml(tmp_path, define='<matrix name="broken" coldim="1" values="NOPE"/>'))
 
 
 def test_conflicting_redefinition_is_an_error(tmp_path):
@@ -147,19 +151,6 @@ def test_conflicting_redefinition_is_an_error(tmp_path):
         reader.read(_gdml(tmp_path, define=bad))
     with pytest.raises(reader.GDMLError, match="conflicting"):
         reader.read(_gdml(tmp_path, define='<constant name="c" value="1"/><constant name="c" value="2"/>'))
-
-
-def test_write_normalised_round_trip(tmp_path):
-    src = _gdml(tmp_path, define=DEFECTS.replace('<matrix name="broken" coldim="1" values="NOPE"/>', ""))
-    dst = str(tmp_path / "clean.gdml")
-    rep = reader.write_normalised(src, dst)
-    assert any("denormal" in r for r in rep) and any("dup" in r for r in rep) and any("odd" in r for r in rep)
-    G = reader.read(dst)
-    assert G.report == []  # nothing left to normalise
-    np.testing.assert_array_equal(G.matrix("den"), [[1.5e-6, 0.0], [3e-6, 0.25]])
-    np.testing.assert_array_equal(G.matrix("odd"), [[1e-6, 1], [2e-6, 2]])
-    np.testing.assert_array_equal(G.matrix("gv"), [[1e-6, 1e30], [2e-6, 299.8]])
-    assert "xmlns:xsi" in open(dst).read()
 
 
 def test_g4_strip():
