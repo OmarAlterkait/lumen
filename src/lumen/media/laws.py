@@ -182,10 +182,29 @@ def geant4_group_index_table(e, n):
     return eg, jnp.concatenate([first, mid, last])
 
 
+def _group_index_knot(e, n, j):
+    """Return knot ``j`` of ``geant4_group_index_table``'s group indices alone, with the table's own arithmetic."""
+    k = e.shape[0] - 1
+    s = jnp.clip(j - 1, 0, k - 1)  # the slope: the first knot's, then the one ending at knot j
+    slope = (n[s + 1] - n[s]) / jnp.log(e[s + 1] / e[s])
+    base = jnp.where((j == 0) | (j == k), n[j], 0.5 * (n[s] + n[s + 1]))
+    return jnp.maximum(base + slope, base)
+
+
 def geant4_group_index(e, n, lam):
-    """Return c / GROUPVEL at wavelengths ``lam`` (nm); Geant4 interpolates v_g linearly in energy, clamped."""
-    eg, ng = geant4_group_index_table(e, n)
-    return 1.0 / jnp.interp(HC / lam, eg, 1.0 / ng)
+    """Return c / GROUPVEL at wavelengths ``lam`` (nm); Geant4 interpolates v_g linearly in energy, clamped.
+
+    Only the two knots around ``lam`` are evaluated (``jnp.interp`` on that pair is ``jnp.interp`` on the table): in
+    the photon loop the whole table's slopes were otherwise recomputed at every step.
+    """
+    eg = jnp.concatenate([e[:1], 0.5 * (e[:-2] + e[1:-1]), e[-1:]])
+
+    def one(x):
+        pair = jnp.clip(jnp.searchsorted(eg, x, side="right"), 1, eg.shape[0] - 1) + jnp.arange(-1, 1)
+        ng = jnp.stack([_group_index_knot(e, n, j) for j in pair])
+        return 1.0 / jnp.interp(x, eg[pair], 1.0 / ng)
+
+    return jnp.vectorize(one)(HC / lam)
 
 
 @jax.custom_jvp
