@@ -1,0 +1,46 @@
+{
+ "cases": {
+  "mieA": {
+   "forward_ratio": 0.7,
+   "g_backward": 0.3,
+   "g_forward": 0.6
+  },
+  "mieB": {
+   "forward_ratio": 0.5,
+   "g_backward": 0.8,
+   "g_forward": 0.0
+  }
+ },
+ "files": {
+  "g4_10.7.4_mieA_hist.npz": {
+   "case": "mieA",
+   "chi2_geant4_reading": 50.784703548959634,
+   "geant4": "10.7.4",
+   "sha256": "cee41628e2c025d77d34f6b445b82d62471ff9edcfcdb1e666b5d19ec21b7375",
+   "single_scatters": 188101
+  },
+  "g4_10.7.4_mieB_hist.npz": {
+   "case": "mieB",
+   "chi2_geant4_reading": 34.012110130311925,
+   "geant4": "10.7.4",
+   "sha256": "42da92f3c15c1dabf457c1ad9fcb592d296ec3d3777cb8225ccfb96ca277ca84",
+   "single_scatters": 184688
+  },
+  "g4_11.2.2_mieA_hist.npz": {
+   "case": "mieA",
+   "chi2_geant4_reading": 50.784703548959634,
+   "geant4": "11.2.2",
+   "sha256": "cee41628e2c025d77d34f6b445b82d62471ff9edcfcdb1e666b5d19ec21b7375",
+   "single_scatters": 188101
+  },
+  "g4_11.2.2_mieB_hist.npz": {
+   "case": "mieB",
+   "chi2_geant4_reading": 34.012110130311925,
+   "geant4": "11.2.2",
+   "sha256": "42da92f3c15c1dabf457c1ad9fcb592d296ec3d3777cb8225ccfb96ca277ca84",
+   "single_scatters": 184688
+  }
+ },
+ "source": "the g4ref Mie toy of the lumen redesign study labels_and_mie.md section 2.2 (Slurm job 43873743): 4e6 photons at 3 eV, MIEHG 20 m, RINDEX 1.33, a detecting sphere at 1 m; analysis scripts/analyse.py",
+ "what": "G4OpMieHG single-scatter angle distributions: the weighted cos(theta) histogram (40 bins on [-1, 1], normalised: obs, err) of single scatters selected from a pencil beam in a Mie-only medium, and the exact bin masses of three readings (A_mirror is Geant4's: r HG(g_f) + (1 - r) HG(-g_b))"
+}

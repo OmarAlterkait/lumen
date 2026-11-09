@@ -53,7 +53,7 @@ import numpy as np
 from lumen.build import _legacy_regions as regions
 from lumen.build.tree import OUTSIDE_MATERIAL, OUTSIDE_PV, PV, Tree
 from lumen.format import schema
-from lumen.media import bulk
+from lumen.media import bulk, phase
 from lumen.rules import optics as rules
 from lumen.surfaces import _legacy as legacy
 
@@ -326,6 +326,12 @@ def _medium_sources(rec: schema.Material):
     else:
         note = "Geant4's own Rayleigh table (G4OpRayleigh) from RINDEX and the temperature"
         out.update({("rayleigh", "length", c): Source(f"{m}/RINDEX", "derived", note) for c in ("energy", "value")})
+    if "MIEHG" in pr:
+        out.update({("mie", "length") + k: v for k, v in _table_or_constant(f"{m}/MIEHG", pr["MIEHG"], "").items()})
+        fixed = rules.mie_constants(pr, f"material {rec.name!r}")[1]
+        for name, key in zip(phase.MIE_PARAMS, rules.MIE_KEYS, strict=True):
+            out[("mie", "lobe", name)] = (Source(f"{m}/{key}", "constant") if key in pr and key not in fixed else
+                                          Source(None, "fixed", f"{key}: never read by G4OpMieHG here"))  # fmt: skip
     if "WLSABSLENGTH" in pr:
         out.update({("wls", "length") + k: v for k, v in _table_or_constant(f"{m}/WLSABSLENGTH", pr["WLSABSLENGTH"],
                                                                              "").items()})  # fmt: skip

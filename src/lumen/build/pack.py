@@ -25,6 +25,7 @@ def _property(p: schema.Property, v) -> schema.Property:
 def with_values(df: schema.DetectorFile, sensor_set, params):
     """Return (detector file, sensor set) with every parameter's value from ``params``."""
     mats = {n: dataclasses.replace(m, properties={k: _property(p, params[f"materials/{n}/{k}"])
+                                                  if f"materials/{n}/{k}" in params else p  # fixed: no parameter
                                                   for k, p in m.properties.items()})
             for n, m in df.materials.items()}  # fmt: skip
     surfs = {n: dataclasses.replace(s, value=float(params[f"surfaces/{n}/value"]),

@@ -2,7 +2,9 @@
 
 Keys come from the detector file (every material and surface property, and each surface's value) and from the sensor
 set (each group's model fields). What each Geant4 property means is in ``PROPERTIES``; a key it does not list is
-kept, as a dimensionless value of unknown range, so a calibration can still carry it.
+kept, as a dimensionless value of unknown range, so a calibration can still carry it. A property whose value the
+model fixes is not a parameter: the Mie constants of a material without MIEHG, and a Mie forward ratio of 0 or 1
+whose other lobe the material lacks (``lumen.rules.optics.mie_constants``).
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from lumen.params import ParamInfo, Params
 INF = math.inf
 FRACTION = ("", (0.0, 1.0), "reweight")
 LENGTH = ("m", (0.0, INF), "reweight")
+MIE_G = ("", (-0.999, 0.999), "reweight")  # Geant4 allows a negative g (a flipped lobe); |g| <= 0.999 for float32
 # Geant4 material and surface properties: (unit, allowed range, gradient method). RINDEX moves light paths and changes
 # Fresnel weights: its derivative is pending validation.
 PROPERTIES = {
@@ -26,6 +29,7 @@ PROPERTIES = {
     "REFLECTIVITY": FRACTION, "TRANSMITTANCE": FRACTION, "EFFICIENCY": FRACTION,
     "SPECULARLOBECONSTANT": FRACTION, "SPECULARSPIKECONSTANT": FRACTION, "BACKSCATTERCONSTANT": FRACTION,
     "DIFFUSE_FRACTION": FRACTION,
+    "MIEHG_FORWARD": MIE_G, "MIEHG_BACKWARD": MIE_G, "MIEHG_FORWARD_RATIO": FRACTION,
     "WLSCOMPONENT": ("", (0.0, INF), "reweight"), "WLSTIMECONSTANT": ("ns", (0.0, INF), "reweight"),
     "WLSMEANNUMBERPHOTONS": ("", (0.0, INF), "reweight"), "GROUPVEL": ("mm/ns", (0.0, INF), "reweight"),
     "REALRINDEX": ("", (0.0, INF), "reweight"), "IMAGINARYRINDEX": ("", (0.0, INF), "reweight"),
@@ -45,12 +49,24 @@ def _value(p: fmt.Property):
     return Table(np.asarray(p.energy), np.asarray(p.value))
 
 
+def not_parameters(rec) -> frozenset:
+    """Return the properties of a material or surface record whose value the model fixes (no parameter key)."""
+    if not isinstance(rec, fmt.Material):
+        return frozenset()
+    from lumen.rules import optics
+
+    return optics.mie_constants(rec.properties, f"material {rec.name!r}")[1]
+
+
 def detector_values(df: fmt.DetectorFile) -> tuple[dict, dict]:
     """Return (values, spec) of the detector file's own parameters."""
     values, spec = {}, {}
     for kind, items in (("materials", df.materials), ("surfaces", df.surfaces)):
         for name, rec in items.items():
+            fixed = not_parameters(rec)
             for prop, p in rec.properties.items():
+                if prop in fixed:
+                    continue
                 key = f"{kind}/{name}/{prop}"
                 values[key] = _value(p)
                 spec[key] = _info(key, prop, p.energy is not None)

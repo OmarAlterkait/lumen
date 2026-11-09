@@ -13,12 +13,14 @@ Tables are linear in photon ENERGY between their knots and clamped to the end va
 lists every table whose knots do not cover a wavelength range. RINDEX is ``laws.geant4_rindex``: the same n(E), whose
 group index is Geant4's GROUPVEL.
 
-Media (G4OpAbsorption, G4OpRayleigh, G4OpWLS): RINDEX gives the index (none: opaque, Geant4's NoRINDEX kill),
-ABSLENGTH the absorption, RAYLEIGH a Rayleigh channel (for a material named Water without one, Geant4's own table:
-``geant4_rayleigh``), WLSABSLENGTH with WLSCOMPONENT a re-emitting channel (one photon, isotropic, Geant4's sampler:
-``spectra.geant4_spectrum``). Refused: MIEHG, the second WLS, WLSMEANNUMBERPHOTONS on a bulk medium (lowered only on a
-film: ``wls_film``), a complex index, a user GROUPVEL (one that is not Geant4's own from RINDEX, which a GDML export
-writes: ``geant4_groupvel_export``), and a nonzero WLSTIMECONSTANT without a declared time profile.
+Media (G4OpAbsorption, G4OpRayleigh, G4OpMieHG, G4OpWLS): RINDEX gives the index (none: opaque, Geant4's NoRINDEX
+kill), ABSLENGTH the absorption, RAYLEIGH a Rayleigh channel (for a material named Water without one, Geant4's own
+table: ``geant4_rayleigh``), MIEHG with MIEHG_FORWARD, MIEHG_BACKWARD and MIEHG_FORWARD_RATIO a Mie channel (a double
+Henyey-Greenstein, ``phase.MIE_HG``: ``mie``), WLSABSLENGTH with WLSCOMPONENT a re-emitting channel (one photon,
+isotropic, Geant4's sampler: ``spectra.geant4_spectrum``); the channels in the order rayleigh, mie, wls. Refused: the
+second WLS, WLSMEANNUMBERPHOTONS on a bulk medium (lowered only on a film: ``wls_film``), a complex index, a user
+GROUPVEL (one that is not Geant4's own from RINDEX, which a GDML export writes: ``geant4_groupvel_export``), a nonzero
+WLSTIMECONSTANT without a declared time profile, and a Mie constant Geant4 would read but the material lacks.
 
 Surfaces (G4OpBoundaryProcess::PostStepDoIt, DielectricMetal, DoReflection; no table: R = 1, T = 0, efficiency 0):
 
@@ -92,7 +94,7 @@ CONST_KEYS = frozenset(
     (
         "SURFACEROUGHNESS WLSMEANNUMBERPHOTONS WLSTIMECONSTANT WLSMEANNUMBERPHOTONS2 WLSTIMECONSTANT2 "
         "SCINTILLATIONYIELD RESOLUTIONSCALE FERMIPOT DIFFUSION SPINFLIP LOSS LOSSCS ABSCS SCATCS COATEDTHICKNESS "
-        "COATEDFRUSTRATEDTRANSMISSION"
+        "COATEDFRUSTRATEDTRANSMISSION MIEHG_FORWARD MIEHG_BACKWARD MIEHG_FORWARD_RATIO"
     ).split()
     + [f"{p}SCINTILLATION{q}{i}" for p in ("", "PROTON", "DEUTERON", "TRITON", "ALPHA", "ION", "ELECTRON")
        for q in ("YIELD", "TIMECONSTANT") for i in (1, 2, 3)]
@@ -110,12 +112,13 @@ G4_10_KEYS = {
     "YIELDRATIO": "(fast fraction of the yield)",
 }
 
-REFUSED_MEDIUM = {"MIEHG": "Mie scattering", "WLSCOMPONENT2": "a second WLS (G4OpWLS2)",
+REFUSED_MEDIUM = {"WLSCOMPONENT2": "a second WLS (G4OpWLS2)",
                   "WLSABSLENGTH2": "a second WLS (G4OpWLS2)", "WLSMEANNUMBERPHOTONS": "a Poisson WLS count",
                   "WLSMEANNUMBERPHOTONS2": "a Poisson WLS count", "REALRINDEX": "a complex index",
                   "IMAGINARYRINDEX": "a complex index", "COATEDRINDEX": "a coated surface property"}  # fmt: skip
 REFUSED_SURFACE = ("REALRINDEX", "IMAGINARYRINDEX", "SURFACEROUGHNESS", "COATEDRINDEX", "COATEDTHICKNESS")
 SUPPORTED_FINISHES = ("polished", "ground", "polishedfrontpainted", "groundfrontpainted")
+MIE_KEYS = ("MIEHG_FORWARD", "MIEHG_BACKWARD", "MIEHG_FORWARD_RATIO")  # the lobe parameters of phase.MIE_PARAMS
 
 
 class OpticsRefused(DescriptionError):  # noqa: N818 (named like the importer's ImportRefused)
@@ -281,6 +284,57 @@ def _wls_channel(props: dict, name: str, what: str, wls_time_profile):
     return bulk.Channel("wls", phase.ISOTROPIC, law, reemit=spec), {"length": lp, "yield": 1.0, "tau": tau}
 
 
+def mie_constants(props: dict, what: str) -> tuple[dict, frozenset]:
+    """Return the Mie lobe's parameters read from the constants, and the constants Geant4 never reads.
+
+    G4OpMieHG reads MIEHG_FORWARD_RATIO at every Mie event, MIEHG_FORWARD only when the forward lobe is drawn
+    (``rand <= ratio``, never at ratio 0) and MIEHG_BACKWARD only otherwise (never at ratio 1); a constant it reads
+    and the material lacks makes it abort (mat202), so that is refused here. A constant it never reads and the
+    material lacks is 0 (any value gives the same light). |g| <= ``phase.MIE_G_MAX`` (float32 resolution) and
+    0 <= ratio <= 1. Without MIEHG the three constants are never read; an opaque material (no RINDEX) is not read.
+
+    The second set lists the constants that are not parameters: all three without MIEHG; with MIEHG, the ratio when
+    it is 0 or 1 and the material lacks the other lobe (moving it would need that lobe).
+    """
+    if "RINDEX" not in props:
+        return {}, frozenset()
+    present = [k for k in MIE_KEYS if k in props]
+    for k in present:
+        if is_table(props[k]):
+            raise OpticsRefused(f"{what}: {k} must be a constant (G4OpMieHG reads a constant property)")
+    if "MIEHG" not in props:
+        return {}, frozenset(present)
+    if "MIEHG_FORWARD_RATIO" not in props:
+        raise OpticsRefused(f"{what}: MIEHG without MIEHG_FORWARD_RATIO: G4OpMieHG aborts (mat202) at the first Mie "
+                            "event; add MIEHG_FORWARD_RATIO")  # fmt: skip
+    r = float(np.asarray(props["MIEHG_FORWARD_RATIO"].value).reshape(-1)[0])
+    if not 0.0 <= r <= 1.0:
+        raise OpticsRefused(f"{what}: MIEHG_FORWARD_RATIO {r} outside [0, 1]")
+    lobe, fixed = {"forward_ratio": r}, set()
+    for key, name, read, lobe_name in (("MIEHG_FORWARD", "g_forward", r > 0.0, "forward"),
+                                       ("MIEHG_BACKWARD", "g_backward", r < 1.0, "backward")):  # fmt: skip
+        if key not in props:
+            if read:
+                raise OpticsRefused(f"{what}: MIEHG_FORWARD_RATIO {r} without {key}: G4OpMieHG aborts (mat202) at the "
+                                    f"first {lobe_name} Mie event; add {key}")  # fmt: skip
+            lobe[name] = 0.0
+            fixed.add("MIEHG_FORWARD_RATIO")
+            continue
+        g = float(np.asarray(props[key].value).reshape(-1)[0])
+        if not abs(g) <= phase.MIE_G_MAX:
+            raise OpticsRefused(f"{what}: {key} {g} outside [-{phase.MIE_G_MAX}, {phase.MIE_G_MAX}] (a narrower lobe "
+                                "than float32 directions resolve)")  # fmt: skip
+        lobe[name] = g
+    return lobe, frozenset(fixed)
+
+
+def mie(props: dict, what: str):
+    """Return Geant4's Mie channel of a material with MIEHG, and its parameters (``mie_constants`` checks them)."""
+    lobe, _ = mie_constants(props, what)
+    law, lp = table(props["MIEHG"], "length")
+    return bulk.mie(law), {"length": lp, "lobe": {k: lobe[k] for k in phase.MIE_PARAMS}}
+
+
 def medium(material: schema.Material, name: str | None = None, index: str = "geant4", wls_time_profile=None):
     """Return the MediumEntry of a material, Geant4's reading (see the module docstring), named ``name``.
 
@@ -293,7 +347,7 @@ def medium(material: schema.Material, name: str | None = None, index: str = "gea
     _check_medium(props, what)
     if "RINDEX" not in props:
         return MediumEntry(bulk.Medium(name, None), {})
-    for k in ("RINDEX", "ABSLENGTH", "RAYLEIGH", "WLSABSLENGTH", "WLSCOMPONENT"):
+    for k in ("RINDEX", "ABSLENGTH", "RAYLEIGH", "MIEHG", "WLSABSLENGTH", "WLSCOMPONENT"):
         if k in props and not is_table(props[k]):
             raise OpticsRefused(f"{what}: {k} must be a table")
     p = {}
@@ -307,6 +361,9 @@ def medium(material: schema.Material, name: str | None = None, index: str = "gea
         law, lp = table(ray, "length")
         channels.append(bulk.Channel("rayleigh", phase.RAYLEIGH, law))
         p["rayleigh"] = {"length": lp}
+    if "MIEHG" in props:
+        ch, p["mie"] = mie(props, what)
+        channels.append(ch)
     if "WLSABSLENGTH" in props:
         ch, p["wls"] = _wls_channel(props, name, what, wls_time_profile)
         channels.append(ch)
