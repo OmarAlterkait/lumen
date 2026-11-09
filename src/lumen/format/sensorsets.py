@@ -94,16 +94,23 @@ def save(s: SensorSet, root) -> Path:
     return d / f"{s.name}.json"
 
 
+def from_json(head: dict, ids) -> SensorSet:
+    """Return the sensor set of its JSON (``to_json``'s first part, parsed) and its id map's paths."""
+    if head.get("schema") != SENSOR_SCHEMA:
+        raise ValueError(
+            f"sensor set {head.get('name')!r}: schema {head.get('schema')!r}, this lumen reads {SENSOR_SCHEMA}"
+        )
+    g = head["groups"]
+    groups = tuple(SensorGroup(n, g[n]["rule"], g[n]["model"], g[n]["lv"], g[n]["lv_pattern"], g[n]["settings"],
+                               g[n]["defaults"], g[n]["readout"]) for n in head["group_order"])  # fmt: skip
+    v = head["volumes"]
+    return SensorSet(head["name"], SensorVolumes(tuple(v["aux"]), v["names"]), groups, tuple(ids))
+
+
 def read(root, name: str = "default") -> SensorSet:
     """Read the sensor set ``name`` of a detector file."""
     d = Path(root) / "sensors"
     head = json.loads((d / f"{name}.json").read_text())
     if head.get("schema") != SENSOR_SCHEMA:
         raise ValueError(f"{d / name}.json: schema {head.get('schema')!r}, this lumen reads {SENSOR_SCHEMA}")
-    ids = json.loads((d / head["ids"]).read_text())["ids"]
-    groups = tuple(SensorGroup(n, head["groups"][n]["rule"], head["groups"][n]["model"], head["groups"][n]["lv"],
-                               head["groups"][n]["lv_pattern"], head["groups"][n]["settings"],
-                               head["groups"][n]["defaults"], head["groups"][n]["readout"])
-                   for n in head["group_order"])  # fmt: skip
-    v = head["volumes"]
-    return SensorSet(head["name"], SensorVolumes(tuple(v["aux"]), v["names"]), groups, tuple(ids))
+    return from_json(head, json.loads((d / head["ids"]).read_text())["ids"])

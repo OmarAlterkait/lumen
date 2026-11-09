@@ -166,6 +166,8 @@ def to_files(df: schema.DetectorFile) -> dict[str, bytes]:
             properties=_props(w, _array_dir("materials", name, used), m.properties),
             inert={k: w.array(f"{_array_dir('inert', name, used)}/{k}.npy", np.asarray(v)) for k, v in m.inert.items()},
         )
+        if m.mee_ev is not None:  # optional (schema 1 minor addition): absent when the GDML gives none
+            mats[name]["mee_eV"] = m.mee_ev
     elements = {
         n: dict(
             formula=e.formula,
@@ -347,6 +349,7 @@ def read(path) -> schema.DetectorFile:
             _props_back(root, m["properties"], man),
             _optics_back(m["optics"]),
             {k: _load_npy(root, r, man) for k, r in m.get("inert", {}).items()},
+            m.get("mee_eV"),
         )
     el = d["elements.json"]
     elements = {

@@ -19,6 +19,7 @@ Fails closed (``ImportRefused``) where Geant4's reading is ambiguous or lumen's 
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
@@ -218,7 +219,9 @@ def _properties(doc, props, what, rep, skip=(), inert: _Inert | None = None):
 def materials(doc: reader.GDMLDocument, rep: list, keys=None) -> tuple[dict, dict, dict]:
     """Return (materials, elements, isotopes); every material must name its composition.
 
-    ``keys``: the optical property keys to read (None: every key); a material's other properties are kept inert.
+    ``keys``: the optical property keys to read (None: every key), or a mapping from material name to such keys (a
+    material it does not name reads every key; the GDML export's reader uses it); a material's other properties are
+    kept inert.
     """
     isotopes = {n: schema.Isotope(n, i.z, i.n, i.molar_mass_g_mol) for n, i in doc.isotopes.items()}
     elements = {n: schema.Element(n, e.formula, e.z, e.molar_mass_g_mol,
@@ -235,12 +238,14 @@ def materials(doc: reader.GDMLDocument, rep: list, keys=None) -> tuple[dict, dic
             if c.ref not in doc.elements and c.ref not in doc.materials:
                 raise ImportRefused(f"material {name!r}: component {c.ref!r} is neither an element nor a material")
         comp = schema.Composition(m.density_g_cm3, comps, m.z, m.molar_mass_g_mol)
-        sink = None if keys is None else _Inert(frozenset(keys))
+        keep = keys.get(name) if isinstance(keys, Mapping) else keys
+        sink = None if keep is None else _Inert(frozenset(keep))
         props = _properties(doc, m.props, f"material {name!r}", rep, inert=sink)
         inert = {} if sink is None else sink.found
         if inert:
             rep.append(f"material {name!r}: {len(inert)} non-optical propert(ies) kept inert: {sorted(inert)}")
-        out[name] = schema.Material(name, m.state, comp, m.temperature, m.pressure, props, inert=inert)
+        out[name] = schema.Material(name, m.state, comp, m.temperature, m.pressure, props, inert=inert,
+                                    mee_ev=m.mee_ev)  # fmt: skip
     return out, elements, isotopes
 
 

@@ -168,7 +168,8 @@ class Material:
 
     ``inert`` keeps, verbatim (Geant4's internal units), the matrices of the properties the recipe declared
     non-optical (read by another process, such as an experiment's own scintillation): never read by lumen, written
-    back on export.
+    back on export. ``mee_ev`` is the GDML's <MEE> (the mean excitation energy Geant4's ionisation uses), carried for
+    export.
     """
 
     name: str
@@ -179,6 +180,7 @@ class Material:
     properties: dict[str, Property] = field(default_factory=dict)
     optics: OpticsModel = OpticsModel()
     inert: dict[str, np.ndarray] = field(default_factory=dict)  # matrices no optical process reads, as read
+    mee_ev: float | None = None  # the mean excitation energy (eV) the GDML gives, if any
 
 
 @dataclass(frozen=True)

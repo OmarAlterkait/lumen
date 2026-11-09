@@ -11,7 +11,11 @@ it places the point inside the detector.
 
     python -m lumen.validate.geometry DETECTOR_FILE --gdml FILE --g4ref BINARY --out DIR [--uniform N --surface N]
 
-Writes ``DIR/geometry.json`` (the counts and the most common mismatches) and ``DIR/mismatches.npz``.
+Writes ``DIR/geometry.json`` (the counts and the most common mismatches) and ``DIR/mismatches.npz``. To probe with a
+Geant4 that runs in another image (g4ref built for Geant4 11.2.2), split the run in three: ``--write-points FILE``
+writes the points (mm, one per line, as ``g4ref --probe`` reads them) and exits; g4ref ``--probe FILE --out PREFIX``
+runs in the other image; ``--probe-csv PREFIX_probe.csv`` (in place of ``--g4ref``) reads its answers. The points
+depend only on the detector file and the seed, so they are the same in every run.
 """
 
 from __future__ import annotations
@@ -22,6 +26,7 @@ import subprocess
 import sys
 import time
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -63,17 +68,38 @@ def surface_points(orc, blo, bhi, n, rng):
     return np.asarray(out[:n])
 
 
+@dataclass(frozen=True)
+class Precomputed:
+    """Geant4's probe answers computed elsewhere: the CSV of a ``g4ref --probe`` run on the points written here."""
+
+    csv: str
+
+
+def write_points(points, path) -> None:
+    """Write probe points (m) as ``g4ref --probe`` reads them: x y z in mm, one point per line."""
+    np.savetxt(path, points * MM_PER_M, fmt="%.9f")
+
+
 def geant4_probe(g4ref, gdml, points, prefix):
-    """Return Geant4's (material, placement, depth) per point (names stripped) and the seconds it took."""
+    """Return Geant4's (material, placement, depth) per point (names stripped) and the seconds it took.
+
+    ``g4ref`` is the g4ref binary, run here, or a ``Precomputed`` CSV of a run made elsewhere on the same points.
+    """
     from lumen.gdml.reader import g4_strip
 
-    np.savetxt(f"{prefix}_points.txt", points * MM_PER_M, fmt="%.9f")
     t0 = time.time()
-    r = subprocess.run([str(g4ref), "--gdml", str(gdml), "--probe", f"{prefix}_points.txt", "--out", prefix],
-                       capture_output=True, text=True)  # fmt: skip
-    if r.returncode != 0:
-        raise RuntimeError(f"g4ref failed ({r.returncode}):\n{r.stdout[-3000:]}\n{r.stderr[-3000:]}")
-    rows = [ln.split(",") for ln in Path(f"{prefix}_probe.csv").read_text().splitlines()[1:]]
+    csv = Path(f"{prefix}_probe.csv")
+    if isinstance(g4ref, Precomputed):
+        csv = Path(g4ref.csv)
+    else:
+        write_points(points, f"{prefix}_points.txt")
+        r = subprocess.run([str(g4ref), "--gdml", str(gdml), "--probe", f"{prefix}_points.txt", "--out", prefix],
+                           capture_output=True, text=True)  # fmt: skip
+        if r.returncode != 0:
+            raise RuntimeError(f"g4ref failed ({r.returncode}):\n{r.stdout[-3000:]}\n{r.stderr[-3000:]}")
+    rows = [ln.split(",") for ln in csv.read_text().splitlines()[1:]]
+    if len(rows) != len(points):
+        raise RuntimeError(f"{csv}: {len(rows)} answers for {len(points)} points (probed on other points?)")
     mat = np.array([g4_strip(x[1]) for x in rows], object)
     pv = np.array([g4_strip(x[2]) for x in rows], object)
     return mat, pv, np.array([int(x[4]) for x in rows]), time.time() - t0
@@ -91,9 +117,25 @@ def ours(orc, loaded, points, world_material):
     return mat, pv, inst
 
 
-def check(path, gdml, g4ref, out, n_uniform=20000, n_surface=20000) -> dict:
-    """Run the check on a detector file; return the result (also written to ``out/geometry.json``)."""
+def probe_points(df, n_uniform=20000, n_surface=20000):
+    """Return (the world lowered, its oracle, the detector LV, the points (m), their kind: 0 uniform, 1 surface)."""
     from lumen.build import lowering, solids
+    from lumen.validate import oracle
+
+    world = lowering.lower(df)
+    orc = oracle.Oracle(world.scene)
+    lv, blo, bhi = detector_box(df, lowering, solids)
+    rng = np.random.default_rng(SEED)
+    pts = np.concatenate([rng.uniform(blo, bhi, (n_uniform, 3)), surface_points(orc, blo, bhi, n_surface, rng)])
+    return world, orc, lv, pts, np.r_[np.zeros(n_uniform, int), np.ones(len(pts) - n_uniform, int)]
+
+
+def check(path, gdml, g4ref, out, n_uniform=20000, n_surface=20000) -> dict:
+    """Run the check on a detector file; return the result (also written to ``out/geometry.json``).
+
+    ``g4ref``: the g4ref binary, or a ``Precomputed`` probe CSV (see the module docstring).
+    """
+    from lumen.build import lowering
     from lumen.format import io, sensorsets
     from lumen.gdml import reader
     from lumen.validate import oracle
@@ -102,12 +144,7 @@ def check(path, gdml, g4ref, out, n_uniform=20000, n_surface=20000) -> dict:
     out.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     df = io.read(path)
-    world = lowering.lower(df)
-    orc = oracle.Oracle(world.scene)
-    lv, blo, bhi = detector_box(df, lowering, solids)
-    rng = np.random.default_rng(SEED)
-    pts = np.concatenate([rng.uniform(blo, bhi, (n_uniform, 3)), surface_points(orc, blo, bhi, n_surface, rng)])
-    kind = np.r_[np.zeros(n_uniform, int), np.ones(len(pts) - n_uniform, int)]
+    world, orc, lv, pts, kind = probe_points(df, n_uniform, n_surface)
     t1 = time.time()
     world_mat = df.volumes[df.world].material
     o_mat, o_pv, inst = ours(orc, world, pts, world_mat)
@@ -160,12 +197,22 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("detector_file")
     ap.add_argument("--gdml", required=True, help="the GDML the detector file was converted from")
-    ap.add_argument("--g4ref", required=True, help="the g4ref binary (Geant4 10.7.4)")
-    ap.add_argument("--out", required=True)
+    ap.add_argument("--g4ref", help="the g4ref binary (Geant4 10.7.4)")
+    ap.add_argument("--write-points", help="write the probe points to this file (mm, for g4ref --probe) and exit")
+    ap.add_argument("--probe-csv", help="Geant4's answers: the CSV of g4ref --probe run elsewhere on those points")
+    ap.add_argument("--out", help="the result directory (required unless --write-points)")
     ap.add_argument("--uniform", type=int, default=20000)
     ap.add_argument("--surface", type=int, default=20000)
     a = ap.parse_args(argv)
-    res = check(a.detector_file, a.gdml, a.g4ref, a.out, a.uniform, a.surface)
+    if a.write_points:
+        from lumen.format import io
+
+        write_points(probe_points(io.read(a.detector_file), a.uniform, a.surface)[3], a.write_points)
+        return 0
+    if (a.g4ref is None) == (a.probe_csv is None) or a.out is None:
+        ap.error("give --out and one of --g4ref and --probe-csv")
+    res = check(a.detector_file, a.gdml, Precomputed(a.probe_csv) if a.probe_csv else a.g4ref, a.out, a.uniform,
+                a.surface)  # fmt: skip
     sys.stdout.write(json.dumps(res, indent=1, default=str) + "\n")
     return 1 if res["mismatch_outside_meshes"] else 0
 

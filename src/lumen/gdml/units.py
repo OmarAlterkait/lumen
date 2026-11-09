@@ -4,6 +4,9 @@
 ``LENGTH_M`` and ``ENERGY_EV`` give the units that are exact decimal multiples of a metre and an electronvolt: a
 plain literal in one of them converts by exact decimal arithmetic (``to_metres("12.5", "mm")`` is exactly 0.0125,
 rounded once), and anything else is evaluated as Geant4 does and converted by one multiplication.
+
+``shift`` is the exporter's side of the same rule: the shortest repr of a double with its decimal point moved, exactly
+(``shift("0.0125", 3)`` is "12.5"), so that the importer's exact scaling reads the same double back.
 """
 
 from __future__ import annotations
@@ -78,3 +81,36 @@ def is_literal(text: str | None) -> bool:
 def exact(text: str, factor: str) -> float:
     """Return float(Decimal(text) * Decimal(factor)): one rounding."""
     return float(Decimal(text.strip()) * Decimal(factor))
+
+
+PLAIN_LEADS = (-5, 16)  # a literal whose leading digit's exponent is in [-5, 16) is written without an exponent
+
+
+def plain(d: Decimal) -> str:
+    """Return a finite decimal as the shortest plain literal of its digits ("12.5", "0.002", "2e-21", "-0").
+
+    The value is kept exactly: trailing zeros are dropped, and an exponent is written only for a leading digit outside
+    ``PLAIN_LEADS`` (as Python's repr does), with no "+" sign. Every literal is one ``LITERAL`` matches.
+    """
+    sign, digits, exponent = d.as_tuple()
+    if not isinstance(exponent, int):
+        raise ValueError(f"not a finite decimal: {d}")
+    s = "-" if sign else ""
+    full = "".join(map(str, digits))  # no leading zeros unless the value is zero
+    ds = full.rstrip("0")
+    if not ds:
+        return s + "0"
+    exponent += len(full) - len(ds)
+    lead = len(ds) + exponent - 1  # the exponent of the leading digit
+    if not PLAIN_LEADS[0] <= lead < PLAIN_LEADS[1]:
+        return s + ds[0] + ("." + ds[1:] if len(ds) > 1 else "") + f"e{lead}"
+    if exponent >= 0:
+        return s + ds + "0" * exponent
+    if lead >= 0:
+        return s + ds[: lead + 1] + "." + ds[lead + 1 :]
+    return s + "0." + "0" * (-lead - 1) + ds
+
+
+def shift(text: str, places: int) -> str:
+    """Return the decimal literal ``text`` times ``10**places``, exactly, as a plain literal (``plain``)."""
+    return plain(Decimal(text).scaleb(places))

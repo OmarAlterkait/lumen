@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from lumen.gdml.units import LENGTH_M, MM_PER_M, UNITS, exact, is_literal
+from lumen.gdml.units import ENERGY_EV, LENGTH_M, MM_PER_M, UNITS, exact, is_literal
 
 
 class GDMLError(ValueError):
@@ -62,6 +62,7 @@ UNITLESS_ATTRS = {"numsides", "lowx", "lowy", "lowz", "highx", "highy", "highz",
 SKIP_ATTRS = {"name", "lunit", "aunit", "unit", "ref", "type"}
 BOOLEAN = ("union", "subtraction", "intersection")
 UNSUPPORTED = ("replicavol", "divisionvol", "paramvol", "loop")
+PASCAL_PA = {"pascal": "1", "Pa": "1"}  # the pressure units that are exact multiples of a pascal
 
 
 def _denormal(v: float) -> bool:
@@ -332,6 +333,7 @@ class Material:
     density_g_cm3: float | None = None
     temperature: float | None = None  # K
     pressure: float | None = None  # Pa
+    mee_ev: float | None = None  # the mean excitation energy, eV
     z: float | None = None
     molar_mass_g_mol: float | None = None
     fractions: list = field(default_factory=list)  # (ref, mass fraction)
@@ -584,11 +586,14 @@ class GDMLDocument:
                 self.materials[nm] = self._material(el)
 
     def _atom(self, atom):
-        """Return the molar mass of an <atom> in g/mol."""
+        """Return the molar mass of an <atom> in g/mol: a literal in g/mole exactly, else Geant4's value / (g/mole)."""
         if atom is None:
             return None
+        unit = atom.get("unit", "g/mole").replace(" ", "")
+        if unit in ("g/mole", "g/mol") and is_literal(atom.get("value")):
+            return float(atom.get("value"))
         g_mol = UNITS["g"] / UNITS["mole"]
-        return self.num(atom.get("value"), "atom") * self.num(atom.get("unit", "g/mole"), "atom unit") / g_mol
+        return self.num(atom.get("value"), "atom") * self.num(unit, "atom unit") / g_mol
 
     def _material(self, el):
         nm = el.get("name")
@@ -603,8 +608,9 @@ class GDMLDocument:
             elif ct == "T":
                 m.temperature = self.num(c.get("value"), what) * self.num(c.get("unit", "K"), what)
             elif ct == "P":
-                m.pressure = self.num(c.get("value"), what) * self.num(c.get("unit", "pascal"), what) / \
-                    UNITS["pascal"]  # fmt: skip
+                m.pressure = self._quantity(c, "pascal", PASCAL_PA, what)
+            elif ct == "MEE":
+                m.mee_ev = self._quantity(c, "eV", ENERGY_EV, what)
             elif ct == "atom":
                 m.molar_mass_g_mol = self._atom(c)
             elif ct == "fraction":
@@ -614,6 +620,18 @@ class GDMLDocument:
         if el.get("Z") is not None:
             m.z = self.num(el.get("Z"), what)
         return m
+
+    def _quantity(self, c, to, factors, what):
+        """Return a <P> or <MEE> value in the unit ``to`` (its default unit in Geant4).
+
+        ``factors`` gives the units that are exact decimal multiples of ``to``: a plain literal in one of them is
+        scaled exactly (one rounding); anything else is Geant4's value (G4GDMLReadMaterials::PRead, MEERead: the value
+        times its unit) divided by ``to`` once.
+        """
+        unit, text = c.get("unit", to).strip(), c.get("value")
+        if unit in factors and is_literal(text):
+            return exact(text, factors[unit])
+        return self.num(text, what) * self.num(unit, what) / UNITS[to]
 
     def _density(self, c, what):
         if tag(c) == "Dref":
