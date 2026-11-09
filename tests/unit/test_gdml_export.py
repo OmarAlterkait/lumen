@@ -10,7 +10,7 @@ from export_toys import TOYS
 from test_importer import GDML
 
 from lumen.format import calibrations, io, schema, sensorsets
-from lumen.format import overlay as fo
+from lumen.format.apply import apply
 from lumen.gdml import exporter, importer, reader, units
 from lumen.gdml import solids_schema as ss
 from lumen.recipe import Recipe
@@ -134,7 +134,9 @@ def test_unbound_borders_and_surface_inert_keys_round_trip(tmp_path):
 
 def _toy_recipe():
     def decide(df, inputs):
-        o = schema.OpticsModel("lumen:opaque", 1, {"medium": "steel", "axes": [[1.0, 0.0, 0.0]]}, "recipe", "toy")
+        o = schema.OpticsModel(
+            "lumen:opaque", 1, {"medium": "steel", "expected_axes": [[1.0, 0.0, 0.0]]}, "recipe", "toy"
+        )
         steel = dataclasses.replace(
             df.materials["Steel"],
             optics=o,
@@ -146,7 +148,13 @@ def _toy_recipe():
             },
         )
         film = schema.Surface(
-            "film", "", "", "", 0.0, {}, schema.OpticsModel("lumen:wls_film", 1, {"d": 2e-8}, "recipe", "lowered")
+            "film",
+            "",
+            "",
+            "",
+            0.0,
+            {},
+            schema.OpticsModel("lumen:wls_film", 1, {"thickness_m": 2e-8}, "recipe", "lowered"),
         )
         brdf = schema.Surface(
             "brdf",
@@ -173,7 +181,7 @@ def _toy_recipe():
 
     group = sensorsets.SensorGroup("pmt", "border_into", "lumen:geant4", lv="PmtLV",
                                    settings={"efficiency_on_entry": 1.0}, readout={"gate": [-1.0, 2.0]})  # fmt: skip
-    return Recipe("toy", "TankLV", (300.0, 600.0), sensorsets.SensorVolumes(names="^PmtLV"), (group,), (decide,),
+    return Recipe("toy", "TankLV", (300.0, 600.0), (group,), (decide,),
                   sensor_columns=lambda df, loaded, tree, inputs: {"channel": [3, 4]})  # fmt: skip
 
 
@@ -184,7 +192,7 @@ def test_the_recipe_layer_and_the_sensor_set_round_trip_through_the_sidecar(tmp_
     rep, back, (first, second) = round_trip(tmp_path, result, on_lossy="omit")
     df = result.detector_file
     assert contents(back.detector_file) == contents(df) and first == second
-    assert not rep.lossless and rep.g4ref_args == ("--sens-regex", "^PmtLV", "--wcsim-hits", "--refuse-lossy")
+    assert not rep.lossless and rep.g4ref_args == ("--sens-regex", "^PmtLV$", "--wcsim-hits", "--refuse-lossy")
     assert any("brdf" in x for x in rep.omitted) and any("Geant4 reads them" in w for w in rep.warnings)
     s0, s1 = result.sensor_sets["default"], back.sensor_sets["default"]
     assert sensorsets.to_json(s0) == sensorsets.to_json(s1) and back.sensor_columns == {"channel": [3, 4]}
@@ -195,17 +203,20 @@ def test_the_recipe_layer_and_the_sensor_set_round_trip_through_the_sidecar(tmp_
 def test_a_calibration_is_applied_before_writing(tmp_path):
     df = importer.read_gdml(write(tmp_path, GDML))
     c = calibrations.Calibration("c1", "toy", "sha256:x", {
-        "materials/Water/RINDEX": calibrations.Table(np.array([1.5, 2.5, 3.5, 4.5]), np.array([1.3, 1.31, 1.32, 1.4])),
+        "materials/Water/RINDEX": calibrations.Table(np.array([1.5, 2.5, 4.5]), np.array([1.3, 1.31, 1.4])),
         "surfaces/Liner/value": 0.25, "surfaces/Liner/REFLECTIVITY": calibrations.Table(np.array([2.0, 4.5]),
                                                                                          np.array([0.5, 0.4])),
         "sensors/pmt/efficiency": np.array([0.9, 0.8])})  # fmt: skip
     rep = exporter.export(df, tmp_path / "c.gdml", calibration=c, scope="full")
     back = exporter.read_export(tmp_path / "c.gdml")
-    assert contents(back.detector_file)[0] == contents(fo.apply(df, [c]))[0] and rep.calibration == ("c1",)
+    assert contents(back.detector_file)[0] == contents(apply(df, c.values))[0] and rep.calibration == ("c1",)
     side = (tmp_path / "c.gdml.lumen.json").read_text()
     assert '"sensors/pmt/efficiency"' in side
-    with pytest.raises(ValueError, match="a table given for a constant|needs a Table"):
-        fo.apply(df, [dataclasses.replace(c, values={"materials/Water/RINDEX": 1.3})])
+    with pytest.raises(ValueError, match="needs a Table"):
+        apply(df, {"materials/Water/RINDEX": 1.3})
+    with pytest.raises(ValueError, match="a new knot count is a new detector file"):  # the one rule, also on export
+        exporter.export(df, tmp_path / "k.gdml", scope="full", calibration=dataclasses.replace(c, values={
+            "materials/Water/RINDEX": calibrations.Table(np.array([1.5, 4.5]), np.array([1.3, 1.4]))}))  # fmt: skip
 
 
 def test_names_geant4_strips_at_0x_and_refuses_collisions(tmp_path):
@@ -226,7 +237,6 @@ def test_names_geant4_renames_the_sensor_paths(tmp_path):
             _toy_recipe(),
             decisions=(),
             groups=(sensorsets.SensorGroup("pmt", "any_entry", "lumen:counting", lv="Pmt0xLV"),),
-            sensor_volumes=sensorsets.SensorVolumes(names="^Pmt"),
             sensor_columns=lambda *a: {"lv": ["Pmt0xLV"] * 2},
         ),
     )
@@ -328,7 +338,7 @@ def test_source_tokens_are_written_while_the_value_is_unchanged(tmp_path):
     exporter.export(df, tmp_path / "c.gdml", scope="full", calibration=c)
     ctext = (tmp_path / "c.gdml").read_text()
     assert 'values="2e-6 1.3 3.4e-6 1.31 4.5e-6 1.32"' in ctext  # a calibrated table is written canonically
-    assert contents(exporter.read_export(tmp_path / "c.gdml").detector_file) == contents(fo.apply(df, [c]))
+    assert contents(exporter.read_export(tmp_path / "c.gdml").detector_file) == contents(apply(df, c.values))
 
 
 def test_a_changed_value_is_written_canonically_and_tokens_round_trip_deterministically(tmp_path):

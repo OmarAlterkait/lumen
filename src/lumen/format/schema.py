@@ -94,8 +94,9 @@ class Placement:
 class Property:
     """A material or surface property as Geant4 reads it: a table linear in photon energy, or a constant.
 
-    ``energy`` (eV, ascending) is None for a constant. Lengths are in m and times in ns. ``matrix`` names the GDML
-    matrix it was read from; ``origin`` is "gdml" or "recipe" (a table the GDML lacks, with its source in ``note``).
+    ``energy`` (eV, ascending) is None for a constant, whose ``value`` is a scalar (a 0-d array). Lengths are in m
+    and times in ns. ``matrix`` names the GDML matrix it was read from; ``origin`` is "gdml" or "recipe" (a table the
+    GDML lacks, with its source in ``note``).
     """
 
     key: str
@@ -125,13 +126,47 @@ class Composition:
     molar_mass_g_mol: float | None = None
 
 
+def _number(v) -> bool:
+    return isinstance(v, (int, float, np.integer, np.floating)) and not isinstance(v, (bool, np.bool_))
+
+
+def _vector(v) -> bool:
+    return isinstance(v, (list, tuple, np.ndarray)) and len(v) == 3 and all(_number(x) for x in v)
+
+
+KINDS = {
+    "a name": lambda v: isinstance(v, str),
+    "a number": _number,
+    "a positive integer": lambda v: _number(v) and int(v) == v and v > 0,
+    "true or false": lambda v: isinstance(v, bool),
+    "a 3-vector": _vector,
+    "a list of 3-vectors": lambda v: isinstance(v, (list, tuple)) and all(_vector(x) for x in v),
+}
+# the settings an optics model records (lumen.build.legacy_library reads them) and the build options, by kind
+OPTICS_SETTINGS = {
+    "medium": "a name", "material": "a name", "film_material": "a name", "front_material": "a name",
+    "backing": "a name", "thickness_m": "a number", "local_axis": "a 3-vector", "expected_axes": "a list of 3-vectors",
+    "scatter": "true or false", "absorb": "true or false",
+}  # fmt: skip
+BUILD_OPTIONS = {"split_unions": "a positive integer"}
+
+
+def check_settings(what: str, settings: dict, known: dict) -> None:
+    """Refuse a setting that is not one of ``known`` (key -> kind) or not of its kind."""
+    for k, v in settings.items():
+        if k not in known:
+            raise ValueError(f"{what}: unknown setting {k!r} (known: {sorted(known)})")
+        if not KINDS[known[k]](v):
+            raise ValueError(f"{what}: setting {k!r} must be {known[k]}, got {v!r}")
+
+
 @dataclass(frozen=True)
 class OpticsModel:
     """The optics model that reads a material's or surface's properties, and its own settings.
 
-    ``name`` is a registered optics model ("geant4": Geant4's reading of the properties); ``settings`` its
-    model-specific choices (for a material, ``medium``: the medium it is bound to, when several share one). An
-    ``origin`` of "recipe" marks a choice the recipe made, with its reason in ``note``.
+    ``name`` is a registered optics model ("geant4": Geant4's reading of the properties); ``settings`` its choices,
+    each one of ``OPTICS_SETTINGS`` and of its kind (for a material, ``medium``: the medium it is bound to, when several
+    share one). An ``origin`` of "recipe" marks a choice the recipe made, with its reason in ``note``.
     """
 
     name: str = "geant4"
@@ -139,6 +174,10 @@ class OpticsModel:
     settings: dict = field(default_factory=dict)
     origin: str = "gdml"
     note: str = ""
+
+    def __post_init__(self):
+        """Check the settings."""
+        check_settings(f"optics model {self.name!r}", self.settings, OPTICS_SETTINGS)
 
 
 @dataclass(frozen=True)
@@ -235,7 +274,8 @@ class DetectorFile:
     ``detector_volume`` is the logical volume that is simulated (light leaving it is absorbed: ``outside``), and
     ``outside_surface`` the surface a photon meets on leaving it, when the recipe names one; ``wavelength_range``
     (nm) is where every optical table must be defined. ``build_options`` holds the recipe's choices for building the
-    geometry (``split_unions``: unions of more pieces than this are placed as their pieces). ``meshes`` holds the
+    geometry, of ``BUILD_OPTIONS`` (``split_unions``: unions of more pieces than this are placed as their pieces).
+    ``meshes`` holds the
     tessellated solids' triangle arrays by name. ``provenance`` records the source file, its sha256, the importer
     and recipe, and ``report`` every normalisation and decision, in words. ``tokens`` keeps, sparsely, the source
     text of the lengths and energies whose Geant4 reading the canonical writer would not reproduce
@@ -264,3 +304,7 @@ class DetectorFile:
     report: tuple[str, ...] = ()
     schema: str = SCHEMA
     tokens: dict = field(default_factory=dict)  # source tokens of lengths and energies (lumen.gdml.tokens), sparse
+
+    def __post_init__(self):
+        """Check the build options."""
+        check_settings(f"detector {self.name!r} build_options", self.build_options, BUILD_OPTIONS)

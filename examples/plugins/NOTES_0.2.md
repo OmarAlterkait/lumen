@@ -38,10 +38,10 @@ operand step.
 | Place | What it does | What 0.2 needs |
 |---|---|---|
 | `build/legacy_library.surface_entry`, `_material_medium` | refuse any optics model other than the built-in names | fall back to `plugins.optics_models`, failing closed with the distribution's name and minimum version |
-| `build/legacy_library._border_groups` | refuses a `border_into` model other than `lumen:geant4` | pass the group's model through to `rules.optics.sensor` (the sensor-model registry is already there) |
+| `build/legacy_library._border_groups` | refuses a `border_into` model other than `lumen:geant4` | pass the group's model through to `rules.optics.sensor` (its table of detecting-surface readers, `SENSOR_SURFACES`, is already there) |
 | `build/_legacy_regions` | requires `isinstance(kind, legacy.SurfaceType)` | a compiled surface model with an adapter to a `SurfaceType` (all its fields fit), until the step reads models directly |
 | `build/spec.PROPERTIES` | gives a key it does not know an unknown, unbounded range | take the unit, range and method from the model's declared parameters |
-| `build/pack.with_values` | needed a key for every property | has a fallback now (the Mie change) for properties the model fixes |
+| `format/apply.apply` | applies only the keys it is given | properties the model fixes keep their file values (the Mie change) |
 | `plugins.Registry.get` | names the registered entries | name the package to install and its minimum version; refuse a newer `model_version` |
 
 ## Lobe protocol

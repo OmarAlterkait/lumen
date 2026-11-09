@@ -28,7 +28,8 @@ model lookup is gone (lumen reads only its own Scene), as are sensor_tags and pa
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from functools import cached_property
 
 import numpy as np
 
@@ -62,42 +63,68 @@ class PV:
 class Tree:
     """World instances of physical volumes: one root, every PV of one LV of that LV's material.
 
-    Derived on construction: ``by_name``, ``children`` (by name), ``root``, ``order`` (canonical depth-first,
-    children by name) and ``lv_material``.
+    ``aliases`` maps dissolved placements to the placement now holding their region (GDML surface names that name
+    them name it), ``groups`` a dissolved envelope's daughters to the envelope instance (Geant4 adjacency, border
+    surfaces, holds within one), ``film_axes`` each split WLS-film LV to its face normal (None: no film split).
+    Derived and checked on construction: ``by_name``, ``children`` (by name), ``root``, ``order`` (canonical
+    depth-first, children by name) and ``lv_material``.
     """
 
     pvs: tuple[PV, ...]
+    aliases: dict = field(default_factory=dict)
+    groups: dict = field(default_factory=dict)
+    film_axes: dict | None = None
 
     def __post_init__(self):
-        """Check the tree and derive its indexes."""
-        pvs = tuple(self.pvs)
-        by = _by_name(pvs)
-        roots = sorted(p.name for p in pvs if p.mother is None)
+        """Check the tree (its indexes are derived here)."""
+        _ = self.by_name, self.lv_material  # derives and checks every index, PVs first
+
+    @cached_property
+    def by_name(self) -> dict:
+        """Return the PVs by name."""
+        return _by_name(self.pvs)
+
+    @cached_property
+    def root(self) -> str:
+        """Return the world PV's name."""
+        roots = sorted(p.name for p in self.pvs if p.mother is None)
         if len(roots) != 1:
             raise TreeError(f"tree: exactly one world PV (mother None) required, got {roots}")
-        children = {n: [] for n in by}
-        for p in pvs:
+        return roots[0]
+
+    @cached_property
+    def children(self) -> dict:
+        """Return each PV's daughter PV names, sorted."""
+        by, children = self.by_name, {n: [] for n in self.by_name}
+        for p in self.pvs:
             if p.mother is not None:
                 if p.mother not in by:
                     raise TreeError(f"tree: PV {p.name!r} has unknown mother {p.mother!r}")
                 children[p.mother].append(p.name)
-        children = {n: tuple(sorted(c)) for n, c in children.items()}
-        order, stack = [], [roots[0]]
-        while stack:  # canonical depth-first order, children by name
+        return {n: tuple(sorted(c)) for n, c in children.items()}
+
+    @cached_property
+    def order(self) -> tuple:
+        """Return the PV names in the canonical depth-first order, children by name."""
+        order, stack, children = [], [self.root], self.children
+        while stack:
             n = stack.pop()
             order.append(n)
             stack.extend(reversed(children[n]))
-        if len(order) != len(by):
-            lost = sorted(set(by) - set(order))
+        if len(order) != len(self.by_name):
+            lost = sorted(set(self.by_name) - set(order))
             raise TreeError(f"tree: PVs not reachable from the world (mother cycle): {lost[:8]}")
+        return tuple(order)
+
+    @cached_property
+    def lv_material(self) -> dict:
+        """Return each LV's material (one per LV)."""
         mat = {}
-        for n in order:
-            p = by[n]
+        for n in self.order:
+            p = self.by_name[n]
             if mat.setdefault(p.lv, p.material) != p.material:
                 raise TreeError(f"tree: LV {p.lv!r} placed with materials {mat[p.lv]!r} and {p.material!r}")
-        for k, v in dict(pvs=pvs, by_name=by, children=children, root=roots[0], order=tuple(order),
-                         lv_material=mat).items():  # fmt: skip
-            object.__setattr__(self, k, v)
+        return mat
 
     def placements(self, lv):
         """Return the PV names of an LV, in the canonical order."""
@@ -249,10 +276,7 @@ def tree_from_geometry(loaded, media=None):
         if mid not in names:
             raise TreeError(f"{x.pv}: medium id {mid} has no material name in media")
         pvs.append(PV(x.pv, x.lv, names[mid], x.mother, x.sensor))
-    t = Tree(tuple(pvs))
-    object.__setattr__(t, "aliases", dict(getattr(scene, "aliases", {}) or {}))
-    object.__setattr__(t, "groups", {x.pv: x.group for x in insts if x.group})
-    return t
+    return Tree(tuple(pvs), dict(getattr(scene, "aliases", {}) or {}), {x.pv: x.group for x in insts if x.group})
 
 
 # ------------------------------------------------------------------------------------------------------- relabel
@@ -324,4 +348,4 @@ def relabel(scene, class_of):
     notes = list(scene.approximations) + [f"relabel: member labels are optical class ids ({n_clones} definition "
                                           "clones for instances of different classes)"]  # fmt: skip
     return sc.Scene(defs, name_of[node_key[id(root)]], sc.Label(int(class_of[OUTSIDE_PV]), out.sensor, out.volume),
-                    notes, overlays=list(scene.overlays))  # fmt: skip
+                    notes, hole_fillers=list(scene.hole_fillers))  # fmt: skip

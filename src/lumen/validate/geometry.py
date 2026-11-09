@@ -164,7 +164,7 @@ def check(path, gdml, g4ref, out, n_uniform=20000, n_surface=20000) -> dict:
     t2 = time.time()
     sset = sensorsets.read(path)
     used = lowering.lower(df, detector=df.detector_volume, dissolve=True,
-                          sensors=lowering.Sensors(aux=sset.volumes.aux, names=sset.volumes.names))  # fmt: skip
+                          sensors=sset.is_sensor)  # fmt: skip
     u_mat, _, u_inst = ours(oracle.Oracle(used.scene), used, pts, "")
     used_in = u_inst >= 0
     bad_u = used_in & (u_mat != g_mat)

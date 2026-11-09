@@ -2,7 +2,7 @@
 
     entry = medium(df.materials["LAr"])                 # a MediumEntry (opaque without RINDEX)
     entry = surface(df.surfaces["Surface_Steel_1"])     # a SurfaceEntry, Geant4 11 semantics, fail closed
-    entry = sensor(df.surfaces["GlassCathode"], lam)    # a SensorEntry through a sensor model (lumen.sensors.models)
+    entry = sensor(df.surfaces["GlassCathode"], lam)    # a SensorEntry: how a detecting surface reads (SENSOR_SURFACES)
 
 The records are ``lumen.format.schema`` Material and Surface records: energies in eV, lengths in m (tables and
 constants), every other value as Geant4 holds it (times in ns, yields per MeV). Geant4 semantics are those of
@@ -38,6 +38,27 @@ a complex index, SURFACEROUGHNESS, a coated surface's keys, a nonzero EFFICIENCY
 surface is a sensor: ``sensor``), TRANSMITTANCE on a metal, a unified sigma_alpha outside [SIGMA_MIN, SIGMA_MAX] and
 a GLISUR polish below 0 or with 1 - polish below GLISUR_R_MIN.
 
+Detecting surfaces (``sensor``): how a sensor's optical surface behaves during tracking, read by one of
+``SENSOR_SURFACES`` (``reader(surface, lam_domain) -> SensorEntry``), named by the sensor group's model (or a callable
+of that form). Not the sensor model (``lumen.plugins.sensor_models``): that is what happens after tracking.
+
+    lumen:geant4 (the default)
+        the surface as stock Geant4 (G4OpBoundaryProcess, 10.7 / 11) reads it. dielectric_metal: REFLECTIVITY R
+        (absent: the complex index REALRINDEX + i IMAGINARYRINDEX, CalculateReflectivity, a PHOTOCATHODE; neither:
+        R = 1), the absorbed 1 - R detected with EFFICIENCY (default 0); the reflection by model and finish: polished
+        (glisur or unified) a mirror (SENSOR, f_spec 1), glisur ground the facet chain (GLISUR_METAL_EFF), unified
+        ground spike / lobe / back / Lambert (DIELECTRIC_METAL). dielectric_dielectric, polished, with R / T tables:
+        DIELECTRIC_RT_SENSOR, eff = EFFICIENCY. Keys no stock process reads on a surface (RINDEX, KINDEX, THICKNESS on
+        a dielectric_metal) are ignored, as Geant4 ignores them.
+    lumen:complex_index
+        a thin-film photocathode's tables some experiment software writes on the surface (RINDEX, KINDEX), read as a
+        semi-infinite absorber of index RINDEX + i KINDEX (PHOTOCATHODE, specular, detected with EFFICIENCY): not the
+        film's interference, an approximation of it.
+
+The complex index of either is taken at the range's centre and must be flat over it (refused otherwise: narrow the
+range or supply a spectral reader). A sensitive detector that counts every absorption (WCSim's) replaces the
+efficiency: ``sensor(..., eff=1)``.
+
 Spectral surface parameters (REFLECTIVITY(E), ...) are (law, law parameters) pairs; the region compiler
 (``lumen.build._legacy_regions.compile``) packs them.
 """
@@ -70,6 +91,8 @@ HC_EV_MM = 1.239841984e-3  # eV mm: h c
 M_PER_MM = 1e-3
 FILM_GRID = 1025  # energies at which a film's absorption of its own emission is checked
 FILM_SELF_ABSORPTION = 1e-6  # the largest thickness / WLSABSLENGTH a film may have over its own emission band
+FLAT = 1e-3  # the relative variation over the range a sensor's complex-index table may have (taken at the centre)
+TINY = 1e-12  # the floor of the scale of that variation
 
 # G4OpticalSurfaceModel, G4OpticalSurfaceFinish and G4SurfaceType (Geant4 10.7 / 11): a GDML export writes the enum
 # values, G4GDMLReadSolids::OpticalSurfaceRead takes names or values (the LUT finishes past groundbackpainted are
@@ -429,17 +452,113 @@ def surface(s: schema.Surface) -> SurfaceEntry:
     raise OpticsRefused(f"{what}: surface type {type_} is not supported")
 
 
+# ----------------------------------------------------------------------------------------------- detecting surfaces
+def at_centre(surface: schema.Surface, key: str, lam_domain) -> float:
+    """Return a property at the range's centre (Geant4: linear in energy, clamped), refusing one not flat over it."""
+    pr = surface.properties[key]
+    if not is_table(pr):
+        return float(pr.value)
+    e = HC / np.asarray(lam_domain, np.float64)
+    v = np.interp(np.r_[e, 0.5 * (e[0] + e[1])], pr.energy, pr.value)
+    c = float(np.interp(HC / (0.5 * (lam_domain[0] + lam_domain[1])), pr.energy, pr.value))
+    if np.ptp(np.r_[v, c]) > FLAT * max(abs(c), TINY):
+        raise OpticsRefused(f"opticalsurface {surface.name!r}: {key} varies by {np.ptp(np.r_[v, c]):.3g} over "
+                            f"{tuple(lam_domain)} nm: a complex index is taken at one wavelength (narrow the range or "
+                            "supply a spectral reader)")  # fmt: skip
+    return c
+
+
+def flat_fraction(surface: schema.Surface, key: str, default: float):
+    """Return a fraction property: a constant, a flat table as its constant, else the spectral (law, parameters)."""
+    pr = surface.properties.get(key)
+    if pr is not None and is_table(pr) and np.ptp(np.asarray(pr.value)) == 0.0:
+        return float(np.asarray(pr.value)[0])
+    return fraction(surface.properties, key, default)
+
+
+def _mirror(refl, eff):
+    return SensorEntry(legacy.SENSOR, {"R": refl, "f_spec": 1.0, "f_glossy": 0.0, "sigma_alpha": 0.0, "qe": eff})
+
+
+def _ground_metal_sensor(s: schema.Surface, model: str, what: str, refl, eff):
+    if model == "glisur":
+        if s.value >= 1.0:
+            return _mirror(refl, eff)
+        if s.value < 0.0 or 1.0 - s.value < GLISUR_R_MIN:
+            raise OpticsRefused(f"{what}: polish {s.value} outside [0, {1 - GLISUR_R_MIN}] (or exactly 1)")
+        return SensorEntry(legacy.GLISUR_METAL_EFF, {"R": refl, "polish": float(s.value), "eff": eff})
+    if not SIGMA_MIN <= s.value <= SIGMA_MAX:
+        raise OpticsRefused(f"{what}: sigma_alpha {s.value} outside [{SIGMA_MIN}, {SIGMA_MAX}]")
+    return SensorEntry(legacy.DIELECTRIC_METAL, {"R": refl, "p_spike": flat_fraction(s, "SPECULARSPIKECONSTANT", 0.0),
+                                                 "p_lobe": flat_fraction(s, "SPECULARLOBECONSTANT", 0.0),
+                                                 "p_back": flat_fraction(s, "BACKSCATTERCONSTANT", 0.0),
+                                                 "sigma_alpha": float(s.value), "eff": eff})  # fmt: skip
+
+
+def geant4_sensor(s: schema.Surface, lam_domain) -> SensorEntry:
+    """Return stock Geant4's reading of a detecting surface (``lumen:geant4``, see the module docstring)."""
+    pr = s.properties
+    model, finish, type_ = surface_names(s)
+    what = f"opticalsurface {s.name!r} ({model} {finish} {type_})"
+    eff = flat_fraction(s, "EFFICIENCY", 0.0)
+    if type_ == "dielectric_dielectric":
+        e = surface(s)
+        if e.kind is not legacy.DIELECTRIC_RT:
+            raise OpticsRefused(f"{what}: {e.kind.name} does not detect (Geant4: only a polished "
+                                "dielectric_dielectric with R / T tables reaches DoAbsorption)")  # fmt: skip
+        return SensorEntry(legacy.DIELECTRIC_RT_SENSOR, dict(e.params, eff=eff))
+    if type_ != "dielectric_metal":
+        raise OpticsRefused(f"{what}: surface type {type_} is not supported as a sensor")
+    if model not in ("glisur", "unified") or finish not in ("polished", "ground"):
+        raise OpticsRefused(f"{what}: model / finish not supported as a sensor")
+    if nonzero(pr, "TRANSMITTANCE"):
+        raise OpticsRefused(f"{what}: TRANSMITTANCE on a metal would put the photon into it")
+    if "REFLECTIVITY" not in pr and "REALRINDEX" in pr and "IMAGINARYRINDEX" in pr:
+        if finish != "polished":
+            raise OpticsRefused(f"{what}: a complex index on a ground finish (the facet's Fresnel) is not supported")
+        return SensorEntry(legacy.PHOTOCATHODE, {"nr": at_centre(s, "REALRINDEX", lam_domain),
+                                                 "nk": at_centre(s, "IMAGINARYRINDEX", lam_domain), "qe": eff,
+                                                 "f_spec": 1.0, "f_glossy": 0.0, "sigma_alpha": 0.0})  # fmt: skip
+    refl = flat_fraction(s, "REFLECTIVITY", 1.0)
+    if finish == "polished":
+        return _mirror(refl, eff)
+    return _ground_metal_sensor(s, model, what, refl, eff)
+
+
+def complex_index_sensor(s: schema.Surface, lam_domain) -> SensorEntry:
+    """Return RINDEX + i KINDEX on the surface as a semi-infinite absorber (``lumen:complex_index``)."""
+    if "RINDEX" not in s.properties or "KINDEX" not in s.properties:
+        raise OpticsRefused(f"opticalsurface {s.name!r}: complex_index needs RINDEX and KINDEX on the surface")
+    return SensorEntry(legacy.PHOTOCATHODE, {"nr": at_centre(s, "RINDEX", lam_domain),
+                                             "nk": at_centre(s, "KINDEX", lam_domain),
+                                             "qe": flat_fraction(s, "EFFICIENCY", 1.0), "f_spec": 1.0,
+                                             "f_glossy": 0.0, "sigma_alpha": 0.0})  # fmt: skip
+
+
+SENSOR_SURFACES = {"lumen:geant4": geant4_sensor, "lumen:complex_index": complex_index_sensor}
+DEFAULT_SENSOR_SURFACE = "lumen:geant4"
+
+
+def sensor_surface(model=None):
+    """Return the reader of a detecting surface named ``model`` (None: the default; a bare name is lumen's own)."""
+    if callable(model):
+        return model
+    name = DEFAULT_SENSOR_SURFACE if model is None else str(model)
+    for candidate in (name,) if ":" in name else (name, f"lumen:{name}"):
+        if candidate in SENSOR_SURFACES:
+            return SENSOR_SURFACES[candidate]
+    raise OpticsRefused(f"detecting surface reader {name!r}: not one of {sorted(SENSOR_SURFACES)}")
+
+
 def sensor(s: schema.Surface, lam_domain=None, model=None, eff: float | None = None) -> SensorEntry:
-    """Return the SensorEntry of a detecting optical surface through a sensor model (``lumen.sensors.models``).
+    """Return the SensorEntry of a detecting optical surface, read by ``sensor_surface(model)``.
 
-    ``model`` names the sensor model (default "geant4": the surface as stock Geant4 reads it). ``eff`` replaces the
-    model's detection efficiency (a sensitive detector that counts every absorption, WCSim's, passes 1).
+    ``model`` names the reader (default "lumen:geant4": the surface as stock Geant4 reads it), or is one. ``eff``
+    replaces the reading's detection efficiency (a sensitive detector that counts every absorption, WCSim's, passes 1).
     """
-    from lumen.sensors import models
-
-    e = models.get(model)(s, lam_domain)
+    e = sensor_surface(model)(s, lam_domain)
     if not isinstance(e, SensorEntry) or DETECT not in e.kind.outcomes:
-        raise OpticsRefused(f"opticalsurface {s.name!r}: sensor model {model!r} returned no detecting SensorEntry")
+        raise OpticsRefused(f"opticalsurface {s.name!r}: reader {model!r} returned no detecting SensorEntry")
     if eff is not None:
         k = "eff" if "eff" in e.params else "qe"
         e = SensorEntry(e.kind, dict(e.params, **{k: float(eff)}))

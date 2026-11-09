@@ -45,7 +45,6 @@ sbnd_full.tree / library / film_surfaces / bindings, microboone.library / bindin
 
 from __future__ import annotations
 
-import re
 from typing import NamedTuple
 
 import numpy as np
@@ -111,11 +110,7 @@ def split_films(df: schema.DetectorFile, tree, instances):
             p = PV(p.name, lv, p.material, p.mother, p.copy)
         pvs.append(p)
     _check_axes(film_lvs, films)
-    out = Tree(tuple(pvs))
-    for k in ("aliases", "groups"):
-        object.__setattr__(out, k, dict(getattr(tree, k, {}) or {}))
-    object.__setattr__(out, "film_axes", {lv: ax for lv, (_, ax) in films.items()})
-    return out, films
+    return Tree(tuple(pvs), dict(tree.aliases), dict(tree.groups), {lv: ax for lv, (_, ax) in films.items()}), films
 
 
 AXIS_MATCH = 1e-6  # a film axis matches an expected one to this
@@ -248,10 +243,6 @@ def _surfaces(df, tree, films):
 
 
 # ----------------------------------------------------------------------------------------------------- the sensors
-def _matches(group, lv):
-    return lv == group.lv if group.lv is not None else re.search(group.lv_pattern, lv) is not None
-
-
 def _border_groups(df, tree, groups):
     border = [g for g in groups if g.rule == "border_into"]
     if len(border) > 1:
@@ -261,7 +252,7 @@ def _border_groups(df, tree, groups):
     g = border[0]
     if g.model != "lumen:geant4":
         raise LibraryError(f"sensor group {g.name!r}: border_into reads the model 'lumen:geant4', not {g.model!r}")
-    pvs = {p for p in tree.order if _matches(g, tree.by_name[p].lv)}
+    pvs = {p for p in tree.order if g.selects(tree.by_name[p].lv)}
     how = regions.BorderSensor(None, g.settings.get("efficiency_on_entry"), g.settings.get("name_prefix", g.name))
     return pvs, how, g
 
@@ -276,7 +267,7 @@ def _counting(tree, groups):
             raise LibraryError(f"sensor group {g.name!r}: any_entry reads the model 'lumen:counting', not {g.model!r}")
         sensors[g.name] = regions.SensorEntry(legacy.COUNTING, {"eff": float(g.settings["eff"])})
         sources[g.name] = {("eff",): Source(f"sensors/{g.name}/eff", "setting")}
-        for lv in (x for x in lvs if _matches(g, x)):
+        for lv in (x for x in lvs if g.selects(x)):
             sbind.append(regions.SensorBinding(g.name, len(tree.placements(lv)), lv=lv))
     return sensors, sbind, sources
 

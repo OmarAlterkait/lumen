@@ -116,9 +116,10 @@ def test_a_reflection_at_a_relocation_stays_in_the_volume_located(tmp_path):
 
 
 def test_a_reflection_at_a_lowered_hole_steps_back_into_the_filler():
-    """the import keeps a holed solid without its holes and ranks the siblings filling them above it (Scene.overlays):
-    a filler's face inside the holed solid's slab is the hole's wall, a touching face in Geant4 -- a reflection there
-    steps back into the filler; the same pair as a plain overlap (no hole) still stays in the sibling located"""
+    """the import keeps a holed solid without its holes and ranks the siblings filling them above it
+    (Scene.hole_fillers): a filler's face inside the holed solid's slab is the hole's wall, a touching face in Geant4
+    -- a reflection there steps back into the filler; the same pair as a plain overlap (no hole) still stays in the
+    sibling located"""
 
     def at0(name, solid, med, pls=()):
         return defn(name, solid, med, [(p, np.eye(3), np.zeros(3)) for p in pls])
@@ -130,7 +131,7 @@ def test_a_reflection_at_a_lowered_hole_steps_back_into_the_filler():
             S: at0(S, solids.g4_box(0.2, 3.0, 3.0), A_),
             "F": at0("F", solids.g4_box(0.4, 0.4, 0.4), B_),
         }
-        nav = navigate.Navigator.from_scene(make_scene(defs, outside=3, overlays=["F"] if holed else []))
+        nav = navigate.Navigator.from_scene(make_scene(defs, outside=3, hole_fillers=["F"] if holed else []))
         q = jax.jit(lambda o, d, v, l_, nav=nav: nav.query(o, d, v, l_, 10.0))
         o = jnp.asarray([0.0, 0.0, 0.0], F32)
         d = jnp.asarray([0.0, 1.0, 0.0], F32)

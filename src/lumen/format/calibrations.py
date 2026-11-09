@@ -112,3 +112,8 @@ def chain(name: str, search) -> list[Calibration]:
         out.append(c)
         name = c.parent
     return out[::-1]
+
+
+def merged(chain) -> dict:
+    """Return the values of a calibration chain (oldest first), the later calibration winning."""
+    return {k: v for c in chain for k, v in c.values.items()}

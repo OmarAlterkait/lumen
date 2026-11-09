@@ -1,6 +1,6 @@
 """Lowering: a detector file's geometry to the Scene every geometry query is built from.
 
-    loaded = lower(df, detector="auto:argon,lar", sensors=Sensors(aux=("PhotonDetector",)))
+    loaded = lower(df, detector="auto:argon,lar", sensors=sensor_set.is_sensor)
     loaded.scene      # lumen.build.scene.Scene
     loaded.media      # GDML material name -> medium id (optics are attached by medium id)
     loaded.sensors    # sensor id -> the instance's placement path (one id per world instance: scene.PATH)
@@ -57,7 +57,6 @@ HOLE_KEY_DECIMALS = 9  # a hole's position rounded to this many decimals (m) nam
 BOX_TOUCH = 1e-12  # m: boxes overlapping by less than this touch, they do not overlap
 SIBLING_SEARCH_PAD = 1e-9  # m: added to the sibling search radius
 DIGEST_CHARS = 8  # the length of the digest naming a definition variant with holes dropped
-SENSOR_AUX_SHOWN = 6  # the report lists at most this many sensor aux values
 UNSUPPORTED_MODES = ("error", "assembly")
 ROOT, DETECTOR = "__root__", "__detector__"
 OP_OF = {"union": "union", "subtraction": "sub", "intersection": "inter"}
@@ -357,7 +356,7 @@ class _Lowering:
         self.df, self.opt = df, options
         self.mp = SolidMapper(df)
         self.mats, self.unsupported, self.defs = {}, {}, {}
-        self.lowered, self.overlays = [], set()
+        self.lowered, self.hole_fillers = [], set()
         self.aliases, self.dissolved, self.has_holes = {}, {}, {}
         self.contained, self.unproven, self.overlapping = {}, {}, {}  # dissolve: proven inside; kept envelopes
         self.sib, self.lv_box_ = {}, {}
@@ -584,7 +583,7 @@ class _Lowering:
                 held.update(hit.values())  # siblings that fill a hole: never dissolved
                 if record:
                     self.lowered.append((v.name, child, len(d), n_holes))
-                    self.overlays.update(self.df.placements[v.daughters[j]].volume for j in hit.values())
+                    self.hole_fillers.update(self.df.placements[v.daughters[j]].volume for j in hit.values())
         order = list(pls)
         for i in sorted(drop):  # only if a sibling it holds precedes it: just before the first one
             if first[i] < i:
@@ -639,7 +638,7 @@ class _Lowering:
         if i is not None and i in ctx.dropped:
             tag = hashlib.sha1(repr(sorted(ctx.dropped[i])).encode()).hexdigest()[:DIGEST_CHARS]  # one per drop set
             child = self.definition(pl.volume, drop=ctx.dropped[i], key=f"{pl.volume}|holes:{tag}")
-            self.overlays.add(child)
+            self.hole_fillers.add(child)
         else:
             child = self.definition(pl.volume, mirrored=refl)
         rot = lin @ MIRROR_Z if refl else lin
@@ -687,26 +686,15 @@ class _Lowering:
             out_med = self.mid(self.vol(mother).material) if mother is not None and self.vol(mother).material else 0
             notes = [f"gdml: kept only the detector volume {det.lv} (outside: {mother})"] + self.notes()
             return sc.Scene(self.defs, DETECTOR, sc.Label(out_med, -1, mother or "World"), approximations=notes,
-                            aliases=dict(self.aliases), overlays=sorted(self.overlays))  # fmt: skip
+                            aliases=dict(self.aliases), hole_fillers=sorted(self.hole_fillers))  # fmt: skip
         wk = self.definition(self.df.world)
         if not self.opt.part:
             self.defs[wk].members = []  # the world solid is the outside
         return sc.Scene(self.defs, wk, sc.Label(0, -1, "World"), approximations=self.notes(),
-                        aliases=dict(self.aliases), overlays=sorted(self.overlays))  # fmt: skip
+                        aliases=dict(self.aliases), hole_fillers=sorted(self.hole_fillers))  # fmt: skip
 
 
 # ======================================================================================================= loading
-@dataclass
-class Sensors:
-    """The sensor rule: an LV is a sensor when it carries one of these aux SensDet values, or its name matches.
-
-    Every world instance of a sensor volume gets its own id (``scene.PATH``, the canonical order).
-    """
-
-    aux: tuple[str, ...] = ("PhotonDetector",)
-    names: str | None = None
-
-
 @dataclass
 class Options:
     """The lowering's choices (``lower``)."""
@@ -754,12 +742,14 @@ def lower(df, detector=None, sensors=None, **options):
         None (the whole world), an LV name, or ``"auto:<material names>"`` (``find_detector``): keep only that
         volume and its contents, at its world placement; its outside is its mother's material (photons never return
         from beyond the detector: the hall, rock, building and ground are dropped).
-    sensors : Sensors, optional
-        The sensor rule (None: no sensors). A sensor volume is never dissolved.
+    sensors : callable, optional
+        ``sensors(lv) -> bool``: whether a logical volume is a sensor volume (``SensorSet.is_sensor``; None: no
+        sensors). Every world instance of one gets its own id (``scene.PATH``, the canonical order); it is never
+        dissolved.
     **options
         ``part`` (the file is one object whose world volume is the part, for ``place``: the world keeps its own
-        solid), ``lower_holes``, ``dissolve``, ``keep`` (``keep(lv)``: never dissolve it; default the sensor name
-        rule) and ``unsupported`` ("error" or "assembly").
+        solid), ``lower_holes``, ``dissolve``, ``keep`` (``keep(lv)``: never dissolve it; default ``sensors``) and
+        ``unsupported`` ("error" or "assembly").
 
     Notes
     -----
@@ -781,9 +771,8 @@ def lower(df, detector=None, sensors=None, **options):
     with its own daughters). Both are listed in the approximations (as exact).
     """
     opt = Options(detector=detector, **options)
-    if opt.keep is None and sensors is not None and sensors.names:  # a sensor volume is never dissolved
-        rx_ = re.compile(sensors.names)
-        opt.keep = lambda lv: rx_.search(lv) is not None
+    if opt.keep is None and sensors is not None:  # a sensor volume is never dissolved
+        opt.keep = sensors
     scene, mats, _, _ = lower_scene(df, opt)
     source = df.provenance.get("source", {}).get("file", df.name)
     rep = [f"gdml {source}: {len(scene.definitions)} definitions, {len(mats)} materials"]
@@ -794,20 +783,16 @@ def lower(df, detector=None, sensors=None, **options):
         rep.append(f"  {n_mesh} tessellated solids as opaque meshes (first hit only)")
     sen = {}
     if sensors is not None:
-        scene, sen, line = _sensors(df, scene, sensors)
+        scene, sen, line = _sensors(scene, sensors)
         rep.append(line)
     rep.append(f"  scene scale {scene_scale(scene):.3g} m")
     return Loaded(scene, dict(mats), sen, rep, df)
 
 
-def _sensors(df, scene, sensors):
-    aux = {lv for lv, v in df.volumes.items() if any(t == "SensDet" and x in sensors.aux for t, x in flat_aux(v))}
-    rx = re.compile(sensors.names) if sensors.names else None
-    scene, sen = assign_sensors(scene, lambda lv: lv in aux or (rx is not None and rx.search(lv) is not None))
+def _sensors(scene, sensors):
+    scene, sen = assign_sensors(scene, sensors)
     vols = {v.rsplit("/", 1)[-1] for v in sen.values()}
-    shown = f"{sorted(aux)[:SENSOR_AUX_SHOWN]}{'...' if len(aux) > SENSOR_AUX_SHOWN else ''}"
-    return scene, sen, (f"  sensors: {len(sen)} instances (ids by world-instance path) of {len(vols)} volumes "
-                        f"(aux {shown}, names {sensors.names!r})")  # fmt: skip
+    return scene, sen, f"  sensors: {len(sen)} instances (ids by world-instance path) of {len(vols)} volumes"
 
 
 def assign_sensors(scene, is_sensor):
@@ -975,4 +960,4 @@ def split_unions(scene, min_leaves=16):
         return scene
     return sc.Scene(defs, scene.root, scene.outside, list(scene.approximations) +
                     [f"split_unions (exact): {n_split} union solids placed as {n_pc} pieces"],
-                    list(scene.overlays), dict(scene.aliases))  # fmt: skip
+                    list(scene.hole_fillers), dict(scene.aliases))  # fmt: skip

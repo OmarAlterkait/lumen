@@ -47,6 +47,7 @@ import dataclasses
 import hashlib
 import json
 import math
+import re
 import sys
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -56,7 +57,7 @@ from pathlib import Path
 import numpy as np
 
 from lumen.format import io, schema, sensorsets
-from lumen.format import overlay as _overlay
+from lumen.format.apply import SENSOR_PREFIX, apply
 from lumen.format.sensorsets import SensorSet
 from lumen.gdml import geant4_forms, importer, reader, tokens
 from lumen.gdml import solids_schema as ss
@@ -74,7 +75,6 @@ REFUSE_LOSSY = "--refuse-lossy"  # unknown to g4ref (it exits 2): a lossy export
 SCHEMA_LOCATION = "http://service-spi.web.cern.ch/service-spi/app/releases/GDML/schema/gdml.xsd"
 NATIVE_MODELS = ("geant4",)  # optics models a GDML opticalsurface expresses exactly
 LOWERED_MODELS = ("lumen:wls_film",)  # a lowering of what the GDML holds natively: not written, not lossy
-SENSDET = "SensDet"  # the auxtype of a sensor volume's aux value (lumen.format.sensorsets.SensorVolumes)
 
 # Geant4's optical-surface enums by name (G4OpticalSurface.hh, G4SurfaceProperty.hh; 10.7.4 and 11.2.2 agree), in
 # enum order: a stored number is its position. G4GDMLReadSolids::OpticalSurfaceRead accepts each name (model
@@ -257,7 +257,9 @@ def _calibrate(inp: _Input, calibration) -> tuple[schema.DetectorFile, tuple, di
         chain = [*parents, calibration]
     else:
         chain = cal.chain(str(calibration), search)
-    return _overlay.apply(inp.df, chain), tuple(c.name for c in chain), _overlay.sensor_values(chain)
+    values = cal.merged(chain)
+    sensors = {k: v for k, v in values.items() if k.startswith(SENSOR_PREFIX)}
+    return apply(inp.df, values), tuple(c.name for c in chain), sensors
 
 
 # ---------------------------------------------------------------------------------------------------- the selection
@@ -1099,16 +1101,13 @@ def _records(df: schema.DetectorFile, sel: _Selection) -> tuple[list, list]:
     return skins, borders
 
 
-def _g4ref_args(sset: SensorSet | None, lossless: bool, sel: _Selection) -> list:
+def _g4ref_args(sset: SensorSet | None, lossless: bool) -> list:
     """Return the g4ref arguments that read the sensors as lumen does (and the refuse mark of a lossy export)."""
     args: list = []
     if sset is not None:
-        if sset.volumes.names:
-            args += ["--sens-regex", sset.volumes.names]
-        if sset.volumes.aux:
-            args += ["--sens-aux", f"{SENSDET}={sset.volumes.aux[0]}"]
-            if len(sset.volumes.aux) > 1:
-                sel.warnings.append(f"g4ref takes one --sens-aux; the sensor set has {list(sset.volumes.aux)}")
+        pats = list(dict.fromkeys(g.lv_pattern if g.lv is None else f"^{re.escape(g.lv)}$" for g in sset.groups))
+        if pats:  # the groups' selectors, as one regular expression
+            args += ["--sens-regex", pats[0] if len(pats) == 1 else "|".join(f"({p})" for p in pats)]
         if any(g.rule == "border_into" and g.settings.get("efficiency_on_entry") == 1.0 for g in sset.groups):
             args.append("--wcsim-hits")  # a hit is any photon killed entering the sensor, as WCSim's sensitive detector
     if not lossless:
@@ -1277,7 +1276,7 @@ def export(df_or_path, path, *, calibration=None, sensors="default", scope="acti
     _write(path, data)
     sha = io.sha256_bytes(data)
     lossless = not run.sel.omitted
-    args = _g4ref_args(run.sset, lossless, run.sel)
+    args = _g4ref_args(run.sset, lossless)
     side = None
     if sidecar:
         side = Path(str(path) + SIDECAR_SUFFIX)

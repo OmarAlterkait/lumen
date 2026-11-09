@@ -36,8 +36,8 @@ def g4(op, a, b, R=None, t=(0.0, 0.0, 0.0)):
     return n
 
 
-def make_scene(defs, root="world", outside=0, overlays=()):
-    return scene.Scene(dict(defs), root, scene.Label(outside, -1, "outside"), [], list(overlays))
+def make_scene(defs, root="world", outside=0, hole_fillers=()):
+    return scene.Scene(dict(defs), root, scene.Label(outside, -1, "outside"), [], list(hole_fillers))
 
 
 def defn(name, solid, med, pls=(), sensor=-1):

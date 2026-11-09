@@ -1,12 +1,11 @@
 """A recipe: what a GDML file cannot say about a detector, applied once, when the detector is converted.
 
 A recipe names the detector volume (a logical volume, or ``auto:<materials>``: the outermost volume of the main bath
-of one of those materials), the wavelength range of the optics, the sensors (which volumes, how they count, which
-model reads them) and any further decisions, each a function that returns the detector file with its choice
+of one of those materials), the wavelength range of the optics, the sensor groups (which volumes, how they count,
+which model reads them) and any further decisions, each a function that returns the detector file with its choice
 recorded (``origin="recipe"`` and a note). No recipe code runs when a detector file is loaded.
 
     RECIPE = Recipe(name="sk", detector_volume="WCBarrel", wavelength_range=(300.0, 600.0),
-                    sensor_volumes=SensorVolumes(names=r"^InteriorWCPMT"),
                     groups=(SensorGroup("pmt", "border_into", "lumen:geant4", lv_pattern="^InteriorWCPMT"),))
     result = lumen.gdml.import_gdml("sk.gdml", RECIPE)
 """
@@ -15,11 +14,11 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from lumen.format import schema
-from lumen.format.sensorsets import SensorGroup, SensorSet, SensorVolumes
+from lumen.format.sensorsets import SensorGroup, SensorSet
 
 Decision = Callable[[schema.DetectorFile, dict], schema.DetectorFile]
 
@@ -35,14 +34,12 @@ class Recipe:
     name: str
     detector_volume: str
     wavelength_range: tuple[float, float]
-    sensor_volumes: SensorVolumes
     groups: tuple[SensorGroup, ...]
     decisions: tuple[Decision, ...] = ()
     inputs: tuple[str, ...] = ()
     sensor_columns: Callable | None = None
     calibrations: Callable | None = None
     note: str = ""
-    extra: dict = field(default_factory=dict)
     material_keys: frozenset | None = None  # the optical material keys (None: all); the others are kept inert
 
     def apply(self, df: schema.DetectorFile, source: Path, inputs: dict | None = None):
@@ -62,11 +59,9 @@ class Recipe:
                                  provenance=prov, report=tuple(rep))  # fmt: skip
         for decide in self.decisions:
             df = decide(df, inputs)
-        loaded = lowering.lower(
-            df, detector=lv, sensors=lowering.Sensors(aux=self.sensor_volumes.aux, names=self.sensor_volumes.names)
-        )
-        ids = tuple(loaded.sensors[i] for i in sorted(loaded.sensors))
-        sset = SensorSet("default", self.sensor_volumes, self.groups, ids)
+        sset = SensorSet("default", self.groups)
+        loaded = lowering.lower(df, detector=lv, sensors=sset.is_sensor)
+        sset = dataclasses.replace(sset, ids=tuple(loaded.sensors[i] for i in sorted(loaded.sensors)))
         columns = self.sensor_columns(df, loaded, tree, inputs) if self.sensor_columns else {}
         cals = self.calibrations(df, sset, inputs) if self.calibrations else {}
         return ImportResult(df, {"default": sset}, cals, df.report, columns)

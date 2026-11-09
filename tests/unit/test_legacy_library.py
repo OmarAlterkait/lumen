@@ -11,7 +11,7 @@ from optics_toy import read_toy, tree
 from lumen.build import _legacy_regions as regions
 from lumen.build import legacy_library as glue
 from lumen.format import schema
-from lumen.format.sensorsets import SensorGroup, SensorSet, SensorVolumes
+from lumen.format.sensorsets import SensorGroup, SensorSet
 from lumen.surfaces import _legacy as legacy
 
 LAM = (300.0, 600.0)
@@ -48,7 +48,7 @@ TREE = (("<outside>", "<outside>", "<outside>"), ("w/W", "W", "Liq", "<outside>"
         ("w/f1/Foil", "Foil", "Steel", "w/W"), ("w/f2/Foil", "Foil", "Steel", "w/W"),
         ("w/sh/S", "S", "Shifter", "w/W"), ("w/sen/Sen", "Sen", "Liq", "w/W", 0))  # fmt: skip
 INSTANCES = (Inst("w/f1/Foil", np.eye(3)), Inst("w/f2/Foil", np.diag([-1.0, -1.0, 1.0])))
-COUNTING = SensorSet("default", SensorVolumes(names="^Sen"),
+COUNTING = SensorSet("default",
                      (SensorGroup("sen", "any_entry", "lumen:counting", lv="Sen", settings={"eff": 0.5}),))  # fmt: skip
 PLUS, MINUS = "Foil|film(np.float64(1.0), np.float64(0.0), np.float64(0.0))", \
     "Foil|film(np.float64(-1.0), np.float64(0.0), np.float64(0.0))"  # fmt: skip
@@ -98,7 +98,7 @@ def test_border_sensors(toy):
     df = dataclasses.replace(decided(toy), borders=(schema.Border("bs", "pdieR", "blk1", "other"),))
     group = SensorGroup("pmt", "border_into", "lumen:geant4", lv_pattern="^X$",
                         settings={"efficiency_on_entry": 1.0, "name_prefix": "tube"})  # fmt: skip
-    sset = SensorSet("default", SensorVolumes(names="^X$"), (group,) + COUNTING.groups)
+    sset = SensorSet("default", (group,) + COUNTING.groups)
     _, lib, b, src = glue.library_and_bindings(df, tree(*TREE), INSTANCES, sset)
     e = lib.sensors["tube:pdieR"]
     assert e.kind is legacy.DIELECTRIC_RT_SENSOR and e.params["eff"] == 1.0
@@ -132,7 +132,7 @@ def test_larsoft_encodings(toy):
         wavelength_range=(100.0, 180.0),
     )
     t = tree(*TREE[:4])
-    _, lib, b, src = glue.library_and_bindings(df, t, (), SensorSet("default", SensorVolumes(), ()))
+    _, lib, b, src = glue.library_and_bindings(df, t, (), SensorSet("default", ()))
     assert b.materials["Liq"] == "lar" and not lib.media["lar"].medium.channels
     assert lib.surfaces["steel"].params["R"] == 0.25 and b.skins == {"Blk": "steel"}
     assert src[("surfaces", "steel", "R")].column == "derived"

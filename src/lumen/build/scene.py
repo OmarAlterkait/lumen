@@ -99,7 +99,7 @@ class Definition:
 class Scene:
     """Definitions by name, the root definition, the outside label, and what was approximated or decided.
 
-    ``overlays`` lists definitions that overlap others by construction (a solid left without its holes, the siblings
+    ``hole_fillers`` lists definitions that overlap others by construction (a solid left without its holes, the siblings
     filling them, resolved by rank); ``aliases`` maps a dissolved placement's name to the placement that now holds its
     region (its mother's), for surface names.
     """
@@ -108,7 +108,7 @@ class Scene:
     root: str
     outside: Label
     approximations: list[str] = field(default_factory=list)
-    overlays: list[str] = field(default_factory=list)
+    hole_fillers: list[str] = field(default_factory=list)
     aliases: dict[str, str] = field(default_factory=dict)
 
 

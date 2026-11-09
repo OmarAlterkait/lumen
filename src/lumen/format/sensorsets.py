@@ -4,9 +4,9 @@ A sensor set holds structure only, never numbers (values live in the sensor mode
 It is stored beside the detector file as ``sensors/<set>.json`` with its id map ``sensors/<set>.ids.json``: the
 placed-volume paths of the sensors in id order, fixed at import.
 
-- ``volumes`` says which logical volumes are sensor volumes for the geometry (they are never merged into their
-  mother, and each placed copy gets its own sensor id): by an auxiliary tag value and by a name pattern.
-- Each ``SensorGroup`` binds the sensors of one logical volume (or a name pattern) to a counting rule and a model:
+Each ``SensorGroup`` selects logical volumes, one by its name (``lv``) or those whose name matches a regular
+expression (``lv_pattern``), and binds them to a counting rule and a model. The volumes the groups select are the
+sensor volumes of the geometry (never merged into their mother; each placed copy gets its own sensor id). The rules:
 
   ``border_into``  counted across the GDML border surfaces into the volume, by the surface's own detection
                    (Geant4's G4OpBoundaryProcess Detection); a border out of the volume whose surface detects counts
@@ -17,6 +17,7 @@ placed-volume paths of the sensors in id order, fixed at import.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -24,18 +25,6 @@ from lumen.format.io import dumps
 
 SENSOR_SCHEMA = "lumen-sensors/1"
 RULES = ("border_into", "any_entry")
-
-
-@dataclass(frozen=True)
-class SensorVolumes:
-    """Which logical volumes are sensor volumes.
-
-    Those with one of the auxiliary values ``aux`` (auxtype SensDet), or whose name matches the regular expression
-    ``names``.
-    """
-
-    aux: tuple[str, ...] = ()
-    names: str | None = None
 
 
 @dataclass(frozen=True)
@@ -56,13 +45,16 @@ class SensorGroup:
     defaults: str | None = None
     readout: dict | None = None
 
+    def selects(self, lv: str) -> bool:
+        """Return whether the group binds the logical volume ``lv``."""
+        return lv == self.lv if self.lv is not None else re.search(str(self.lv_pattern), lv) is not None
+
 
 @dataclass(frozen=True)
 class SensorSet:
-    """A named sensor set: the sensor volumes, the groups, and the id map (sensor paths in id order)."""
+    """A named sensor set: the groups and the id map (sensor paths in id order)."""
 
     name: str
-    volumes: SensorVolumes
     groups: tuple[SensorGroup, ...]
     ids: tuple[str, ...] = ()
 
@@ -74,13 +66,17 @@ class SensorSet:
             if (g.lv is None) == (g.lv_pattern is None):
                 raise ValueError(f"sensor group {g.name!r}: give exactly one of lv and lv_pattern")
 
+    def is_sensor(self, lv: str) -> bool:
+        """Return whether the logical volume ``lv`` is a sensor volume: one that a group selects."""
+        return any(g.selects(lv) for g in self.groups)
+
 
 def to_json(s: SensorSet) -> tuple[str, str]:
     """Return the sensor set's JSON and its id map's JSON."""
     groups = {g.name: dict(rule=g.rule, model=g.model, lv=g.lv, lv_pattern=g.lv_pattern, settings=g.settings,
                            defaults=g.defaults, readout=g.readout) for g in s.groups}  # fmt: skip
-    head = dict(schema=SENSOR_SCHEMA, name=s.name, volumes=dict(aux=list(s.volumes.aux), names=s.volumes.names),
-                groups=groups, group_order=[g.name for g in s.groups], ids=f"{s.name}.ids.json")  # fmt: skip
+    head = dict(schema=SENSOR_SCHEMA, name=s.name, groups=groups, group_order=[g.name for g in s.groups],
+                ids=f"{s.name}.ids.json")  # fmt: skip
     return dumps(head), dumps(dict(ids=list(s.ids)))
 
 
@@ -95,7 +91,10 @@ def save(s: SensorSet, root) -> Path:
 
 
 def from_json(head: dict, ids) -> SensorSet:
-    """Return the sensor set of its JSON (``to_json``'s first part, parsed) and its id map's paths."""
+    """Return the sensor set of its JSON (``to_json``'s first part, parsed) and its id map's paths.
+
+    A ``volumes`` entry (written before the groups' selectors became the only one) is ignored.
+    """
     if head.get("schema") != SENSOR_SCHEMA:
         raise ValueError(
             f"sensor set {head.get('name')!r}: schema {head.get('schema')!r}, this lumen reads {SENSOR_SCHEMA}"
@@ -103,8 +102,7 @@ def from_json(head: dict, ids) -> SensorSet:
     g = head["groups"]
     groups = tuple(SensorGroup(n, g[n]["rule"], g[n]["model"], g[n]["lv"], g[n]["lv_pattern"], g[n]["settings"],
                                g[n]["defaults"], g[n]["readout"]) for n in head["group_order"])  # fmt: skip
-    v = head["volumes"]
-    return SensorSet(head["name"], SensorVolumes(tuple(v["aux"]), v["names"]), groups, tuple(ids))
+    return SensorSet(head["name"], groups, tuple(ids))
 
 
 def read(root, name: str = "default") -> SensorSet:

@@ -128,6 +128,12 @@ def _aux_back(v) -> schema.Aux:
     return schema.Aux(v[0], v[1], v[2], tuple(_aux_back(c) for c in v[3]))
 
 
+def _stored(p: schema.Property) -> np.ndarray:
+    """Return a property's value as stored: a constant (a scalar in memory) as a one-element array."""
+    v = np.asarray(p.value, np.float64)
+    return v.reshape(1) if p.energy is None else v
+
+
 def _props(w: _Writer, d: str, props: dict) -> dict:
     out = {}
     for key, p in props.items():
@@ -135,7 +141,7 @@ def _props(w: _Writer, d: str, props: dict) -> dict:
             matrix=p.matrix,
             origin=p.origin,
             note=p.note,
-            value=w.array(f"{d}/{key}.value.npy", np.asarray(p.value, np.float64)),
+            value=w.array(f"{d}/{key}.value.npy", _stored(p)),
             energy=None if p.energy is None else w.array(f"{d}/{key}.energy_eV.npy", np.asarray(p.energy, np.float64)),
         )
         out[key] = rec
@@ -298,7 +304,7 @@ def _props_back(root, d: dict, manifest) -> dict:
     return {
         k: schema.Property(
             k,
-            _load_npy(root, r["value"], manifest),
+            _load_npy(root, r["value"], manifest).reshape(() if r["energy"] is None else -1),  # constant: scalar
             None if r["energy"] is None else _load_npy(root, r["energy"], manifest),
             r["matrix"],
             r["origin"],

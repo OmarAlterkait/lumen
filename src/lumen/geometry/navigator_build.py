@@ -13,7 +13,7 @@
   world-frame BVH.
 - **Overlapping siblings** need no configuration (``lumen.rules.navigation``); **coincident siblings** (one mother,
   one solid, one pose) get their partner ``coin_hi``; the import's lowered holes (a solid kept without its holes, the
-  siblings filling them, ``Scene.overlays``) make those siblings daughter candidates of the holed solid (``fill``).
+  siblings filling them, ``Scene.hole_fillers``) make those siblings daughter candidates of the holed solid (``fill``).
 
 Notes
 -----
@@ -245,10 +245,10 @@ def _pad(c, h):
 def _hole_links(scene, V, parent, lo, hi, kids):  # noqa: N803 -- V the volumes' columns
     """Link the import's hole fillers as daughter candidates of the holed solid whose box they meet; return the count.
 
-    The filler siblings (``Scene.overlays``, placed after) win where they hold a point, as any later sibling.
+    The filler siblings (``Scene.hole_fillers``, placed after) win where they hold a point, as any later sibling.
     """
     n = len(V["defn"])
-    ov = set(scene.overlays)
+    ov = set(scene.hole_fillers)
     ud, inv_d = np.unique(np.asarray(V["defn"], dtype=object).astype(str), return_inverse=True)  # per definition
     holed = np.array([HOLES in d_ for d_ in ud], bool)[inv_d.ravel()]
     flag = (np.array([any(d_ == o_ or d_.startswith(o_ + "|") for o_ in ov) for d_ in ud], bool)[inv_d.ravel()]

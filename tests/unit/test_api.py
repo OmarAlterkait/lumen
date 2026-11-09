@@ -7,7 +7,7 @@ from test_importer import GDML, write
 import lumen
 from lumen.format import calibrations as cal
 from lumen.format.calibrations import Table
-from lumen.format.sensorsets import SensorGroup, SensorVolumes
+from lumen.format.sensorsets import SensorGroup
 from lumen.params import UnknownParamKey
 from lumen.recipe import Recipe
 
@@ -15,18 +15,38 @@ RECIPE = Recipe(
     name="toy",
     detector_volume="TankLV",
     wavelength_range=(300.0, 600.0),
-    sensor_volumes=SensorVolumes(names="^PmtLV"),
     groups=(SensorGroup("pmt", "any_entry", "lumen:counting", lv="PmtLV", settings={"eff": 1.0}),),
 )
+
+
+def _toy():
+    start = GDML.index('  <bordersurface name="B1"')
+    end = GDML.index("</bordersurface>") + len("</bordersurface>\n")
+    return GDML[:start] + GDML[end:]  # counting sensors take no border surface
 
 
 @pytest.fixture(scope="module")
 def converted(tmp_path_factory):
     tmp = tmp_path_factory.mktemp("toy")
-    start = GDML.index('  <bordersurface name="B1"')
-    end = GDML.index("</bordersurface>") + len("</bordersurface>\n")
-    toy = GDML[:start] + GDML[end:]  # counting sensors take no border surface
-    return lumen.convert(write(tmp, toy), RECIPE, tmp / "toy.lumen")
+    return lumen.convert(write(tmp, _toy()), RECIPE, tmp / "toy.lumen")
+
+
+@pytest.mark.filterwarnings("error::DeprecationWarning")  # the path runs as under -W error::DeprecationWarning
+def test_a_gdml_constant_is_stored_as_one_value_and_handed_on_as_a_scalar(tmp_path):
+    """A coldim="1" matrix is a constant: a scalar in memory, a one-element array in the detector file; the parameters
+    and the packing read it with no NumPy array-to-scalar conversion (a deprecation that becomes an error)."""
+    toy = _toy().replace('  <matrix name="GV"', '  <matrix name="SY" coldim="1" values="100"/>\n  <matrix name="GV"')
+    toy = toy.replace(
+        '<property name="ABSLENGTH" ref="ABS0x2"/>',
+        '<property name="ABSLENGTH" ref="ABS0x2"/> <property name="SCINTILLATIONYIELD" ref="SY"/>',
+    )
+    path = lumen.convert(write(tmp_path, toy), RECIPE, tmp_path / "c.lumen")
+    assert np.load(path / "arrays/materials/Water/SCINTILLATIONYIELD.value.npy").shape == (1,)  # the stored form
+    det = lumen.load(path)
+    assert det.file.materials["Water"].properties["SCINTILLATIONYIELD"].value.shape == ()
+    p = det.params()
+    assert p["materials/Water/SCINTILLATIONYIELD"] == 100.0
+    det.pack(p.set("materials/Water/SCINTILLATIONYIELD", 50.0))
 
 
 def test_convert_and_load(converted):

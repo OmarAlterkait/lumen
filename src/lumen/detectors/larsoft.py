@@ -31,7 +31,7 @@ from pathlib import Path
 import numpy as np
 
 from lumen.format import schema
-from lumen.format.sensorsets import SensorGroup, SensorVolumes
+from lumen.format.sensorsets import SensorGroup
 from lumen.recipe import Recipe
 
 LAR, TPB = "LAr", "TPB"
@@ -163,7 +163,6 @@ def sbnd_columns(df, loaded, tree, inputs) -> dict:
 
 SBND = Recipe(
     name="sbnd", detector_volume="auto:argon,lar", wavelength_range=SBND_WAVELENGTHS,
-    sensor_volumes=SensorVolumes(aux=("PhotonDetector",)),
     groups=(SensorGroup("pmt", "any_entry", "lumen:counting", lv="volOpDetSensitive", settings={"eff": 1.0}),
             SensorGroup("xarapuca", "any_entry", "lumen:counting", lv="volOpDetSensitiveXArapucaFilter",
                         settings={"eff": 1.0})),
@@ -208,6 +207,5 @@ def microboone_optics(df: schema.DetectorFile, inputs: dict) -> schema.DetectorF
 
 MICROBOONE = Recipe(
     name="microboone", detector_volume="auto:argon,lar", wavelength_range=MICROBOONE_WAVELENGTHS,
-    sensor_volumes=SensorVolumes(names="^volOpDetSensitive"),
     groups=(SensorGroup("pmt", "any_entry", "lumen:counting", lv="volOpDetSensitive", settings={"eff": 1.0}),),
     decisions=(microboone_optics,))  # fmt: skip

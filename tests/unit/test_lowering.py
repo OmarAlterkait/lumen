@@ -11,9 +11,10 @@ import scene_fixture as fixture
 
 from lumen.build import lowering, scene, solids
 from lumen.format import schema
+from lumen.format.sensorsets import SensorGroup, SensorSet
 from lumen.validate import oracle
 
-CATH = lowering.Sensors(aux=(), names=r"^Cath$")
+CATH = SensorSet("default", (SensorGroup("cath", "any_entry", "lumen:counting", lv="Cath"),)).is_sensor
 
 
 def _names(L):

@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from lumen.format.apply import check
 from lumen.format.calibrations import Table
 
 METHODS = ("reweight", "moving_paths", "moving_paths+reweight", "after_tracking")
@@ -101,11 +102,7 @@ class Params(Mapping):
 def _checked(info: ParamInfo, old, value):
     lo, hi = info.range
     if isinstance(old, Table):
-        if not isinstance(value, Table):
-            raise TypeError(f"{info.key} is a table: give a Table(energy, value)")
-        if np.shape(value.value) != np.shape(old.value) or np.shape(value.energy) != np.shape(old.energy):
-            raise ValueError(f"{info.key}: {np.shape(old.value)[0]} knots expected, got {np.shape(value.value)}; a new "
-                             "knot count is a new detector file")  # fmt: skip
+        check(info.key, old, value)  # a table keeps its knot count
         vals = np.asarray(value.value)
     else:
         vals = np.asarray(value)

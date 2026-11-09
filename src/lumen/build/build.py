@@ -34,8 +34,7 @@ class Parts:
 
 def build(df, sensor_set) -> Parts:
     """Return the Parts of a detector file and sensor set."""
-    sv = sensor_set.volumes
-    loaded = lowering.lower(df, detector=df.detector_volume, sensors=lowering.Sensors(aux=sv.aux, names=sv.names))
+    loaded = lowering.lower(df, detector=df.detector_volume, sensors=sensor_set.is_sensor)
     n = df.build_options.get("split_unions")
     nav_scene = lowering.split_unions(loaded.scene, n) if n else loaded.scene
     base = volume_tree.tree_from_geometry(loaded)

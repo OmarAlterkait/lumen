@@ -29,7 +29,7 @@ from pathlib import Path
 import numpy as np
 
 from lumen.format import schema
-from lumen.format.sensorsets import SensorGroup, SensorVolumes
+from lumen.format.sensorsets import SensorGroup
 from lumen.recipe import Recipe
 
 DETECTOR = "WCBarrel"  # WCSim's water volume (WC is air, expHall vacuum)
@@ -73,8 +73,7 @@ def recipe(name: str, detector_volume: str = DETECTOR, decisions=(), inputs=(), 
     """Return a WCSim detector's recipe."""
     group = SensorGroup("pmt", "border_into", "lumen:geant4", lv_pattern=f"^{SENSOR_LV}",
                         settings={"efficiency_on_entry": 1.0, "name_prefix": "pmt"})  # fmt: skip
-    return Recipe(name=name, detector_volume=detector_volume, wavelength_range=WAVELENGTHS,
-                  sensor_volumes=SensorVolumes(aux=(), names=f"^{SENSOR_LV}"), groups=(group,),
+    return Recipe(name=name, detector_volume=detector_volume, wavelength_range=WAVELENGTHS, groups=(group,),
                   decisions=(opaque_mesh_materials, *decisions), inputs=tuple(inputs), **kw)  # fmt: skip
 
 
