@@ -106,11 +106,14 @@ def test_the_default_item_tallies_by_sensor_and_band():
                       escaped=z, late=z, pushed=jnp.bool_(True), abandon=jnp.bool_(False))  # fmt: skip
         return type("D", (), fields)
 
-    adds = [(k, int(c), float(v)) for k, c, v in spec.emits(dep(2, 450.0), jnp.int32(1))]
+    adds = [(k, int(c), float(v)) for k, c, v in spec.emits(dep(2, 450.0), jnp.int32(1), None)]
     assert adds[:2] == [("Q", 2 * 2 + 1 + 6, 0.5), ("Tw", 11, 2.0)]
     assert [a[1:] for a in adds if a[0] == "stuck"] == [(0, 1.0), (-1, 1.0)]  # pushed, not abandoned
-    assert {k: c for k, c, _ in spec.emits(dep(2, 650.0), jnp.int32(0))}["Q"] == -1  # outside the bands
-    assert {k: c for k, c, _ in spec.emits(dep(-1, 450.0), jnp.int32(0))}["Q"] == -1  # no sensor
+    assert {
+        k: c
+        for k, c, _ in spec.emits(dep(2, 650.0), jnp.int32(0), item.grid(item.TallyShape(3, (300.0, 400.0, 500.0))))
+    }["Q"] == -1  # outside the bands
+    assert {k: c for k, c, _ in spec.emits(dep(-1, 450.0), jnp.int32(0), None)}["Q"] == -1  # no sensor
 
 
 def test_the_traces_integers_are_exact_in_two_halves():

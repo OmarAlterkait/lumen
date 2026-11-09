@@ -24,6 +24,7 @@ The push contract (``t_min`` > 0) is gone: a query starts at its origin.
 
 from __future__ import annotations
 
+import copy
 from typing import NamedTuple
 
 import jax
@@ -153,11 +154,21 @@ class Navigator:
         return Navigator(self.arrays.with_classes(vol_cls, mesh_cls, outside_cls))
 
     def dev(self):
-        """Return the host arrays as device arrays (made once, at trace time)."""
+        """Return the host arrays as device arrays (made once, at trace time; or the operands ``bind`` gave)."""
         if self._D is None:
             with jax.ensure_compile_time_eval():
                 self._D = {k: jnp.asarray(v) for k, v in self.host.items()}
         return self._D
+
+    def operands(self):
+        """Return the navigator's device arrays, to enter a loop as operands (``bind``): no array is closed over."""
+        return dict(nav=self.dev(), csg=self.E.dev())
+
+    def bind(self, ops):
+        """Return this navigator reading its device arrays from ``ops`` (``operands``, traced)."""
+        nav, nav.E = copy.copy(self), copy.copy(self.E)
+        nav._D, nav.E._dev = ops["nav"], ops["csg"]
+        return nav
 
     # ---------------------------------------------------------------------------------------- per-volume solid calls
     def frame(self, i, od, dd):

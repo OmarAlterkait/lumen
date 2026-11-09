@@ -80,17 +80,17 @@ def _live_rule(nav):
     """Return the custom_jvp rule of the live t: the value is t0 itself; its derivative the implicit function's."""
 
     @jax.custom_jvp
-    def live(o_, d_, it_, lf_, fc_, t0_):
+    def live(o_, d_, it_, lf_, fc_, t0_, arrays):  # noqa: PLR0913 -- the winner, the ray and the arrays
         return t0_
 
     @live.defjvp
     def live_jvp(primals, tangents):
-        o_, d_, it_, lf_, fc_, t0_ = primals
+        o_, d_, it_, lf_, fc_, t0_, arrays = primals
         do_, dd_ = tangents[0], tangents[1]
         # t inside the rule is live itself (value t0_), and so is the primal it returns: a derivative of the rule
         # (second order) carries d t / d (o, d) through the hit point, the t dd term and every product with t
-        t_ = live(o_, d_, it_, lf_, fc_, t0_)
-        g = hit_grad(nav, it_, lf_, fc_, o_ + t_ * d_)
+        t_ = live(o_, d_, it_, lf_, fc_, t0_, arrays)
+        g = hit_grad(nav.bind(arrays), it_, lf_, fc_, o_ + t_ * d_)  # the navigator's arrays: arguments, not captures
         den = jnp.dot(g, d_)
         ok = jnp.abs(den) > SLOPE_REL * jnp.maximum(jnp.linalg.norm(g), NORM_FLOOR)
         dt = jnp.where(ok, -jnp.dot(g, do_ + t_ * dd_) / jnp.where(ok, den, 1.0), 0.0)
@@ -107,7 +107,7 @@ def live_t(nav, item, leaf, face, o, d, bt):  # noqa: PLR0913 -- the winner and 
     if nav._live is None:
         nav._live = _live_rule(nav)
     t0 = sg(jnp.where(bt < INF, bt, 0.0))
-    return jnp.where(bt < INF, nav._live(o, d, item, leaf, face, t0), bt)
+    return jnp.where(bt < INF, nav._live(o, d, item, leaf, face, t0, nav.operands()), bt)
 
 
 def mesh_plane_t(nav, win, od, dd, xa):

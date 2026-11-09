@@ -56,8 +56,11 @@ class Clearance:
         self.points = jnp.asarray(np.asarray(points, np.float32).reshape(-1, 3))
         self.clear = jnp.asarray(np.asarray(clear, np.float32).reshape(-1))
 
+    def operands(self):
+        """Return (points, radii), to enter a loop as operands (``gp`` of the call)."""
+        return self.points, self.clear
+
     def __call__(self, gp, x):
-        """Return the clearance at x (``gp`` is not read)."""
-        return jnp.maximum(
-            jnp.max(self.clear - jnp.linalg.norm(self.points - jnp.asarray(x, jnp.float32), axis=-1)), 0.0
-        )
+        """Return the clearance at x; ``gp``: the operands (``operands``), else this field's own arrays."""
+        points, clear = self.operands() if gp is None else gp
+        return jnp.maximum(jnp.max(clear - jnp.linalg.norm(points - jnp.asarray(x, jnp.float32), axis=-1)), 0.0)

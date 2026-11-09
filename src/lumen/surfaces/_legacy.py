@@ -20,7 +20,7 @@ from dataclasses import dataclass
 import jax.numpy as jnp
 import numpy as np
 
-from lumen._core.safe import clip01, sanitize
+from lumen._core.safe import clip01, literal, sanitize
 from lumen.media import phase
 from lumen.surfaces import fresnel, polar
 from lumen.surfaces.outcomes import (
@@ -456,7 +456,8 @@ def fixed(kind, consts):
     if key not in _FIXED:
 
         def full(p):
-            return {**{k: jnp.asarray(v, jnp.float32) for k, v in consts.items()}, **p}
+            # literals: a fixed value is a constant of the code, never an array the loop closes over
+            return {**{k: literal(v) if isinstance(v, tuple) else jnp.float32(v) for k, v in consts.items()}, **p}
 
         tag = ",".join(f"{k}={v:g}" if isinstance(v, float) else f"{k}=({','.join(f'{x:g}' for x in v)})"
                        for k, v in sorted(consts.items()))  # fmt: skip

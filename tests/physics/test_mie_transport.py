@@ -26,6 +26,7 @@ from scipy import stats
 
 import lumen
 from lumen import run as runner
+from lumen._core.safe import literal
 from lumen.format.sensorsets import SensorGroup
 from lumen.geometry import _legacy_tracked as tracked
 from lumen.recipe import Recipe
@@ -136,20 +137,30 @@ class SingleScatter:
 
     def update(self, mem, ph, ph2, dep, pid):
         ell = dep.time * C_VACUUM / N_IDX
-        b = jnp.searchsorted(jnp.asarray(ELL, jnp.float32), ell, side="right") - 1
+        b = jnp.searchsorted(literal(ELL), ell, side="right") - 1  # literals: a loop closes over no float array
         ok = (dep.sensor >= 0) & (ph.vertex == 1) & (b >= 0) & (b < len(ELL) - 1)
         cell = jnp.where(ok, b, -1)
         direct = jnp.where((dep.sensor >= 0) & (ph.vertex == 0), 0, -1)
         return mem, [("direct", direct, dep.q), ("f1", cell, dep.q), ("f1sq", cell, dep.q * dep.q)]
 
 
+MODELS = {}  # one Model per detector and step config, one ItemSpec per shape: new ones would recompile
+SPECS = {}  # one ItemSpec per shape: a new one would be a new static argument of the loop
+
+
+SINGLE = SingleScatter()
+
+
 def simulate(det, params, rows, *, reference=None, cfg=None, replicas=REPLICAS, seed=7):
-    geom = tracked.from_parts(det.parts)
-    model = steps.Model(geom, det.parts.optics, cfg or steps.StepConfig())
-    ops = steps.Operands(params, reference, steps.Controls(10.0, float("inf"), 0.0))
-    spec = item.photons(item.TallyShape(len(det.parts.optics.tag_pvs), (300.0, 600.0)))
+    cfg = cfg or steps.StepConfig()
+    if (id(det), cfg) not in MODELS:
+        MODELS[(id(det), cfg)] = steps.Model(tracked.from_parts(det.parts), det.parts.optics, cfg)
+    model = MODELS[(id(det), cfg)]
+    tally = item.TallyShape(len(det.parts.optics.tag_pvs), (300.0, 600.0))
+    spec = SPECS.setdefault(tally, item.photons(tally))
+    ops = steps.operands(model, params, reference, steps.Controls(10.0, float("inf"), 0.0), item.grid(tally))
     key = jax.random.PRNGKey(seed)
-    t = runner.run(spec, model, ops, rows, key, max_vertices=20000, replicas=replicas, diagnostics=(SingleScatter(),))
+    t = runner.run(spec, model, ops, rows, key, max_vertices=20000, replicas=replicas, diagnostics=(SINGLE,))
     return t.outputs
 
 

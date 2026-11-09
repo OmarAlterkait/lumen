@@ -41,9 +41,13 @@ class WavelengthSpectrum:
     cdf: tuple[float, ...]
     density: tuple[float, ...]
 
-    def sample(self, rand):
+    def arrays(self):
+        """Return the spectrum's tables (float32): ``sample``'s operands."""
+        return tuple(jnp.asarray(x, jnp.float32) for x in (self.wl, self.density, self.cdf))
+
+    def sample(self, rand, arrays=None):
         """Return the wavelength (nm) for a uniform in (0, 1): the exact inverse of the spectrum's CDF."""
-        wl, s, cdf = (jnp.asarray(x, jnp.float32) for x in (self.wl, self.density, self.cdf))
+        wl, s, cdf = self.arrays() if arrays is None else arrays
         i = jnp.clip(jnp.searchsorted(cdf, rand, side="right") - 1, 0, len(self.wl) - 2)
         c0, s0, s1 = cdf[i], s[i], s[i + 1]
         h = wl[i + 1] - wl[i]
@@ -110,9 +114,13 @@ class EnergySpectrum:
     d1: tuple[float, ...]
     cdf: tuple[float, ...]
 
-    def sample(self, rand):
+    def arrays(self):
+        """Return the spectrum's tables (float32): ``sample``'s operands."""
+        return tuple(jnp.asarray(x, jnp.float32) for x in (self.e0, self.h, self.d0, self.d1, self.cdf))
+
+    def sample(self, rand, arrays=None):
         """Return the wavelength (nm) for a uniform in (0, 1): the exact inverse CDF, increasing in energy."""
-        e0, h, d0, d1, c = (jnp.asarray(x, jnp.float32) for x in (self.e0, self.h, self.d0, self.d1, self.cdf))
+        e0, h, d0, d1, c = self.arrays() if arrays is None else arrays
         k = jnp.clip(jnp.searchsorted(c, rand, side="right") - 1, 0, len(self.e0) - 1)
         r = jnp.maximum(rand - c[k], 0.0)
         a = (d1[k] - d0[k]) / h[k]

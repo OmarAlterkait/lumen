@@ -96,9 +96,9 @@ def _draw(ch, params, d, pol, rand, shared):
 def channel_draw(ctx, mi, c, d, pol, lam):
     """Return the BulkDraw of channel c of medium mi for direction d, state pol = (er, ei) and wavelength lam.
 
-    ``ctx``: (tables, live params, reference params, uniforms, shared, moving, edge rows) as ``step`` holds them.
+    ``ctx``: (tables, live params, reference params, uniforms, shared, moving, edge rows, spectrum -> its tables).
     """
-    tables, pm, pmr, u, shared, moving, rows = ctx
+    tables, pm, pmr, u, shared, moving, rows, arrays_of = ctx
     branches, offset = [], []
     for med in tables.media:
         offset.append(len(branches))
@@ -119,8 +119,9 @@ def channel_draw(ctx, mi, c, d, pol, lam):
                 if ch.reemit is None:
                     return BulkDraw(w_c, lp, lpr, lam, F32(0.0), F32(1.0), *st, sens)
                 v = pm[med.name][ch.name]
-                return BulkDraw(w_c, lp, lpr, sg(ch.reemit.sample(u["reemit"][0])), -v["tau"] * jnp.log(u["reemit"][1]),
-                                jnp.asarray(v["yield"], F32), *st, sens)  # fmt: skip
+                lam2 = sg(ch.reemit.sample(u["reemit"][0], arrays_of(ch.reemit)))
+                return BulkDraw(w_c, lp, lpr, lam2, -v["tau"] * jnp.log(u["reemit"][1]), jnp.asarray(v["yield"], F32),
+                                *st, sens)  # fmt: skip
 
             branches.append(f)
     if not branches:

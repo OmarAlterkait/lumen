@@ -225,12 +225,12 @@ def fresh_state(ch, d, er0, ei0, unpolarised):
 def free_path_end(ch, ray, s, field, pol0, valid):
     """Return the free-path end held in the volume (co-moving near a moving origin).
 
-    ``ray`` = (x, d), ``field`` the clearance field (None: none known); ``pol0`` = (er0, ei0). Returns (weight
+    ``ray`` = (x, d), ``field`` the clearance at a point (None: none known); ``pol0`` = (er0, ei0). Returns (weight
     factor, s, wi, er, ei, time shift, x) at the end.
     """
     x, d = ray
     y_s = x + s * d
-    clear = field(None, sg(ch.xo)) if field is not None else jnp.float32(0.0)
+    clear = field(sg(ch.xo)) if field is not None else jnp.float32(0.0)
     V, divV = co_move(ch, sg(y_s), jnp.minimum(CO_MOVING_RADIUS, CLEARANCE_SHARE * sg(clear)))
     du_s, ds_s, f_s = volume_end(ch, x, d, s, V, valid)
     er0, ei0 = pol0

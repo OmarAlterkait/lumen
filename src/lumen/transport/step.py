@@ -34,7 +34,7 @@ import jax.numpy as jnp
 from lumen._core import rng
 from lumen._core.safe import unit
 from lumen.rules import navigation
-from lumen.surfaces import polar
+from lumen.surfaces import facets, polar
 from lumen.surfaces.outcomes import DELTA, DETECT, FAR_SIDE, STRAIGHT, TERMINAL
 from lumen.transport import estimator, medium, state
 from lumen.transport import moving_source as ms
@@ -85,13 +85,45 @@ class Model:
         """Whether a layered surface exists (the photon then carries ``Stack``)."""
         return any(kd.stack for kd in self.tables.kinds)
 
+    @property
+    def spectra(self):
+        """The re-emission spectra of the media and surface types, in a fixed order (their tables are operands)."""
+        found = [c.reemit for m in self.tables.media for c in m.channels] + [k.reemit for k in self.tables.kinds]
+        return tuple({id(s): s for s in found if s is not None}.values())
+
 
 class Operands(NamedTuple):
-    """The traced inputs: the packed parameters, the reference ones (None: the live values) and the controls."""
+    """The traced inputs (SPEC section 5): navigator arrays, float tables, parameters, reference, controls, grid.
+
+    ``nav`` (``Navigator.operands``) and ``tables`` (``operands``) None: the model's own arrays, closed over.
+    """
 
     params: Any
     reference: Any = None
     controls: Controls = Controls()
+    nav: Any = None
+    tables: Any = None
+    grid: Any = None
+
+
+def operands(model, params, reference=None, controls=None, grid=None):
+    """Return the Operands of a model: every array the loop reads, as values (no recompile when they change)."""
+    tables = dict(unified=facets.table_operands(), spectra=tuple(s.arrays() for s in model.spectra),
+                  clearance=None if model.clearance is None else model.clearance.operands())  # fmt: skip
+    ctl = Controls(*(jnp.asarray(v, F32) for v in (controls or Controls())))
+    return Operands(params, reference, ctl, model.geometry.nav.operands(), tables, grid)
+
+
+def geometry(model, ops):
+    """Return the model's geometry reading the operands' navigator arrays (its own when there are none)."""
+    return model.geometry if ops.nav is None else model.geometry.bind(ops.nav)
+
+
+def spectrum_arrays(model, ops):
+    """Return spectrum -> its tables (the operands', or None: the spectrum's own)."""
+    if ops.tables is None:
+        return lambda spec: None
+    return lambda spec: ops.tables["spectra"][[id(s) for s in model.spectra].index(id(spec))]
 
 
 class Deposit(NamedTuple):
@@ -197,7 +229,7 @@ def _recover(ph):
 
 def _query(model, ops, ph, cls0, moving):
     """Return the next visible crossing (the baseline's query dict); inside a layered surface, the remembered one."""
-    geom = model.geometry
+    geom = geometry(model, ops)
     t_q = ops.controls.t_max
 
     def looked(_):
@@ -247,7 +279,7 @@ def _held_end(model, ops, ph, v0, chain):
     if not model.step.moving_source:
         return _End(1.0, v0["t_if"], ph.d, v0["er0"], v0["ei0"], 0.0, v0["te"].probs, v0["reach_live"], v0["att_if"],
                     q["normal"])  # fmt: skip
-    geom, n1, n2 = model.geometry, v0["ctx"]["n1"], v0["ctx"]["n2"]
+    geom, n1, n2 = geometry(model, ops), v0["ctx"]["n1"], v0["ctx"]["n2"]
 
     def seg(x_, d_):
         def lk(_):
@@ -313,7 +345,9 @@ def _vertex(model, ops, ph, key):
               row=row, cont=cont, t_att=t_att, zero_ev=zero_ev, mu=mu, mu_abs=mu_abs)  # fmt: skip
     end = _held_end(model, ops, ph, v0, chain)
     if moving:
-        fp = ms.free_path_end(chain, (ph.x, ph.d), s, model.clearance, (er0, ei0), ph.moving.free & ph.alive)
+        clear = ops.tables["clearance"] if ops.tables is not None else None
+        field = None if model.clearance is None else (lambda x: model.clearance(clear, x))
+        fp = ms.free_path_end(chain, (ph.x, ph.d), s, field, (er0, ei0), ph.moving.free & ph.alive)
         free = _Free(*fp)
     else:
         free = _Free(1.0, s, ph.d, er0, ei0, 0.0, ph.x + s * ph.d)
@@ -333,11 +367,12 @@ def _surface_event(model, ops, ph, vx):
     delta_o = jnp.asarray(DELTA)[os_]
     w_if = se.outcome_weight(vx, o, delta_o, bool(cfg.edge_rows))
     nrm = q["normal"]
-    lb = se._Lobes(E.wi, E.n, E.er, E.ei, {"sigma_alpha": vx.te.sigma_alpha}, {"sigma_alpha": vx.sigma_r},
-                  vx.u["lobe"], ops.reference is None, moving)  # fmt: skip
+    width = {} if ops.tables is None else {"tables": ops.tables["unified"]}
+    lb = se._Lobes(E.wi, E.n, E.er, E.ei, {"sigma_alpha": vx.te.sigma_alpha, **width},
+                   {"sigma_alpha": vx.sigma_r, **width}, vx.u["lobe"], ops.reference is None, moving)  # fmt: skip
     cross = (ph.d, nrm, vx.n1 / vx.n2, (vx.er0, vx.ei0, vx.te.amps8))
     d_new, w_lobe, er_n, ei_n, *sens = se.outcome_direction(tables, vx.kidx, os_, cross, lb)
-    lam2, dt = se.reemission(tables, vx.kidx, os_, ph.lam, vx.te.tau, vx.u["reemit"])
+    lam2, dt = se.reemission(tables, vx.kidx, os_, (ph.lam, vx.te.tau), vx.u["reemit"], spectrum_arrays(model, ops))
     d_new = unit(d_new)  # no norm drift over many bounces
     far = jnp.asarray(FAR_SIDE)[os_] & (o >= 0)
     ok = q["hit"] & (o >= 0) & (vx.kidx >= 0)
@@ -388,7 +423,8 @@ def _bulk(model, ops, ph, vx):
     next_cls = jnp.where(s < q["t_pass0"], q["cls_start"], jnp.where(s > q["t_pass1"], cb, -1 - cb))
     shared = ops.reference is None
     pmr = (ops.params if shared else ops.reference)["media"]
-    ctx = (model.tables, ops.params["media"], pmr, vx.u, shared, model.step.moving_source, model.step.edge_rows)
+    ctx = (model.tables, ops.params["media"], pmr, vx.u, shared, model.step.moving_source, model.step.edge_rows,
+           spectrum_arrays(model, ops))  # fmt: skip
     return bulk_event(ph, vx, next_cls, ctx)
 
 

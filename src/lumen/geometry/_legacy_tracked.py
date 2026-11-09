@@ -91,6 +91,10 @@ class TrackedGeometry:
                     vol_reflect=r["vol_reflect"], item=r["srf"], cont=r["cont"],
                     win=jnp.stack([r["item"], r["leaf"], r["face"], r["zero"].astype(jnp.int32)]))  # fmt: skip
 
+    def bind(self, ops):
+        """Return this geometry with its navigator reading the operands ``ops`` (``Navigator.operands``)."""
+        return TrackedGeometry(self.nav.bind(ops), self.n_classes, self.tag_of_vol, self.pass_tab)
+
     def surface(self, gp, q, x, d):
         """Return (t, normal) of the surface query q met, live in the ray (x, d) (``navigate.surface_at``)."""
         return navigate.surface_at(self.nav, q, x, d)

@@ -21,7 +21,7 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 
-from lumen._core.safe import unit
+from lumen._core.safe import literal, unit
 from lumen.surfaces import facets, lobes, outcomes, polar
 from lumen.surfaces.outcomes import DELTA, DETECT, DIFFUSE, DIFFUSE_T, FAR_SIDE, GLOSSY, N_OUTCOMES, REEMIT, STRAIGHT
 from lumen.transport import moving_source as ms
@@ -74,7 +74,7 @@ def type_probs(tables, pk, k, row, ctx):
 
     def none(_):
         return TypeEval(jnp.zeros(N_OUTCOMES, F32), F32(DEFAULT_WIDTH), F32(0.0), jnp.bool_(False), jnp.bool_(False),
-                        jnp.asarray(NO_AMPLITUDES, F32))  # fmt: skip
+                        literal(NO_AMPLITUDES))  # fmt: skip
 
     return jax.lax.switch(jnp.where(k >= 0, k + 1, 0), [none] + [one(kd) for kd in tables.kinds], None)
 
@@ -230,13 +230,17 @@ def outcome_direction(tables, kidx, o, cross, lb):
     return jax.lax.switch(o, br, None)
 
 
-def reemission(tables, kidx, o, lam, tau, rand):
-    """Return (wavelength, delay) after outcome o: REEMIT draws them from the type's spectrum and Exp(tau)."""
+def reemission(tables, kidx, o, lam_tau, rand, arrays_of):
+    """Return (wavelength, delay) after outcome o: REEMIT draws them from the type's spectrum and Exp(tau).
+
+    ``arrays_of(spectrum)``: its tables as operands (None: its own).
+    """
+    lam, tau = lam_tau
     if not any(kd.reemit is not None for kd in tables.kinds):
         return lam, F32(0.0)
 
     def remit(kd):
-        return lambda _: (sg(kd.reemit.sample(rand[0])), -tau * jnp.log(rand[1]))
+        return lambda _: (sg(kd.reemit.sample(rand[0], arrays_of(kd.reemit))), -tau * jnp.log(rand[1]))
 
     def keep(_):
         return lam, F32(0.0)

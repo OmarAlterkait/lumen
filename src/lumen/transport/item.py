@@ -3,10 +3,10 @@
     spec = photons(TallyShape(n_sensors, lam_edges))      # the default: per-sensor charge and time weight, health
     tally = lumen.run.run(spec, model, ops, rows, key, max_vertices=..., replicas=...)
 
-``ItemSpec(init, alive, emits, outputs, per_item)``: ``init(model, row)`` the Photon of an emission row (the row is the
-item's own mapped input, so a re-emitted photon keeps its row); ``alive(ph)``; ``emits(dep, slot)`` the (output, cell,
-value) adds of one step's Deposit for replica ``slot``; ``outputs(replicas)`` {name: (cells, exact)}; ``per_item(ph)``
-what each photon reports when it ends.
+``ItemSpec(init, alive, emits, outputs, per_item)``: ``init(model, ops, row)`` the Photon of an emission row (the row
+is the item's own mapped input, so a re-emitted photon keeps its row); ``alive(ph)``; ``emits(dep, slot, grid)`` the
+(output, cell, value) adds of one step's Deposit for replica ``slot`` (``grid``: ``Operands.grid``);
+``outputs(replicas)`` {name: (cells, exact)}; ``per_item(ph)`` what each photon reports when it ends.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from typing import Any, NamedTuple
 import jax.numpy as jnp
 
 from lumen.transport import state
+from lumen.transport.step import geometry
 
 HEALTH = ("lost", "abandoned", "escaped", "late")  # weights; plus the counts "stuck" (pushed, abandoned)
 
@@ -37,9 +38,9 @@ class ItemSpec(NamedTuple):
     per_item: Any
 
 
-def start_photon(model, row):
+def start_photon(model, ops, row):
     """Return the Photon of an emission row, located (its volume and class from the navigator)."""
-    nav = model.geometry.nav
+    nav = geometry(model, ops).nav
     vol = nav.locate(jnp.asarray(row.x, jnp.float32))
     st = model.step
     return state.start(row, vol, nav.dev()["cls"][vol], stacked=model.stacked, moving=st.moving_source,
@@ -51,8 +52,8 @@ def photons(tally: TallyShape) -> ItemSpec:
     n_lam = len(tally.lam_edges) - 1
     cells = tally.n_sensors * n_lam
 
-    def emits(dep, slot):
-        e = jnp.asarray(tally.lam_edges, jnp.float32)
+    def emits(dep, slot, grid):
+        e = jnp.asarray(tally.lam_edges, jnp.float32) if grid is None else grid["lam_edges"]
         b = jnp.searchsorted(e, dep.lam, side="right") - 1
         band = jnp.where((b >= 0) & (b < n_lam), b, -1)
         idx = jnp.where((dep.sensor >= 0) & (band >= 0), dep.sensor * n_lam + band, -1)
@@ -66,3 +67,8 @@ def photons(tally: TallyShape) -> ItemSpec:
         return out | {k: (1, True) for k in HEALTH}
 
     return ItemSpec(start_photon, lambda ph: ph.alive, emits, outputs, lambda ph: dict(vertices=ph.vertex))
+
+
+def grid(tally: TallyShape) -> dict:
+    """Return the default item's grid positions as operands (``Operands.grid``): the band edges (nm)."""
+    return {"lam_edges": jnp.asarray(tally.lam_edges, jnp.float32)}

@@ -61,3 +61,8 @@ def safe_div(a, b, fill=0.0):
     """Return a / b, and ``fill`` where b == 0, with finite derivatives."""
     ok = b != 0.0
     return jnp.where(ok, a / sanitize(ok, b, 1.0), fill)
+
+
+def literal(values):
+    """Return a float32 vector built from scalar literals: a constant of the code that is never a closed-over array."""
+    return jnp.stack([jnp.float32(v) for v in values])

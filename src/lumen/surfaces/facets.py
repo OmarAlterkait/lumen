@@ -31,7 +31,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from lumen._core import frames, rng
-from lumen._core.safe import safe_sqrt
+from lumen._core.safe import literal, safe_sqrt
 from lumen.surfaces.lobes import Lobe
 
 sg = jax.lax.stop_gradient
@@ -39,7 +39,13 @@ HALF_PI = 0.5 * math.pi
 CHAIN_K_MAX = 10  # facets per chain: a chain still pointing into the surface after these has weight 0
 FACET_TRIES = 64  # facet draws per facet: after these (probability < 1e-12) the last draw is kept
 LOG_TINY = math.log(1e-30)  # a log density off the support
-UP = np.array([0.0, 0.0, 1.0], np.float32)
+UP = (0.0, 0.0, 1.0)  # the local normal
+
+
+def _up():
+    return literal(UP)
+
+
 # unified's tables: F on (x, log sigma), x uniform on [0, 1]; log sigma = log(1/4) + j log(2)/8, j in [J_LO, J_HI]
 TABLE_NX = 257
 TABLE_Y0, TABLE_DY, TABLE_J_LO, TABLE_J_HI = math.log(0.25), math.log(2.0) / 8.0, -52, 12
@@ -134,18 +140,23 @@ def _cell(v, n):
     return i, f - i
 
 
-def log_zeta(sigma):
-    """Return log(Z(sigma) / sigma^2), C1 cubic Hermite in log sigma."""
-    T = unified_tables()
+def table_operands():
+    """Return the unified tables as device arrays, to enter a loop as operands (the lobe parameter ``tables``)."""
+    return {k: jnp.asarray(v) for k, v in unified_tables().items()}
+
+
+def log_zeta(sigma, T=None):
+    """Return log(Z(sigma) / sigma^2), C1 cubic Hermite in log sigma (``T``: the tables' operands, else constants)."""
+    T = unified_tables() if T is None else T
     j, t = _cell((jnp.log(sigma) - TABLE_Y0) / TABLE_DY - TABLE_J_LO, TABLE_NY)
     a0, b0, a1, b1 = _hermite(t)
     v, dv = jnp.asarray(T["lz"]), jnp.asarray(T["lzy"])
     return a0 * v[j] + a1 * v[j + 1] + TABLE_DY * (b0 * dv[j] + b1 * dv[j + 1])
 
 
-def front_fraction(sigma, cos_t, sin_t):
+def front_fraction(sigma, cos_t, sin_t, T=None):
     """Return F(theta, sigma), the share of facets facing the photon: bicubic Hermite on (x, log sigma)."""
-    T = unified_tables()
+    T = unified_tables() if T is None else T
     x = jnp.arctan2(cos_t, sigma * sin_t) / HALF_PI
     i, tx = _cell(x * (TABLE_NX - 1), TABLE_NX)
     j, ty = _cell((jnp.log(sigma) - TABLE_Y0) / TABLE_DY - TABLE_J_LO, TABLE_NY)
@@ -163,7 +174,7 @@ def front_fraction(sigma, cos_t, sin_t):
     return out
 
 
-def _unified_log_density(sigma, Vl, M):
+def _unified_log_density(sigma, Vl, M, T=None):
     """Return log D(m) / F(theta, sigma) for the local facet direction M (any length); the caller masks the support.
 
     D(m) = exp(-alpha^2 / 2 sigma^2) min(1, f_max / sin alpha) / (2 pi Z(sigma)), f_max = min(1, 4 sigma).
@@ -177,7 +188,7 @@ def _unified_log_density(sigma, Vl, M):
     cos_t = Vl[..., 2]
     sin_t = safe_sqrt(Vl[..., 0] ** 2 + Vl[..., 1] ** 2)
     return (-alpha * alpha / (2.0 * sigma * sigma) + (lf - ls) - math.log(2.0 * math.pi) - 2.0 * jnp.log(sigma)
-            - log_zeta(sigma) - jnp.log(front_fraction(sigma, cos_t, sin_t)))  # fmt: skip
+            - log_zeta(sigma, T) - jnp.log(front_fraction(sigma, cos_t, sin_t, T)))  # fmt: skip
 
 
 def glisur_log_volume(r, h):
@@ -202,7 +213,7 @@ def _glisur_log_density(r, Vl, M):
     return lp, ok
 
 
-def unified_facet_logpdf(sigma, wi, n, wo):
+def unified_facet_logpdf(sigma, wi, n, wo, T=None):
     """Return log p1(wo | wi) = log D(h) / (4 F V.h), one unified facet reflection; LOG_TINY off the support.
 
     h = unit(V + wo), V = -wi: over the whole sphere, with an integrable 1 / angle singularity at wo = wi.
@@ -210,17 +221,17 @@ def unified_facet_logpdf(sigma, wi, n, wo):
     Vl = frames.to_local(-wi, n)
     H = Vl + frames.to_local(wo, n)
     ok = (H[..., 2] > 0.0) & (jnp.sum(Vl * H, -1) > 0.0)
-    Hs = jnp.where(ok[..., None], H, UP)
+    Hs = jnp.where(ok[..., None], H, _up())
     vh = jnp.sum(jnp.where(ok[..., None], Vl, Hs) * Hs, -1) * jax.lax.rsqrt(jnp.sum(Hs * Hs, -1))
-    return jnp.where(ok, _unified_log_density(sigma, Vl, Hs) - jnp.log(4.0 * vh), LOG_TINY)
+    return jnp.where(ok, _unified_log_density(sigma, Vl, Hs, T) - jnp.log(4.0 * vh), LOG_TINY)
 
 
-def glisur_facet_logpdf(r, wi, n, wo):
+def glisur_facet_logpdf(r, wi, n, wo, T=None):
     """Return log p1(wo | wi) = log p_m(h) - log(4 V . h), one GLISUR facet reflection; LOG_TINY off the support."""
     Vl = frames.to_local(-wi, n)
     H = Vl + frames.to_local(wo, n)
     good = (H[..., 2] > 0.0) & (jnp.sum(Vl * H, -1) > 0.0)
-    Hs = jnp.where(good[..., None], H, UP)
+    Hs = jnp.where(good[..., None], H, _up())
     lp, ok = _glisur_log_density(r, Vl, Hs)
     vh = jnp.sum(jnp.where(good[..., None], Vl, Hs) * Hs, -1) * jax.lax.rsqrt(jnp.sum(Hs * Hs, -1))
     ok = ok & good
@@ -274,11 +285,11 @@ def glisur_facet(r, Vl, key):
         z = 1.0 - 2.0 * uu[1]
         phi = 2.0 * math.pi * uu[2]
         sxy = safe_sqrt(1.0 - z * z)
-        M = UP + r * jnp.cbrt(uu[0]) * jnp.stack([sxy * jnp.cos(phi), sxy * jnp.sin(phi), z])
+        M = _up() + r * jnp.cbrt(uu[0]) * jnp.stack([sxy * jnp.cos(phi), sxy * jnp.sin(phi), z])
         ok = jnp.sum(Vl * M) > 0.0
         return t + 1, jnp.where((~done) & ok, M, m), done | ok
 
-    init = (jnp.int32(0), jnp.asarray(UP, Vl.dtype), jnp.bool_(False))
+    init = (jnp.int32(0), _up().astype(Vl.dtype), jnp.bool_(False))
     _, m, _ = jax.lax.while_loop(lambda st: (~st[2]) & (st[0] < FACET_TRIES), body, init)
     return m * jax.lax.rsqrt(jnp.sum(m * m))
 
@@ -320,7 +331,7 @@ def _chain_logpdf_of(facet_lp):
         def body(c, w):
             acc, prev, j = c
             use = j < k
-            lp = facet_lp(width, jnp.where(use, prev, wi), n, jnp.where(use, w, mirror))
+            lp = facet_lp(width, jnp.where(use, prev, wi), n, jnp.where(use, w, mirror), p.get("tables"))
             return (acc + jnp.where(use, lp, 0.0), w, j + 1), None
 
         (acc, _, _), _ = jax.lax.scan(body, (jnp.zeros((), W.dtype), wi, jnp.int32(0)), W, unroll=True)

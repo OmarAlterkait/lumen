@@ -29,6 +29,8 @@ from lumen.transport.step import step
 
 MAX_VERTICES = 1 << 22  # the guard (vertices per photon), not a physics cut
 TALLYMAP_BACKEND = {"cuda": "cuda", "cpu": "lockstep"}  # lumen's backend names -> tallymap's
+CLOSED_OVER = "baked_floats"  # the diagnostics key of an item program's closed-over float arrays
+OVERFLOW = "exact_overflow"  # the stats key of an exact sum's overflow
 SCHEDULE = "step"  # tallymap refills a lane per step, not per photon: 1.09-1.39x faster for lumen (L40S)
 
 
@@ -42,9 +44,36 @@ class Tally(NamedTuple):
 
 
 def run(  # noqa: PLR0913 -- SPEC section 5's signature
-    spec, model, ops, rows, key, *, max_vertices=MAX_VERTICES, replicas=1, diagnostics=(), backend="auto", first_id=0
-):
-    """Return the Tally of the photons ``rows`` (an Emission batch) under ``key`` (raw key data)."""
+    spec, model, ops, rows, key, *, max_vertices=MAX_VERTICES, replicas=1, diagnostics=(), backend="auto", first_id=0,
+    n_active=None, form="operands",
+):  # fmt: skip
+    """Return the Tally of the photons ``rows`` (an Emission batch) under ``key`` (raw key data).
+
+    ``form="operands"`` (the default): one jitted loop whose operands are ``ops``, the key, ``first_id`` and
+    ``n_active`` (only rows i < n_active run): changing any value never recompiles, and a loop that closes over a
+    float array is refused (``ClosedOverValues``). ``form="closure"``: the baseline's eager form, values baked in
+    (comparisons only).
+    """
+    static = (spec, model, int(max_vertices), int(replicas), tuple(diagnostics), backend, form)
+    loop = _loop if form == "closure" else _LOOP
+    return loop(static, ops, rows, key, jnp.asarray(first_id, jnp.int32), n_active)
+
+
+class ClosedOverValues(ValueError):  # noqa: N818 -- the documented error catalogue's name
+    """The photon loop closes over a float array: a value baked into the kernel, which recompiles when it changes."""
+
+
+def _refuse_closed_over(tag):
+    from tallymap import _diagnostics
+
+    floats = _diagnostics.PROGRAMS[-1][CLOSED_OVER] if _diagnostics.PROGRAMS else []
+    if floats:
+        raise ClosedOverValues(f"the photon loop ({tag}) closes over {len(floats)} float array(s) {floats[:4]}: pass "
+                               "every value through the Operands (lumen.transport.step.operands)")  # fmt: skip
+
+
+def _loop(static, ops, rows, key, first_id, n_active):
+    spec, model, max_vertices, replicas, diagnostics, backend, form = static
     n = rows.x.shape[0]
     cuda = backend == "cuda" or (backend == "auto" and jax.default_backend() == "gpu")
     if cuda:
@@ -54,15 +83,16 @@ def run(  # noqa: PLR0913 -- SPEC section 5's signature
         shapes |= dg.outputs()
     outputs = {k: tm.Sum((cells,), exact=exact and cuda) for k, (cells, exact) in shapes.items()}
 
-    def item(tl, x):
-        ph = spec.init(model, x["row"])
-        pkey = rng.photon_key(key, first_id + x["id"])
+    def item(tl, x, *b):
+        o, k, fid = b[0] if b else (ops, key, first_id)
+        ph = spec.init(model, o, x["row"])
+        pkey = rng.photon_key(k, fid + x["id"])
         slot = x["id"] * replicas // n
 
         def body(c):
             p, tl, mem = c
-            p2, dep = step(model, ops, p, pkey)
-            adds, mem2 = list(spec.emits(dep, slot)), []
+            p2, dep = step(model, o, p, pkey)
+            adds, mem2 = list(spec.emits(dep, slot, o.grid)), []
             for dg, m in zip(diagnostics, mem, strict=True):
                 m2, a = dg.update(m, p, p2, dep, x["id"])
                 adds, mem2 = adds + a, mem2 + [m2]
@@ -77,7 +107,14 @@ def run(  # noqa: PLR0913 -- SPEC section 5's signature
         return tl, spec.per_item(ph)
 
     xs = dict(row=rows, id=jnp.arange(n, dtype=jnp.int32))
-    backend = TALLYMAP_BACKEND["cuda" if cuda else "cpu"]
-    r = tm.vmap(item, outputs=outputs, in_axes=0, max_steps=max_vertices + 1, backend=backend, _schedule=SCHEDULE)(xs)
+    closure = form == "closure"
+    opts = dict(outputs=outputs, max_steps=max_vertices + 1, backend=TALLYMAP_BACKEND["cuda" if cuda else "cpu"],
+                _schedule=SCHEDULE, in_axes=0 if closure else (0, None))  # fmt: skip
+    r = tm.vmap(item, **opts)(*((xs,) if closure else (xs, (ops, key, first_id))), n_active=n_active)
+    if not closure:
+        _refuse_closed_over(form)
     complete = (r.outputs["n_truncated"][0] == 0) & (r.stats["n_truncated"] == 0)
-    return Tally(dict(r.outputs), dict(r.per_item), complete, r.stats.get("exact_overflow", jnp.int32(0)))
+    return Tally(dict(r.outputs), dict(r.per_item), complete, r.stats.get(OVERFLOW, jnp.int32(0)))
+
+
+_LOOP = jax.jit(_loop, static_argnums=0)
