@@ -82,6 +82,7 @@ def main():
     ap.add_argument("--tpb", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--occupancies", type=int, nargs="+", default=[1, 10])
+    ap.add_argument("--configs", nargs="+", default=["eff1_nonoise", "eff1", "nominal"])
     a = ap.parse_args()
     cal = np.load(a.calib)
     tpb = np.load(a.tpb)
@@ -99,7 +100,7 @@ def main():
         return w.mean[0], w.variance[0]
 
     res = {}
-    for cfg in ("eff1_nonoise", "eff1", "nominal"):
+    for cfg in a.configs:
         ref = np.load(Path(a.ref) / f"waveforms_{cfg}.npz")
         types = ref["channels"]["pd_type"]
         occ = list(ref["occupancies"])

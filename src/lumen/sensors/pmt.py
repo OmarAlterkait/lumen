@@ -119,8 +119,8 @@ class PMTModel:
 
         units = {f"{c}/{f}": u for c, comp in self.components().items() for f, (u, _) in comp.fields().items()}
         units.update(t_offset="ns", dark_rate="Hz", qe="", ce="", efficiency="", gain=self.unit)
-        units.update({f"frontend/{k}": "ns" if k == "window" else "pe" if k.startswith("charge") else self.unit
-                      for k in FRONTEND_VALUES})  # fmt: skip
+        fe = {"window": "ns", "charge_noise": "pe", "charge_scale": ""}
+        units.update({f"frontend/{k}": fe.get(k, self.unit) for k in FRONTEND_VALUES})
         inf = float("inf")
         return {f"sensors/{group}/{k}": ParamInfo(f"sensors/{group}/{k}", units.get(k, ""),
                                                   tuple(self.ranges.get(k, DEFAULT_RANGES.get(k, (-inf, inf)))),
