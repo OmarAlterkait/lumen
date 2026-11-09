@@ -38,6 +38,7 @@ TPB_LV, FOIL_LV, FOILTPB_LV = "volCPATPB", "volCPAFoil", "volCPA_FoilTPB"
 CRYOSTAT_LV, MEMBRANE_LV, ENCLOSURE_LV = "volCryostat", "volCryoMembrane", "volDetEnclosure"
 SBND_WAVELENGTHS = (100.0, 900.0)  # nm: LAr scintillation (104-172) and TPB emission (350-826)
 FILM_SURFACE = "cpa_tpb"
+FILM_AXES = [[1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]]  # the CPA films face +-x (the drift axis), checked at load
 SPLIT_UNIONS = 16  # unions of more pieces are placed as their pieces in the navigator's scene
 GEOMETRY_TOLERANCE = 1e-12  # m: two GDML lengths that agree to this are equal (1e-9 mm)
 
@@ -112,7 +113,7 @@ def sbnd_optics(df: schema.DetectorFile, inputs: dict) -> schema.DetectorFile:
         mats[name] = dataclasses.replace(m, optics=o)
     backing = next(k.surface for k in df.skins if k.volume == FOIL_LV)
     settings = dict(film_material=TPB, front_material=LAR, backing=backing, thickness_m=film["d"],
-                    local_axis=[film["side"], 0.0, 0.0])  # fmt: skip
+                    local_axis=[film["side"], 0.0, 0.0], expected_axes=FILM_AXES)  # fmt: skip
     surf = schema.Surface(
         FILM_SURFACE,
         "",

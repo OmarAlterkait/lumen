@@ -164,6 +164,7 @@ def to_files(df: schema.DetectorFile) -> dict[str, bytes]:
             ),
             optics=_optics(m.optics),
             properties=_props(w, _array_dir("materials", name, used), m.properties),
+            inert={k: w.array(f"{_array_dir('inert', name, used)}/{k}.npy", np.asarray(v)) for k, v in m.inert.items()},
         )
     elements = {
         n: dict(
@@ -229,7 +230,7 @@ def to_files(df: schema.DetectorFile) -> dict[str, bytes]:
         "surfaces.json": dict(
             surfaces=surfaces,
             skins=[[k.name, k.surface, k.volume, k.origin, k.note] for k in df.skins],
-            borders=[[b.name, b.surface, b.pv1, b.pv2, b.origin] for b in df.borders],
+            borders=[[b.name, b.surface, b.pv1, b.pv2, b.origin, b.bound, b.note] for b in df.borders],
         ),
         "userinfo.json": dict(userinfo=[_aux(a) for a in df.userinfo]),
     }
@@ -345,6 +346,7 @@ def read(path) -> schema.DetectorFile:
             m["pressure_Pa"],
             _props_back(root, m["properties"], man),
             _optics_back(m["optics"]),
+            {k: _load_npy(root, r, man) for k, r in m.get("inert", {}).items()},
         )
     el = d["elements.json"]
     elements = {

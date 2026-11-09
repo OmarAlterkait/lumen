@@ -186,21 +186,40 @@ def read_property(doc: reader.GDMLDocument, key: str, ref: str, what: str, rep: 
     return schema.Property(key, v, e, ref)
 
 
-def _properties(doc, props, what, rep, skip=()):
-    out = {}
+@dataclass
+class _Inert:
+    """The optical keys to read (``keep``) and the other properties' matrices, kept verbatim (``found``)."""
+
+    keep: frozenset
+    found: dict = field(default_factory=dict)
+
+
+def _properties(doc, props, what, rep, skip=(), inert: _Inert | None = None):
+    """Read properties; with ``inert``, the keys it does not keep go verbatim into ``inert.found``, unread."""
+    out: dict = {}
     for name, ref in props:
         key = property_key(name)
-        if key in out:
+        if key in out or (inert is not None and key in inert.found):
             raise ImportRefused(f"{what}: property {key} given twice")
         if key in skip:
+            continue
+        if inert is not None and key not in inert.keep:
+            try:
+                inert.found[key] = doc.matrix(ref)
+            except reader.GDMLError as err:  # a non-optical key may name a matrix the file lacks: kept empty
+                inert.found[key] = np.zeros((0, 1))
+                rep.append(f"{what}.{key}: inert, and its matrix cannot be read ({err})")
             continue
         out[key] = read_property(doc, key, ref, what, rep)
     return out
 
 
 # ------------------------------------------------------------------------------------------------------- materials
-def materials(doc: reader.GDMLDocument, rep: list) -> tuple[dict, dict, dict]:
-    """Return (materials, elements, isotopes); every material must name its composition."""
+def materials(doc: reader.GDMLDocument, rep: list, keys=None) -> tuple[dict, dict, dict]:
+    """Return (materials, elements, isotopes); every material must name its composition.
+
+    ``keys``: the optical property keys to read (None: every key); a material's other properties are kept inert.
+    """
     isotopes = {n: schema.Isotope(n, i.z, i.n, i.molar_mass_g_mol) for n, i in doc.isotopes.items()}
     elements = {n: schema.Element(n, e.formula, e.z, e.molar_mass_g_mol,
                              tuple(schema.Component(r, fraction=f) for r, f in e.fractions))
@@ -216,8 +235,12 @@ def materials(doc: reader.GDMLDocument, rep: list) -> tuple[dict, dict, dict]:
             if c.ref not in doc.elements and c.ref not in doc.materials:
                 raise ImportRefused(f"material {name!r}: component {c.ref!r} is neither an element nor a material")
         comp = schema.Composition(m.density_g_cm3, comps, m.z, m.molar_mass_g_mol)
-        out[name] = schema.Material(name, m.state, comp, m.temperature, m.pressure,
-                               _properties(doc, m.props, f"material {name!r}", rep))  # fmt: skip
+        sink = None if keys is None else _Inert(frozenset(keys))
+        props = _properties(doc, m.props, f"material {name!r}", rep, inert=sink)
+        inert = {} if sink is None else sink.found
+        if inert:
+            rep.append(f"material {name!r}: {len(inert)} non-optical propert(ies) kept inert: {sorted(inert)}")
+        out[name] = schema.Material(name, m.state, comp, m.temperature, m.pressure, props, inert=inert)
     return out, elements, isotopes
 
 
@@ -277,8 +300,11 @@ def _known(surfaces_, surf, name):
 
 
 # ----------------------------------------------------------------------------------------------------- the import
-def read_gdml(path) -> schema.DetectorFile:
-    """Return the detector file of a GDML file before any recipe decision (the detector volume is the world)."""
+def read_gdml(path, material_keys=None) -> schema.DetectorFile:
+    """Return the detector file of a GDML file before any recipe decision (the detector volume is the world).
+
+    ``material_keys``: the material property keys to read as optical properties (None: all); see ``materials``.
+    """
     import hashlib
 
     doc = reader.read(path)
@@ -286,7 +312,7 @@ def read_gdml(path) -> schema.DetectorFile:
     sol, meshes, r2 = solids(doc)
     rep += r2
     vols, pls = structure(doc)
-    mats, els, isos = materials(doc, rep)
+    mats, els, isos = materials(doc, rep, material_keys)
     surfs, skins, borders = surfaces(doc, pls, rep)
     sha = hashlib.sha256(Path(path).read_bytes()).hexdigest()
     prov = dict(importer="lumen.gdml.import_gdml", importer_version=IMPORTER_VERSION,
@@ -304,5 +330,5 @@ def import_gdml(path, recipe, inputs: dict | None = None) -> ImportResult:
 
     ``inputs`` gives the extra files the recipe's decisions read, by name.
     """
-    df = read_gdml(path)
+    df = read_gdml(path, getattr(recipe, "material_keys", None))
     return recipe.apply(df, Path(path), inputs)

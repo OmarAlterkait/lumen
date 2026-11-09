@@ -14,6 +14,7 @@ classifiers = ["Private :: Do Not Upload"]
 dependencies = [
     "numpy>=1.24",
     "jax>=0.5.3,<0.6",
+    "scipy>=1.10",  # spatial search of sibling placements (scipy.spatial.cKDTree) in the geometry lowering
     # The photon loop. The exact commit is pinned in cluster/s3df/constraints-develop.txt.
     "tallymap>=0.5,<0.6",
 ]
@@ -33,6 +34,9 @@ packages = ["src/lumen"]
 line-length = 120
 target-version = "py310"
 src = ["src", "tests", "tools"]
+# Python only, even for files named on the command line: the package's data (JSON, GDML) is never reformatted
+force-exclude = true
+extend-exclude = ["*.json", "*.gdml", "*.toml", "*.md", "*.txt", "*.yaml", "*.yml", "*.npy", "*.npz", "*.csv"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "N", "ICN", "D", "C901", "PLR0912", "PLR0913", "PLR0915", "TID251", "T20",

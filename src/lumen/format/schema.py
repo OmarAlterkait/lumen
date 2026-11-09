@@ -164,7 +164,12 @@ class Isotope:
 
 @dataclass(frozen=True)
 class Material:
-    """A material: state, conditions, composition, its optical properties and the optics model that reads them."""
+    """A material: state, conditions, composition, its optical properties and the optics model that reads them.
+
+    ``inert`` keeps, verbatim (Geant4's internal units), the matrices of the properties the recipe declared
+    non-optical (read by another process, such as an experiment's own scintillation): never read by lumen, written
+    back on export.
+    """
 
     name: str
     state: str | None
@@ -173,6 +178,7 @@ class Material:
     pressure: float | None = None  # Pa
     properties: dict[str, Property] = field(default_factory=dict)
     optics: OpticsModel = OpticsModel()
+    inert: dict[str, np.ndarray] = field(default_factory=dict)  # matrices no optical process reads, as read
 
 
 @dataclass(frozen=True)
@@ -205,13 +211,19 @@ class Skin:
 
 @dataclass(frozen=True)
 class Border:
-    """A border surface, directional: from placement ``pv1`` into placement ``pv2`` (G4LogicalBorderSurface)."""
+    """A border surface, directional: from placement ``pv1`` into placement ``pv2`` (G4LogicalBorderSurface).
+
+    ``bound`` False: the recipe left this border out of the simulation (``note`` says why); it stays in the file, as
+    Geant4 has it, for export.
+    """
 
     name: str
     surface: str
     pv1: str
     pv2: str
     origin: str = "gdml"
+    bound: bool = True
+    note: str = ""
 
 
 @dataclass(frozen=True)

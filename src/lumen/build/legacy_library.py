@@ -110,11 +110,32 @@ def split_films(df: schema.DetectorFile, tree, instances):
             films.setdefault(lv, (s, np.array(key)))
             p = PV(p.name, lv, p.material, p.mother, p.copy)
         pvs.append(p)
+    _check_axes(film_lvs, films)
     out = Tree(tuple(pvs))
     for k in ("aliases", "groups"):
         object.__setattr__(out, k, dict(getattr(tree, k, {}) or {}))
     object.__setattr__(out, "film_axes", {lv: ax for lv, (_, ax) in films.items()})
     return out, films
+
+
+AXIS_MATCH = 1e-6  # a film axis matches an expected one to this
+
+
+def _check_axes(film_lvs, films):
+    """Refuse films whose world axes are not the set the recipe expects (``expected_axes``), when it gives one.
+
+    The film lowering assumes each film lies on one known face: a placement rotated onto another axis would put the
+    film on a face the recipe did not check (the baseline's SBND recipe refused anything but films facing +-x).
+    """
+    for lv, s in film_lvs.items():
+        want = s.optics.settings.get("expected_axes")
+        if want is None:
+            continue
+        found = [ax for sl, (fs, ax) in films.items() if fs is s and sl.split("|film")[0] == lv]
+        ok = len(found) == len(want) and all(any(np.allclose(f, w, atol=AXIS_MATCH) for f in found) for w in want)
+        if not ok:
+            raise LibraryError(f"film {s.name!r} on {lv!r}: placements face {sorted(map(tuple, found))}, the recipe "
+                               f"expects {sorted(map(tuple, want))}")  # fmt: skip
 
 
 # ------------------------------------------------------------------------------------------------------- the media

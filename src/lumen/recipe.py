@@ -43,6 +43,7 @@ class Recipe:
     calibrations: Callable | None = None
     note: str = ""
     extra: dict = field(default_factory=dict)
+    material_keys: frozenset | None = None  # the optical material keys (None: all); the others are kept inert
 
     def apply(self, df: schema.DetectorFile, source: Path, inputs: dict | None = None):
         """Return the ImportResult of a detector file read from ``source`` under this recipe."""

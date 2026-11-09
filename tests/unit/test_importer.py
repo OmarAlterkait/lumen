@@ -132,3 +132,15 @@ def test_ambiguous_geant4_readings_are_refused(tmp_path, old, new, match):
     assert old in GDML
     with pytest.raises(importer.ImportRefused, match=match):
         importer.read_gdml(write(tmp_path, GDML.replace(old, new, 1)))
+
+
+def test_non_optical_keys_are_kept_inert_and_unbound_borders_round_trip(tmp_path):
+    import dataclasses
+
+    df = importer.read_gdml(write(tmp_path, GDML), material_keys=frozenset({"RINDEX"}))
+    water = df.materials["Water"]
+    assert set(water.properties) == {"RINDEX"} and set(water.inert) == {"ABSLENGTH"}
+    np.testing.assert_array_equal(water.inert["ABSLENGTH"][:, 1], [1000.0, 20000.0])  # as read: Geant4's mm
+    df = dataclasses.replace(df, borders=tuple(dataclasses.replace(b, bound=False, note="outside") for b in df.borders))
+    back = io.read(io.save(df, tmp_path / "inert.lumen"))
+    assert io.equal(df, back) and not back.borders[0].bound and back.borders[0].note == "outside"

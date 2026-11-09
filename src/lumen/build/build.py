@@ -8,6 +8,7 @@ Nothing here reads a recipe: every choice is in the detector file and its sensor
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 
 from lumen.build import _legacy_regions, legacy_library, lowering, spec
@@ -39,9 +40,16 @@ def build(df, sensor_set) -> Parts:
     nav_scene = lowering.split_unions(loaded.scene, n) if n else loaded.scene
     base = volume_tree.tree_from_geometry(loaded)
     insts = tuple(volume_tree.instances(loaded))
-    tree, library, bindings, sources = legacy_library.library_and_bindings(df, base, insts, sensor_set)
+    tree, library, bindings, sources = legacy_library.library_and_bindings(bound(df), base, insts, sensor_set)
     optics = _legacy_regions.compile(library, tree, bindings, df.wavelength_range)
     return Parts(loaded, loaded.scene, nav_scene, base, tree, insts, library, bindings, optics, sources)
+
+
+def bound(df):
+    """Return the detector file with only the borders the simulation binds (``Border.bound``)."""
+    if all(b.bound for b in df.borders):
+        return df
+    return dataclasses.replace(df, borders=tuple(b for b in df.borders if b.bound))
 
 
 def sensor_defaults(sensor_set) -> dict:

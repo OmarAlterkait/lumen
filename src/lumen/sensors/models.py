@@ -33,14 +33,15 @@ from __future__ import annotations
 
 import numpy as np
 
+from lumen import plugins
 from lumen.build._legacy_regions import DescriptionError, SensorEntry
 from lumen.format import schema
 from lumen.rules import optics as rules
 from lumen.surfaces import _legacy as legacy
 from lumen.units import HC
 
-MODELS: dict = {}
-DEFAULT = "geant4"
+DEFAULT = "lumen:geant4"
+PREFIX = "lumen:"  # lumen's own models; a bare name means one of them
 FLAT = 1e-3  # the relative variation over the range a complex-index table may have (it is taken at the centre)
 TINY = 1e-12  # the floor of the scale of that variation
 
@@ -50,10 +51,10 @@ class SensorModelError(DescriptionError):
 
 
 def register(name: str, model):
-    """Register a sensor model by name: ``model(surface, lam_domain) -> SensorEntry``."""
+    """Register a sensor model in ``lumen.plugins.sensor_models``: ``model(surface, lam_domain) -> SensorEntry``."""
     if not callable(model):
         raise SensorModelError(f"sensor model {name!r}: not callable")
-    MODELS[str(name)] = model
+    plugins.sensor_models.register(str(name), model)
     return model
 
 
@@ -62,9 +63,10 @@ def get(name=None):
     name = DEFAULT if name is None else name
     if callable(name):
         return name
-    if name not in MODELS:
-        raise SensorModelError(f"sensor model {name!r}: not registered ({sorted(MODELS)})")
-    return MODELS[name]
+    for candidate in (name, PREFIX + name) if ":" not in name else (name,):
+        if candidate in plugins.sensor_models.names():
+            return plugins.sensor_models.get(candidate)
+    raise SensorModelError(f"sensor model {name!r}: not registered ({plugins.sensor_models.names()})")
 
 
 def at_centre(surface: schema.Surface, key: str, lam_domain) -> float:
@@ -150,5 +152,5 @@ def complex_index(surface: schema.Surface, lam_domain) -> SensorEntry:
                                              "f_glossy": 0.0, "sigma_alpha": 0.0})  # fmt: skip
 
 
-register("geant4", geant4)
-register("complex_index", complex_index)
+register("lumen:geant4", geant4)
+register("lumen:complex_index", complex_index)

@@ -11,7 +11,7 @@ import dataclasses
 
 import numpy as np
 
-from lumen.build import _legacy_regions, legacy_library
+from lumen.build import _legacy_regions, build, legacy_library
 from lumen.format import schema
 from lumen.format.calibrations import Table
 
@@ -40,7 +40,7 @@ def with_values(df: schema.DetectorFile, sensor_set, params):
 
 def pack(detector, params) -> dict:
     """Return the engine's packed parameter arrays (the class compiler's rows) for ``params``."""
-    df, sset = with_values(detector.file, detector.sensor_set, params)
+    df, sset = with_values(build.bound(detector.file), detector.sensor_set, params)
     parts = detector.parts
     _, library, _, _ = legacy_library.library_and_bindings(df, parts.base_tree, parts.instances, sset)
     named = _legacy_regions.named_params(parts.optics, library)
@@ -49,7 +49,7 @@ def pack(detector, params) -> dict:
 
 def named(detector, params) -> dict:
     """Return the class compiler's named parameters for ``params`` (the baseline's calibration space)."""
-    df, sset = with_values(detector.file, detector.sensor_set, params)
+    df, sset = with_values(build.bound(detector.file), detector.sensor_set, params)
     parts = detector.parts
     _, library, _, _ = legacy_library.library_and_bindings(df, parts.base_tree, parts.instances, sset)
     return _legacy_regions.named_params(parts.optics, library)
