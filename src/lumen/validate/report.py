@@ -80,7 +80,8 @@ def markdown(rows) -> str:
             continue
         gated = [r for r in sel if r["pass"] is not None]
         out += [f"## {title}", "", f"{sum(bool(r['pass']) for r in gated)} of {len(gated)} gated rows pass.", ""]
-        out += [_table(sorted(sel, key=lambda r: (r["detector"], r["quantity"])), named + common), ""]
+        note = [("note", lambda r: str(r.get("extra", {}).get("note", "")))] if check == "gradients" else []
+        out += [_table(sorted(sel, key=lambda r: (r["detector"], r["quantity"])), named + common + note), ""]
     out += ["## Not validated", ""] + [f"- {x}" for x in NOT_VALIDATED] + [""]
     return "\n".join(out)
 

@@ -44,6 +44,16 @@ COATED_FACE = 0.5  # the film is on the faces whose facing normal has n . axis a
 GRAZING_FILM = 1e-6  # |cos| floor of the path length through a film
 
 
+# the domain of every surface parameter that scales an outcome's probability (a closed bound is an edge: there an
+# outcome's probability can vanish, and a derivative needs that outcome proposed, lumen.transport.estimator); a
+# layered type's backing parameter b:<name> takes its own. Other parameters (indices, lobe widths, the film's
+# axis, delay and absorption length) have none.
+FRACTION, POSITIVE = (0.0, 1.0), (0.0, float("inf"))
+FRACTIONS = ("R", "T", "A", "a", "eff", "qe", "det", "eff_fwd", "f_fwd", "f_spec", "f_glossy", "p_spike", "p_lobe",
+             "p_back")  # fmt: skip
+DOMAINS = dict.fromkeys(FRACTIONS, FRACTION) | {"eta": POSITIVE, "d": POSITIVE}
+
+
 def _no_lobes(p, ctx):
     return {}
 
@@ -75,6 +85,10 @@ class SurfaceType:
     def __repr__(self):
         """Show the type's name."""
         return f"SurfaceType({self.name})"
+
+    def domain(self, name):
+        """Return the (lo, hi) domain of a probability parameter of this type (``DOMAINS``), or None."""
+        return DOMAINS.get(name.split(":")[-1]) if name in self.params else None
 
 
 def outcome_vector(**shares):

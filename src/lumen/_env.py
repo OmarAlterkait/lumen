@@ -7,6 +7,9 @@ lumen reads three variables and nothing else:
   calibrations.
 - ``LUMEN_CACHE``: the per-user cache root. Unset, it is ``$XDG_CACHE_HOME/lumen`` (``~/.cache/lumen``).
 
+It reads whether a GPU is expected (``gpu_expected``: ``JAX_PLATFORMS``, else Slurm's GPU allocation), so a run that
+expects one never falls back to the CPU silently (``lumen.run.DeviceError``).
+
 It also resolves the photon loop's CUDA kernel cache for tallymap (``tallymap_cache``): ``TALLYMAP_CUDA_CACHE``,
 else ``<LUMEN_CACHE>/tallymap``, never under HOME (tallymap's own default is ``~/.cache/tallymap``).
 
@@ -46,6 +49,27 @@ def cache_dir() -> Path:
         return Path(value)
     xdg = os.environ.get("XDG_CACHE_HOME")
     return (Path(xdg) if xdg else Path.home() / ".cache") / "lumen"
+
+
+GPU_ALLOCATED = ("SLURM_JOB_GPUS", "SLURM_STEP_GPUS")  # Slurm's GPU ids of the allocation (non-empty: a GPU)
+GPU_COUNT = "SLURM_GPUS_ON_NODE"  # Slurm's number of GPUs allocated on this node
+
+
+def gpu_expected() -> str | None:
+    """Return why a GPU is expected here (the environment), or None.
+
+    ``JAX_PLATFORMS`` decides when it is set (naming cuda or gpu: expected; naming only others, e.g. cpu: not);
+    otherwise a Slurm GPU allocation (``GPU_ALLOCATED`` non-empty, or ``GPU_COUNT`` above 0) expects one.
+    """
+    platforms = os.environ.get("JAX_PLATFORMS", "")
+    if platforms:
+        named = {p.strip() for p in platforms.lower().split(",")}
+        return f"JAX_PLATFORMS={platforms}" if named & {"cuda", "gpu"} else None
+    for v in GPU_ALLOCATED:
+        if os.environ.get(v, "").strip():
+            return f"{v}={os.environ[v]}"
+    count = os.environ.get(GPU_COUNT, "").strip()
+    return f"{GPU_COUNT}={count}" if count.isdigit() and int(count) > 0 else None
 
 
 def tallymap_cache() -> Path:

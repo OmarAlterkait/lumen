@@ -6,8 +6,9 @@ box"), so the photon weight carries every upstream score and a deposit's derivat
 terms. Drawn directions and distances are held fixed in the world frame; their densities are re-evaluated live. A
 surface outcome is drawn from the reference probabilities of the continuing outcomes alone, normalised.
 
-**The edge floor** (the edge rule, OUT or WITHIN): a ``wrt`` parameter whose value sits at an edge of its domain (a
-fraction at 0 or 1) turns its rows on (``edge_rows``: derived from ``wrt`` and the domains, never an option). At those
+**The edge floor** (the edge rule, OUT or WITHIN): a ``wrt`` parameter whose value sits at an edge of its domain (the
+surface type's ``domain``: a fraction at 0 or 1, a film's yield or thickness at 0) turns its rows on (``edge_rows``:
+derived from ``wrt`` and the domains, never an option). At those
 rows every continuing outcome of the surface type whose reference probability is 0 is proposed at eps: drawn, the
 photon carries eps / q and ``Photon.z`` carries p / eps, exactly 0 in value and dp / eps in derivative. eps gives the
 floored outcomes the share e = EDGE_BUDGET (1 - S) of the draws, S the continuing reference mass. A Mie forward ratio
@@ -32,9 +33,6 @@ from lumen.surfaces.outcomes import N_OUTCOMES, TERMINAL
 sg = jax.lax.stop_gradient
 EDGE_BUDGET = 0.01  # the share of a vertex's draws the floored outcomes take, times (1 - S) (baseline's edge_budget)
 EDGE_SHARE_MIN, EDGE_SHARE_MAX = 1e-6, 0.5  # that share's clip
-# the surface parameters that are fractions (domain [0, 1]); a layered type's backing parameter b:<name> takes its own
-FRACTIONS = frozenset({"R", "T", "A", "a", "eff", "qe", "det", "eff_fwd", "f_fwd", "f_spec", "f_glossy", "p_spike",
-                       "p_lobe", "p_back"})  # fmt: skip
 MIE_RATIO = "forward_ratio"
 
 
@@ -62,36 +60,37 @@ def choose(q, rand):
     return jnp.where(c[-1] > 0.0, k, -1)
 
 
-def is_fraction(name):
-    """Return whether a surface parameter is a fraction (domain [0, 1])."""
-    return name.split(":")[-1] in FRACTIONS
+def domain(tables, kind, name):
+    """Return the (lo, hi) domain of surface type ``kind``'s parameter ``name`` (its ``domain``), or None."""
+    kd = next((k for k in tables.kinds if k.name == kind), None)
+    return None if kd is None else kd.domain(name)
 
 
-def _at_edge(a):
-    return np.any((a <= 0.0) | (a >= 1.0))
+def _at_edge(a, dom=(0.0, 1.0)):
+    return np.any((a <= dom[0]) | (a >= dom[1]))
 
 
 def edge_rows(tables, params, wrt):
     """Return the edge rows, ((type name, row), ...): where a ``wrt`` parameter sits at an edge of its domain.
 
-    ``wrt`` holds packed-parameter paths: ("kernel", type, name) (every row) or ("kernel", type, name, row) for
-    surface fractions, and ("media", medium, "mie", "lobe", "forward_ratio") for a Mie forward ratio (the row is then
-    ("mie:" + medium, 0)). Anything else has no edge here.
+    ``wrt`` holds packed-parameter paths: ("kernel", type, name) (every row) or ("kernel", type, name, row) for a
+    surface parameter with a domain (the type's ``domain``), and ("media", medium, "mie", "lobe", "forward_ratio") for
+    a Mie forward ratio (the row is then ("mie:" + medium, 0)). Anything else has no edge here.
     """
     out = set()
-    names = {k.name for k in tables.kinds}
     for path in wrt:
         if len(path) >= 5 and path[0] == "media" and path[2:5] == ("mie", "lobe", MIE_RATIO):
             if _at_edge(np.asarray(params["media"][path[1]]["mie"]["lobe"][MIE_RATIO], np.float64)):
                 out.add((f"mie:{path[1]}", 0))
             continue
-        if len(path) < 3 or path[0] != "kernel" or path[1] not in names or not is_fraction(path[2]):
+        dom = domain(tables, path[1], path[2]) if len(path) >= 3 and path[0] == "kernel" else None
+        if dom is None:
             continue
         v = params["kernel"][path[1]][path[2]]
         a = np.asarray(v["value"] if isinstance(v, dict) else v, np.float64)
         a = a.reshape(a.shape[0], -1) if a.ndim else a.reshape(1, 1)
         rows = range(a.shape[0]) if len(path) < 4 or path[3] is None else (int(path[3]),)
-        out |= {(path[1], r) for r in rows if _at_edge(a[r])}
+        out |= {(path[1], r) for r in rows if _at_edge(a[r], dom)}
     return tuple(sorted(out))
 
 

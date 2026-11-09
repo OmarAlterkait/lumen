@@ -4,8 +4,9 @@
 
 Families are discovered from the detector's packed parameters (only declared ones exist, D68): every medium's
 absorption and scattering lengths and re-emission constants (multiplied: v (1 + th)), every surface type's
-parameters per row: fractions in [0, 1] added at min(v, 1 - v) (a row at an edge of [0, 1]: one-sided, inward),
-others multiplied. Refractive indices are not differentiated (moving_paths+reweight, not available in 0.1).
+parameters per row: a probability parameter (the surface type's ``domain``: a fraction in [0, 1], a film's yield or
+thickness in [0, inf)) added at min(v - lo, hi - v) (a row at an edge of its domain: one-sided, inward), others
+multiplied. Refractive indices are not differentiated (moving_paths+reweight, not available in 0.1).
 
 Per family, on K replicas of ``photons`` photons (one run; the same photons and keys on every side):
 
@@ -15,7 +16,9 @@ Per family, on K replicas of ``photons`` photons (one run; the same photons and 
   sees no FD jump (|FD| < AD / 10) is "FD unresolved" and leaves the mean (the median rule);
 - FDX (every side sampled at the nominal: the estimator's own realisation), Richardson at h = 1/1024: AD / FDX = 1.
 A family at an edge takes the inward one-sided stencil on an h-scan (h / 4 until F(4h) - F(h) is unresolved), the
-fixed-reference stencil when it moves no draw. Russian roulette is off in the comparison. ``reverse``: ``jax.grad``
+fixed-reference stencil when it moves no draw. A family whose AD is exactly 0 while its outcome is drawn (the edge
+rows proposed it, or it moves no draw) is "zero" (``judge_zero``): gated on the FD and FDX totals being 0, not on the
+groups' spread, which then measures only FD noise. Russian roulette is off in the comparison. ``reverse``: ``jax.grad``
 of a fixed random weighting of Q and Tw against the same weighting of the forward derivatives (lumen's own reverse
 check; tallymap's runtime replay is not used).
 """
@@ -40,6 +43,9 @@ FLOOR = 1e-5  # the sides' own float32 rounding, relative to the FD
 FLOOR_V = 1e-7  # an FD's float32 resolution: FLOOR_V |f| / h
 EXACT = 1e-4  # |AD / FDX - 1|, besides the FDX's float32 resolution
 TRUNCATION_STEPS = 2  # h-scan steps of a family whose FD resolves its own truncation (1/16 -> 1/256)
+# ZERO: a family whose AD is exactly 0 on every output while the edge rows proposed its outcome (or it moves no draw)
+# is structurally zero (a dead end: ANNIE's LAPPD glass T); an exactly-0 AD with the outcome never proposed (the
+# edge rows missing) is not, and stays gated as any family
 INFINITE_VARIANCE = ("polish",)  # GLISUR's polish: unbiased, infinite variance (SPEC section 9)
 NO_DRAW = 1e-5  # shared- and fixed-reference FD closer than this (relative): the family moves no draw
 REVERSE = 1e-4  # |reverse - forward| relative to the family's forward derivative
@@ -69,16 +75,18 @@ def families(optics, p0) -> list:
                             None, "mul", None))  # fmt: skip
         elif keys[0] == "kernel":
             rows = optics.rows.get(keys[1])
+            dom = estimator.domain(optics, keys[1], keys[2])
             for r in range(a.shape[0]) if a.ndim else (None,):
                 ar = a if r is None else a[r]
                 nm = f"{keys[1]}.{keys[2]}[{(str(rows[r]) if rows is not None and r is not None else str(r))[:40]}]"
-                if estimator.is_fraction(keys[2]):
-                    c = np.minimum(ar, 1.0 - ar)
-                    if np.all(c > 0) or not (np.all(ar <= 0) or np.all(ar >= 1)):
+                if dom is not None:  # a probability parameter (the type's domain): added inside it
+                    lo, hi = dom
+                    c = np.minimum(ar - lo, hi - ar)
+                    if np.all(c > 0) or not (np.all(ar <= lo) or np.all(ar >= hi)):
                         if np.any(c > 0):
                             out.append((nm, keys, r, "add", np.clip(c, 0.0, None)))
                     else:  # at an edge: one-sided, inward
-                        out.append((nm, keys, r, "edge", np.ones_like(ar) if np.all(ar <= 0) else -np.ones_like(ar)))
+                        out.append((nm, keys, r, "edge", np.ones_like(ar) if np.all(ar <= lo) else -np.ones_like(ar)))
                 elif np.any(ar != 0):
                     out.append((nm, keys, r, "mul", None))
     return out
@@ -266,6 +274,36 @@ def judge(cq, ct, xq, xt, no_draw, exact_gated=True):
     return bool(exact and fd_ok), note
 
 
+def is_zero(ad, proposed, no_draw):
+    """Return whether a family is structurally zero (``ZERO``): AD exactly 0 on every output, its outcome drawn."""
+    return all(np.all(np.asarray(v) == 0.0) for v in ad) and (no_draw or proposed > 0)
+
+
+def _verdict(ad, proposed, comparisons, draws, exact_gated):
+    """Return (zero, pass, note): a structurally zero family (``ZERO``) is judged on its totals, others by judge.
+
+    ``draws``: (the family moves no draw, its edge stencil is fixed-reference).
+    """
+    no_draw, fixed = draws
+    if is_zero(ad, proposed, no_draw or fixed):
+        return (True, *judge_zero(*comparisons, proposed, no_draw or fixed))
+    return (False, *judge(*comparisons, no_draw, exact_gated=exact_gated))
+
+
+def judge_zero(cq, ct, xq, xt, proposed, no_draw):
+    """Return (pass, note) of a structurally zero family (``ZERO``): AD exactly 0 on every output, its outcome drawn.
+
+    Both FD and FDX then measure only noise and rounding: the FD total must be consistent with 0 (|FD| <= Z_MAX of
+    its own error) and FDX 0 within its rounding (``_with_rounding``); the groups' spread is not applied. An AD that
+    misses a term still fails on the FD total at enough photons.
+    """
+    fd_ok = all(abs(c["fd"]) <= stats.Z_MAX * max(c["fd_e"], c["floor"]) for c in (cq, ct))
+    fdx_ok = all(_exact(c) for c in (xq, xt))
+    why = "moves no draw" if no_draw else f"the edge rows proposed its outcome {proposed} times"
+    note = f"zero: AD exactly 0, {why}; " + ("" if fd_ok else "FD total off 0; ") + ("" if fdx_ok else "FDX off 0; ")
+    return bool(fd_ok and fdx_ok), note
+
+
 def _moves_no_draw(sides, j, h, f):
     """Return whether a family's FD with the shared reference equals the fixed-reference one (no draw moves)."""
     fx = sides.fd(j, h, False, True)
@@ -281,6 +319,7 @@ class _Bench(NamedTuple):
     jv: object
     sides: _Sides
     v0: np.ndarray
+    proposed: int = 0
 
 
 def _bench(det, p0, fams, edge, spec, o):
@@ -294,7 +333,20 @@ def _bench(det, p0, fams, edge, spec, o):
     th0 = jnp.zeros(len(fams), F32)
     base = tuple(np.asarray(v, np.float64) for v in val_(th0, th0, ops))
     sides = _Sides(lambda th, thr: val_(th, thr, ops), len(fams), base, o["groups"])
-    return _Bench(s, obs, ops, lambda th, e: jv_(th, e, ops), sides, np.stack([groups(b, o["groups"]) for b in base]))
+    return _Bench(s, obs, ops, lambda th, e: jv_(th, e, ops), sides, np.stack([groups(b, o["groups"]) for b in base]),
+                  _proposed(s, _rows(s, spec, o), ops, o))  # fmt: skip
+
+
+def _proposed(s, rows, ops, o):
+    """Return how many photons drew an outcome the edge rows floored, at the nominal values (0 without edge rows).
+
+    Such a photon carries z = p / eps, exactly 0 in value (``lumen.transport.estimator``): its final z is 0.
+    """
+    if not s.model.step.edge_rows:
+        return 0
+    spec = item.photons(s.tally)._replace(per_item=lambda ph: dict(z=ph.z))
+    t = runner.run(spec, s.model, ops, rows, photons.raw_key(900), replicas=o["replicas"])
+    return int((np.asarray(t.per_item["z"]) == 0.0).sum())
 
 
 def check(name, *, detector=None, photons=None, replicas=None, reverse=False, only=(), extra=(), log=None) -> list:  # noqa: PLR0913 -- the check's settings
@@ -339,14 +391,15 @@ def check(name, *, detector=None, photons=None, replicas=None, reverse=False, on
         cq, ct = compare(ad[0], fd[0], v0[0], h, n), compare(ad[1], fd[1], v0[1], h, n)
         xq, xt = (_with_rounding(compare(ad[k], fdx[k], v0[k], hx, n), compare(ad[k], fdx4[k], v0[k], hx / 4, n))
                   for k in (0, 1))  # fmt: skip
-        passed, note = judge(cq, ct, xq, xt, no_draw, exact_gated=keys[2] not in INFINITE_VARIANCE)
+        zero, passed, note = _verdict(fwd[-1], b.proposed, (cq, ct, xq, xt), (no_draw, stencil.startswith("fixed")),
+                                      keys[2] not in INFINITE_VARIANCE)  # fmt: skip
         adfdx = [
             float(ad[c][:, -1].sum() / fdx[c][:, -1].sum()) if fdx[c][:, -1].sum() else float("nan") for c in (0, 1)
         ]
         out.append(records.row("gradients", name, f"dQ {nm}", cq["ad"], cq["ad_e"], z=cq["z"], passed=passed,
                                reference="finite differences on the same random numbers", mode=mode, h=h,
                                stencil=stencil, hx=hx, charge=cq, time_weighted=ct, ad_over_fdx=adfdx, fdx_charge=xq,
-                               fdx_time_weighted=xt, note=note,
+                               fdx_time_weighted=xt, note=note, zero=zero, proposed=b.proposed,
                                seconds=time.time() - t1))  # fmt: skip
         if log:
             log(

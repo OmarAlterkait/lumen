@@ -7,6 +7,8 @@ Each toy is a GDML string and a recipe. Materials have constant tables over 1-12
   the one sensor (``border_into``). Optionally a Rayleigh length, and an opaque occluder (a box, or the same cube as
   a tessellated mesh) on the +z axis.
 - ``border_pair()``: two touching water boxes A | B in a vacuum world, a detecting border A -> B only; B the sensor.
+- ``rt_boxes(r)``: three touching water boxes A | B | C; A -> B a dielectric_dielectric surface with R = r and T = 0
+  (a probability at its domain's edge), B -> C detecting; C the sensor.
 - ``overlap(name)``: one of g4ref's overlap toys (tests/data/overlap_toys), its slab counting every entry.
 """
 
@@ -163,6 +165,40 @@ def border_pair():
                        structure=structure)  # fmt: skip
     group = SensorGroup("b", "border_into", "lumen:geant4", lv="BLV", settings={"efficiency_on_entry": 1.0})
     return gdml, Recipe("border_pair", "WorldLV", BAND, (group,))
+
+
+def rt_boxes(r=0.5, absorption=1e3):
+    """Return (GDML, recipe) of three touching water boxes A | B | C (0.5 m cubes at x = -0.5, 0, 0.5 m).
+
+    The border A -> B is a polished dielectric_dielectric with REFLECTIVITY r and TRANSMITTANCE 0 (DIELECTRIC_RT,
+    T at the edge of its domain), B -> C detects every photon (C the sensor). A pencil along +x from A's centre
+    crosses A -> B once; with one index on both sides Fresnel refracts it all: Q / N = (r + T) exp(-0.75 / L).
+    """
+    define = []
+    mats = [material(f"Water{n}", define, RINDEX=N_WATER, ABSLENGTH=absorption) for n in "ABC"]
+    mats.append(material("Vac", define))
+    for k, v in (("RT_R", r), ("RT_T", 0.0), ("Det_R", 0.0), ("Det_E", 1.0)):
+        define.append(table(k, v))
+    solids = ['  <box name="WorldS" x="4" y="4" z="4" lunit="m"/>',
+              '  <box name="CubeS" x="0.5" y="0.5" z="0.5" lunit="m"/>',
+              '  <opticalsurface name="RT" model="glisur" finish="polished" type="dielectric_dielectric" value="1">'
+              '<property name="REFLECTIVITY" ref="RT_R"/><property name="TRANSMITTANCE" ref="RT_T"/></opticalsurface>',
+              '  <opticalsurface name="Detect" model="unified" finish="polished" type="dielectric_metal" value="0">'
+              '<property name="REFLECTIVITY" ref="Det_R"/><property name="EFFICIENCY" ref="Det_E"/>'
+              "</opticalsurface>"]  # fmt: skip
+    vols = "".join(f'  <volume name="{n}LV"><materialref ref="Water{n}"/><solidref ref="CubeS"/></volume>\n'
+                   for n in "ABC")  # fmt: skip
+    pvs = "".join(f'    <physvol name="pv{n}"><volumeref ref="{n}LV"/><position name="p{n}" x="{x}" unit="m"/>'
+                  "</physvol>\n" for n, x in (("A", -0.5), ("B", 0.0), ("C", 0.5)))  # fmt: skip
+    structure = (f'{vols}  <volume name="WorldLV"><materialref ref="Vac"/><solidref ref="WorldS"/>\n{pvs}  </volume>\n'
+                 '  <bordersurface name="AB" surfaceproperty="RT"><physvolref ref="pvA"/><physvolref ref="pvB"/>'
+                 "</bordersurface>\n"
+                 '  <bordersurface name="BC" surfaceproperty="Detect"><physvolref ref="pvB"/><physvolref ref="pvC"/>'
+                 "</bordersurface>")  # fmt: skip
+    gdml = HEAD.format(define="\n".join(define), materials="\n".join(mats), solids="\n".join(solids),
+                       structure=structure)  # fmt: skip
+    group = SensorGroup("c", "border_into", "lumen:geant4", lv="CLV", settings={"efficiency_on_entry": 1.0})
+    return gdml, Recipe("rt_boxes", "WorldLV", BAND, (group,))
 
 
 def overlap(name):

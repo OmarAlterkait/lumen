@@ -26,3 +26,24 @@ itself is up to ~1e5, and falls to 6e-8 at nk = 1.5.
 
 **Who is affected.** None of the public detectors (SK, WCTE, ANNIE, SBND, MicroBooNE) has a complex-index surface. A
 detector with a photocathode or metal of nk below 1e-4 should not differentiate nk near the critical angle.
+
+## ANNIE's LAPPDs are not sensors: the LAPPD glass's transmittance has a zero derivative
+
+**What.** In lumen 0.1 ANNIE's sensor set reads its PMTs only (`lumen:pmt`); the LAPPDs are not sensors, because
+their electronics (not a PMT model) come with the non-PMT sensor models of 0.2. A photon that enters an LAPPD's
+interior (`InteriorWCLAPPD`) is therefore never detected. The LAPPD glass face's surface
+(`GlassCathodeSurface`, a DIELECTRIC_RT with TRANSMITTANCE 0) has a T family whose derivative is exactly 0:
+T only sends photons into that interior. The gradient check reports it as "zero" (`lumen.validate.gradients`,
+`judge_zero`): its AD is exactly 0 although the edge rows propose the transmitted outcome, and it is gated on the
+FD and FDX totals being consistent with 0. That is the physics of this sensor set, not the "edge rows missing" bug
+(an exactly-zero AD with the outcome never proposed, which the check still fails).
+
+**The measurement.** `python tools/port/a10_edge.py after annie --photons 1048576`: of 2^20 photons from the
+gradient check's sources, 93,382 enter an LAPPD interior at T = 0 and 127,019 at T = 1 - R = 0.68; the charge they
+deposit afterwards is exactly 0 in both, with no lost weight. With the edge rows on, the transmitted outcome is
+drawn 481 times in 92,740 crossings of that surface (2^19 photons) and the AD stays exactly 0; the FD is
+-7.0e-4 +- 4.4e-4 per photon. `tests/physics/test_edge_rows.py` checks the same estimator on a toy with a closed
+form (dQ/dT = exp(-0.75 / L) per photon at T = 0+).
+
+**Who is affected.** ANNIE until its LAPPDs are sensors (0.2); any detector whose transmitting surface leads only into
+volumes that are not sensors and from which light does not return.

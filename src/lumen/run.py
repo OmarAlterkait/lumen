@@ -60,6 +60,7 @@ def run(  # noqa: PLR0913 -- SPEC section 5's signature
     """
     if int(max_vertices) < 1:
         raise ValueError(f"max_vertices must be >= 1, got {max_vertices}")
+    check_device(backend)
     static = (spec, model, int(max_vertices), int(replicas), tuple(diagnostics), backend, form)
     if form == "memory":  # loop_memory: the compiled loop's memory analysis, not a run
         m = _LOOP.lower(static[:-1] + ("operands",), ops, rows, key, jnp.asarray(first_id, jnp.int32), n_active)
@@ -77,6 +78,23 @@ def loop_memory(spec, model, ops, rows, key, **kw) -> dict:
     around the kernel.
     """
     return run(spec, model, ops, rows, key, **kw, form="memory")
+
+
+class DeviceError(RuntimeError):
+    """A run that expects the GPU found JAX on another device (a failed CUDA plugin falls back to the CPU silently)."""
+
+
+def check_device(backend):
+    """Refuse a run that expects the GPU while JAX's default backend is not it (``DeviceError``).
+
+    Expected: ``backend="cuda"``, or ``"auto"`` where the environment expects a GPU (``lumen._env.gpu_expected``).
+    ``backend="cpu"`` never expects one.
+    """
+    why = "backend='cuda'" if backend == "cuda" else _env.gpu_expected() if backend == "auto" else None
+    if why and jax.default_backend() not in ("gpu", "cuda"):
+        raise DeviceError(f"the photon loop expects the GPU ({why}) but JAX runs on {jax.default_backend()!r}: the "
+                          "CUDA plugin did not load (see JAX's log above); run on a working GPU node, or pass "
+                          "backend='cpu'")  # fmt: skip
 
 
 class ClosedOverValues(ValueError):  # noqa: N818 -- the documented error catalogue's name

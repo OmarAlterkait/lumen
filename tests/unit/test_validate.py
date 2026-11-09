@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from lumen import plugins
+from lumen.surfaces._legacy import SurfaceType
 from lumen.validate import charge, gradients, records, references, report, stats
 
 
@@ -89,6 +90,7 @@ def test_coincident_sensors_count_as_one():
 
 class _Optics:
     rows = {"painted": ["surface:A", "surface:B"]}
+    kinds = (SurfaceType("painted", ("R", "sigma_alpha"), (), lambda p, ctx: None),)  # its parameters' domains
 
 
 def test_the_gradient_families_and_their_values():
