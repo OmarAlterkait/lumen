@@ -1,0 +1,37 @@
+{
+ "schema": "lumen-pmt-values/1",
+ "model": "lumen:pmt",
+ "model_version": 1,
+ "name": "microboone_qe",
+ "version": 1,
+ "readout": "pe",
+ "provenance": {
+  "source": "lumen-b1 (rebuild/next 880b220c) lumen/detectors/microboone.py:7-8, 20: MicroBooNE's electronics simulation QE per physical photon",
+  "status": "transcribed",
+  "fields": {}
+ },
+ "qe": {
+  "band_edges_nm": [
+   100.0,
+   900.0
+  ],
+  "values": [
+   0.0093
+  ]
+ },
+ "ce": null,
+ "efficiency": 1.0,
+ "t_offset_ns": 0.0,
+ "tts": null,
+ "charge": null,
+ "gain": 1.0,
+ "threshold": null,
+ "dark_rate_hz": 0.0,
+ "frontend": {
+  "sampling_ns": 1.0,
+  "unit": "pe",
+  "window_ns": 0.0,
+  "charge_step_pe": 0.25,
+  "charge_max_pe": 4.0
+ }
+}

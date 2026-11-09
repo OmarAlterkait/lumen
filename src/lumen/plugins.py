@@ -11,9 +11,10 @@ surface behaves during tracking is optics (``lumen.rules.optics.SENSOR_SURFACES`
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from importlib import metadata
+from importlib import import_module, metadata
 
 GROUPS = ("lumen.detectors", "lumen.sensor_models", "lumen.optics_models")
+BUILTINS = {"lumen.sensor_models": "lumen.sensors"}  # the module that registers lumen's own entries of a group
 
 
 class NotRegistered(KeyError):  # noqa: N818 (the name of the documented error catalogue)
@@ -51,6 +52,8 @@ class Registry:
         if self._loaded:
             return
         self._loaded = True
+        if self.group in BUILTINS:
+            import_module(BUILTINS[self.group])
         for ep in metadata.entry_points(group=self.group):
             if ep.name not in self._entries:
                 self._entries[ep.name] = ep
