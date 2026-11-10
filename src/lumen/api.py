@@ -212,6 +212,8 @@ def _sensor_group(det):
     from lumen import plugins
 
     groups = [g for g in det.sensor_set.groups if g.model in plugins.sensor_models.names()]
+    if not groups:
+        return None, None  # counting sensors only: arrivals, no histograms
     if len(groups) != 1:
         raise ValueError(f"simulate: one sensor group with a sensor model (lumen.sensors) is supported, the sensor "
                          f"set has {[g.name for g in groups]}")  # fmt: skip
@@ -321,9 +323,12 @@ def simulate(det, source, params=None, *, samples: int, seed: int, replicas: int
     right; a source key that moves the photons (a position) turns on the moving-source method, with the clearance
     about the source's origins (none when they are traced), and needs a source whose directions are drawn. The photons
     run in chunks of ``chunk`` (``lumen.readout.photon_chunks``), photon i under ``fold_in(key(seed), i)``. The
-    histograms are those of the sensor set's group with a sensor model (``lumen:pmt``), on its static grid
+    histograms are those of the sensor set's group with a sensor model (``lumen:pmt``), over its sensors in their
+    order in the group, on its static grid
     (``lumen.readout.make_grid`` with ``gate`` (ns), default the group's ``readout["gate"]``); ``simulate`` refuses
-    before launch (MemoryError) when they exceed the device's budget.
+    before launch (MemoryError) when they exceed the device's budget. The other sensors (a counting group) give
+    arrivals only, and a detector without a modelled group gives no histograms (``histograms`` None); ``arrivals``
+    and its error and mean time cover every sensor of the detector.
     """
     from lumen import readout as ro
     from lumen import run as runner
@@ -332,13 +337,17 @@ def simulate(det, source, params=None, *, samples: int, seed: int, replicas: int
     from lumen.transport import step as steps
 
     group, sensor_model = _sensor_group(det)
-    gate = tuple(float(x) for x in (gate or (group.readout or {}).get("gate", (0.0, 0.0))))
-    grid = ro.make_grid(sensor_model, gate)
     n = len(det.parts.optics.sensor_pvs)
-    if build.group_tags(group, det.parts) != list(range(n)):
-        raise ValueError(f"simulate: sensor group {group.name!r} must contain every sensor of the detector")
-    r = item.HistogramLayout(n, grid, int(replicas))
-    ro.check_memory(grid, n, int(replicas), 0, _budget())
+    if group is None:  # no histograms: one never-filled cell (no sensor maps into it)
+        gate, grid, tags = (0.0, 0.0), ro.Grid(), []
+    else:
+        gate = tuple(float(x) for x in (gate or (group.readout or {}).get("gate", (0.0, 0.0))))
+        grid = ro.make_grid(sensor_model, gate)
+        tags = build.group_tags(group, det.parts)
+    pos = {t: i for i, t in enumerate(tags)}
+    index = None if tags == list(range(n)) else tuple(pos.get(i, -1) for i in range(n))
+    r = item.HistogramLayout(max(len(tags), 1), grid, int(replicas), index=index)
+    ro.check_memory(grid, max(len(tags), 1), int(replicas), 0, _budget())
     params = det.params() if params is None else params
     moving, origins = _moving(source, params, wrt) if hasattr(source, "emit") else (False, None)
     model = _model(det, grid.theta_knots is not None, moving, origins, _edge_rows(det, params, wrt))
@@ -370,7 +379,7 @@ def simulate(det, source, params=None, *, samples: int, seed: int, replicas: int
     prov = (("seed", int(seed)), ("samples", int(samples)), ("replicas", int(replicas)), ("chunk", size),
             ("backend", backend), ("detector", det.name), ("calibration", det.calibration),
             ("wrt", tuple(wrt)))  # fmt: skip
-    hist = item.histograms(r, acc, sensor_model, group.name, gate)
+    hist = None if group is None else item.histograms(r, acc, sensor_model, group.name, gate)
     return Light(arrivals, err, mean_t, hist, health, prov)
 
 

@@ -75,6 +75,7 @@ class HistogramLayout(NamedTuple):
     grid: Any
     replicas: int = 16
     half_replicas: int = 2
+    index: tuple | None = None  # per detector sensor, its position in the group (-1: not in it); None: all, in order
 
 
 @functools.lru_cache(maxsize=32)
@@ -90,15 +91,20 @@ def readout(r: HistogramLayout) -> PhotonLoop:
 
     g, s = r.grid, r.n_sensors
     cells, nodes = s * g.n_lam * g.n_theta, s * g.nt
+    n_all = s if r.index is None else len(r.index)
 
     def emits(dep, replica, _grid):
-        idx, w = charge_cells(dep, g)
+        hdep = dep  # the histograms see only the group's sensors, at their position in it
+        if r.index is not None:
+            pos = jnp.asarray(r.index, jnp.int32)[jnp.clip(dep.sensor, 0, n_all - 1)]
+            hdep = dep._replace(sensor=jnp.where(dep.sensor >= 0, pos, -1))
+        idx, w = charge_cells(hdep, g)
         adds = [("charge", jnp.where(idx[m] >= 0, idx[m] + replica * cells, -1), dep.q * w[m]) for m in range(len(w))]
-        adds += [("arrival", jnp.where(dep.sensor >= 0, dep.sensor + replica * s, -1), dep.q),
+        adds += [("arrival", jnp.where(dep.sensor >= 0, dep.sensor + replica * n_all, -1), dep.q),
                  ("arrival_t", dep.sensor, dep.q * dep.time)]  # fmt: skip
         if g.nt:
             h = replica * r.half_replicas // r.replicas
-            ti, tw, oi, ow = time_cells(dep, g)
+            ti, tw, oi, ow = time_cells(hdep, g)
             adds += [("time", jnp.where(ti[m] >= 0, ti[m] + h * nodes, -1), dep.q * tw[m]) for m in range(4)]
             for m in range(2):
                 o = jnp.where(oi[m] >= 0, oi[m] + h * 2 * s, -1)
@@ -108,7 +114,7 @@ def readout(r: HistogramLayout) -> PhotonLoop:
     def outputs(replicas):
         if replicas != r.replicas:
             raise ValueError(f"readout: the item was made for {r.replicas} replicas, run with {replicas}")
-        out = {"charge": (replicas * cells, True), "arrival": (replicas * s, True), "arrival_t": (s, True)}
+        out = {"charge": (replicas * cells, True), "arrival": (replicas * n_all, True), "arrival_t": (n_all, True)}
         out |= HEALTH_OUTPUTS
         if g.nt:
             hs = r.half_replicas

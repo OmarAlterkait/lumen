@@ -253,8 +253,11 @@ def _counting(tree, groups):
         if g.surface != "lumen:counting":
             raise LibraryError(f"sensor group {g.name!r}: any_entry counts with the surface reader 'lumen:counting', "
                                f"not {g.surface!r}")  # fmt: skip
-        sensors[g.name] = regions.SensorEntry(legacy.COUNTING, {"eff": float(g.settings["efficiency"])})
-        sources[g.name] = {("eff",): Source(f"sensors/{g.name}/efficiency", "setting")}
+        if g.model == "lumen:pmt":  # every entry counted; the model applies its efficiency after tracking
+            sensors[g.name] = regions.SensorEntry(legacy.COUNTING, {"eff": 1.0})
+        else:
+            sensors[g.name] = regions.SensorEntry(legacy.COUNTING, {"eff": float(g.settings["efficiency"])})
+            sources[g.name] = {("eff",): Source(f"sensors/{g.name}/efficiency", "setting")}
         for lv in (x for x in lvs if g.selects(x)):
             sbind.append(regions.SensorBinding(g.name, len(tree.placements(lv)), lv=lv))
     return sensors, sbind, sources

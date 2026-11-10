@@ -116,3 +116,13 @@ def test_simulate_reports_and_refuses_dropped_exact_emits(pmt_sphere, monkeypatc
     monkeypatch.setattr(runner, "run", lambda *a, **k: real(*a, **k)._replace(overflow=jnp.int32(7)))
     with pytest.raises(api.SumOverflow, match="7 emit"):
         lumen.simulate(pmt_sphere, point(Z0), samples=1 << 12, seed=3)
+
+
+def test_a_detector_without_a_sensor_model_simulates_arrivals_only(toy):
+    """No group with a sensor model (counting sensors only, as SBND's and MicroBooNE's shipped recipes): simulate
+    gives the arrivals, their error, mean time and health, and no histograms."""
+    det = toy("sphere", r=0.0, absorption=L_ABS).det
+    light = lumen.simulate(det, point(Z0), samples=1 << 14, seed=3, replicas=4)
+    q = float(np.asarray(light.arrivals, np.float64).sum())
+    assert light.histograms is None and q > 0.0 and np.isfinite(np.asarray(light.mean_arrival_time)).all()
+    assert abs(q - on_axis(Z0, L_ABS)[0]) < Z_MAX * float(np.asarray(light.arrivals_error).sum())
