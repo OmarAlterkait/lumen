@@ -3,10 +3,11 @@
     df2 = lumen.format.apply(df, values)   # values by key: a lumen.Params, or calibrations.merged(parents)
 
 Pure: returns a new detector file. The keys are those of ``lumen.Params``: ``materials/<M>/<KEY>`` and
-``surfaces/<S>/<KEY>`` replace a property (a ``Table`` replaces a table, a number a constant), ``surfaces/<S>/value``
-the opticalsurface's value (sigma_alpha or polish); a replaced value loses its source tokens (``lumen.gdml.tokens``),
-so an export writes it canonically. ``sensors/<group>/<setting>`` keys are values after tracking: they leave the
-detector file as it is (``sensor_set`` applies them to a sensor set's settings).
+``surfaces/<S>/<KEY>`` replace a property (a ``Table`` replaces a table, a number a constant),
+``surfaces/<S>/sigma_alpha`` or ``surfaces/<S>/polish`` the opticalsurface's value (``rules.optics.value_key``); a
+replaced value loses its source tokens (``lumen.gdml.tokens``), so an export writes it canonically.
+``sensors/<group>/<setting>`` keys are values after tracking: they leave the detector file as it is (``sensor_set``
+applies them to a sensor set's settings).
 
 A table keeps its knot count: a new knot count is a new detector file. One property may be added: a surface property
 the file omits whose Geant4 default the model reads (``lumen.rules.optics.surface_defaults``: TRANSMITTANCE on a
@@ -26,6 +27,7 @@ from lumen.format import schema
 from lumen.format.calibrations import Table
 
 SENSOR_PREFIX = "sensors/"
+VALUE_KEYS = ("sigma_alpha", "polish")  # the opticalsurface value's key, by model (rules.optics.value_key)
 GEANT4_DEFAULT = "geant4_default"  # the origin of a property a parameter value added at a Geant4 default key
 
 
@@ -53,6 +55,21 @@ def _property(p: schema.Property, v, key: str) -> schema.Property:
     return dataclasses.replace(p, value=np.asarray(float(v), np.float64))
 
 
+def _surface_value(key, rec, prop, v) -> str:
+    """Check a key of the opticalsurface's value (``rules.optics.value_key``: sigma_alpha or polish); return "value"."""
+    from lumen.rules.optics import value_key
+
+    want = value_key(rec)
+    if prop == "value":
+        raise ValueError(f"parameter key {key!r}: the opticalsurface value's key is surfaces/{rec.name}/{want} (it was "
+                         "surfaces/<S>/value before lumen 0.1: rename the key)")  # fmt: skip
+    if prop != want:
+        raise ValueError(f"parameter key {key!r}: surface {rec.name!r} (model {rec.model}) reads its value as {want}")
+    if np.ndim(v) or isinstance(v, Table):
+        raise ValueError(f"{key}: the opticalsurface value is a number")
+    return "value"
+
+
 def _changes(df: schema.DetectorFile, values) -> dict:
     """Return {section: {name: {key: value}}} of the material and surface keys of ``values``, checked."""
     out: dict = {"materials": {}, "surfaces": {}}
@@ -67,9 +84,8 @@ def _changes(df: schema.DetectorFile, values) -> dict:
         rec = getattr(df, section).get(name)
         if rec is None:
             raise ValueError(f"parameter key {key!r}: no {section[:-1]} {name!r}")
-        if section == "surfaces" and prop == "value":
-            if np.ndim(v) or isinstance(v, Table):
-                raise ValueError(f"{key}: the opticalsurface value is a number")
+        if section == "surfaces" and prop in (*VALUE_KEYS, "value"):
+            prop = _surface_value(key, rec, prop, v)
         elif prop not in rec.properties:
             if defaults is None:
                 from lumen.rules.optics import detector_defaults

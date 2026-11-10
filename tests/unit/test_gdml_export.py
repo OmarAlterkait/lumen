@@ -208,7 +208,7 @@ def test_a_calibration_is_applied_before_writing(tmp_path):
     df = importer.read_gdml(write(tmp_path, GDML))
     c = calibrations.Calibration("c1", "toy", "sha256:x", {
         "materials/Water/RINDEX": calibrations.Table(np.array([1.5, 2.5, 4.5]), np.array([1.3, 1.31, 1.4])),
-        "surfaces/Liner/value": 0.25, "surfaces/Liner/REFLECTIVITY": calibrations.Table(np.array([2.0, 4.5]),
+        "surfaces/Liner/sigma_alpha": 0.25, "surfaces/Liner/REFLECTIVITY": calibrations.Table(np.array([2.0, 4.5]),
                                                                                          np.array([0.5, 0.4])),
         "sensors/pmt/efficiency": np.array([0.9, 0.8])})  # fmt: skip
     rep = exporter.export(df, tmp_path / "c.gdml", calibration=c, scope="full")
@@ -388,3 +388,12 @@ def test_a_larsoft_reflector_is_written_as_its_geant4_form(tmp_path):
                                     "SPECULARSPIKECONSTANT"]  # fmt: skip
     assert list(s.properties["SPECULARSPIKECONSTANT"].value) == [0.5] * 3 and s.value == 0.0
     assert "7.0*eV 0.25" in (tmp_path / "a" / "x.gdml").read_text()
+
+
+def test_the_opticalsurface_value_is_keyed_by_what_the_model_reads(tmp_path):
+    df = importer.read_gdml(write(tmp_path, GDML))  # Liner: unified, ground: its value is sigma_alpha
+    assert apply(df, {"surfaces/Liner/sigma_alpha": 0.25}).surfaces["Liner"].value == 0.25
+    with pytest.raises(ValueError, match="surfaces/Liner/sigma_alpha"):  # the key before lumen 0.1, named
+        apply(df, {"surfaces/Liner/value": 0.25})
+    with pytest.raises(ValueError, match="reads its value as sigma_alpha"):
+        apply(df, {"surfaces/Liner/polish": 0.5})

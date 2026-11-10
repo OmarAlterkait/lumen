@@ -70,11 +70,11 @@ class Source(NamedTuple):
     """Where a parameter leaf comes from.
 
     ``key`` is the detector-file key ("materials/<material>/<PROPERTY>", "surfaces/<surface>/<PROPERTY>",
-    "surfaces/<surface>/value", "surfaces/<surface>/settings/<name>", "sensors/<group>/<setting>"), None for a value
-    the file does not give. ``column``: "energy" or "value" of a table, "constant" (a constant property or the surface
-    value), "setting", "derived" (computed from the key: ``note`` says how), "default" (Geant4's value of a property
-    the file omits and the model reads: a parameter at that value) or "fixed" (a value the model never reads for this
-    type, model and finish: folded into the surface type, ``fold_fixed``).
+    "surfaces/<surface>/sigma_alpha" or "/polish", "surfaces/<surface>/settings/<name>", "sensors/<group>/<setting>"),
+    None for a value the file does not give. ``column``: "energy" or "value" of a table, "constant" (a constant property
+    or the surface value), "setting", "derived" (computed from the key: ``note`` says how), "default" (Geant4's value of
+    a property the file omits and the model reads: a parameter at that value) or "fixed" (a value the model never reads
+    for this type, model and finish: folded into the surface type, ``fold_fixed``).
     """
 
     key: str | None
@@ -381,7 +381,9 @@ def _surface_param(rec: schema.Surface, param: str, value):
 
         if not value_read(rec):  # a polished or painted finish samples no facet
             return {(): Source(None, "fixed", f"no facet is sampled: {param} is never read")}
-        return {(): Source(f"{s}/value", "constant")}
+        from lumen.rules.optics import value_key
+
+        return {(): Source(f"{s}/{value_key(rec)}", "constant")}
     if param in INDEX_KEYS:
         key = next((k for k in INDEX_KEYS[param] if k in pr), INDEX_KEYS[param][0])
         return {(): Source(f"{s}/{key}", "derived", "at the wavelength range's centre")}

@@ -1,11 +1,11 @@
 """The parameter spec, computed at load: every parameter key of a detector, with its unit, range and gradient method.
 
-Keys come from the detector file (every material and surface property, and each surface's value) and from the sensor
-set (each group's model fields). What each Geant4 property means is in ``PROPERTIES``; a key it does not list is
-kept, as a dimensionless value of unknown range, so a calibration can still carry it. A value the model never reads
-is not a parameter (structure decides, never the value: docs/explanation/parameters.md): the Mie constants of a
+Keys come from the detector file (every material and surface property, and each surface's sigma_alpha or polish) and
+from the sensor set (each group's model fields). What each Geant4 property means is in ``PROPERTIES``; a key it does not
+list is kept, as a dimensionless value of unknown range, so a calibration can still carry it. A value the model never
+reads is not a parameter (structure decides, never the value: docs/explanation/parameters.md): the Mie constants of a
 material without MIEHG, a Mie forward ratio of 0 or 1 whose other lobe the material lacks
-(``lumen.rules.optics.mie_constants``), and a surface's value (sigma_alpha or polish) where no facet is sampled
+(``lumen.rules.optics.mie_constants``), and a surface's sigma_alpha or polish where no facet is sampled
 (``value_read``).
 """
 
@@ -37,6 +37,7 @@ PROPERTIES = {
     "REALRINDEX": ("", (0.0, INF), "reweight"), "IMAGINARYRINDEX": ("", (0.0, INF), "reweight"),
 }  # fmt: skip
 UNKNOWN = ("", (-INF, INF), "reweight")
+VALUE_PARAMS = {"sigma_alpha": ("rad", (0.0, INF)), "polish": ("", (0.0, 1.0))}  # an opticalsurface's value
 PENDING = {"moving_paths+reweight"}  # methods not validated yet: asking for their derivative raises
 
 
@@ -88,9 +89,12 @@ def detector_values(df: fmt.DetectorFile) -> tuple[dict, dict]:
                 values[key] = _value(p)
                 spec[key] = _info(key, prop, p.energy is not None)
             if isinstance(rec, fmt.Surface) and value_read(rec):
-                key = f"surfaces/{name}/value"
+                from lumen.rules.optics import value_key
+
+                vk = value_key(rec)
+                key = f"surfaces/{name}/{vk}"
                 values[key] = float(rec.value)
-                spec[key] = ParamInfo(key, "rad", (0.0, INF), "reweight")
+                spec[key] = ParamInfo(key, *VALUE_PARAMS[vk], "reweight")
     return values, spec
 
 

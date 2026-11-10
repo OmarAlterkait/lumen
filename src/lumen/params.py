@@ -1,9 +1,9 @@
 """Params: the one mapping of every parameter value, keyed by GDML names.
 
-Keys are ``materials/<Material>/<PROPERTY>``, ``surfaces/<Surface>/<PROPERTY>`` (with ``surfaces/<Surface>/value``
-for the opticalsurface's sigma_alpha or polish) and ``sensors/<group>/<field>``. A tabulated property's value is a
-``Table`` (energies in eV, values); a constant is a float. ``info(key)`` gives each key's unit, allowed range and
-gradient method.
+Keys are ``materials/<Material>/<PROPERTY>``, ``surfaces/<Surface>/<PROPERTY>`` (with ``surfaces/<Surface>/sigma_alpha``
+or ``surfaces/<Surface>/polish`` for the opticalsurface's value) and ``sensors/<group>/<field>``. A tabulated property's
+value is a ``Table`` (energies in eV, values); a constant is a float. ``info(key)`` gives each key's unit, allowed range
+and gradient method.
 
 Precedence, later wins: (1) the detector file's own values; (2) each sensor group's model defaults; (3) the
 calibration's parents, oldest first; (4) the calibration itself. ``explain(key)`` says which layer each value

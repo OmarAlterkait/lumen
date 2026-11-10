@@ -85,7 +85,7 @@ def test_every_encoding_on_the_toy(toy):
     named = regions.named_params(o, lib)
     assert src[("media", "Liq", "index", "value")] == glue.Source("materials/Liq/RINDEX", "value")
     assert src[("media", "Liq", "rayleigh", "length", "energy")] == glue.Source("materials/Liq/RAYLEIGH", "energy")
-    assert src[("surfaces", "glis", "polish")] == glue.Source("surfaces/glis/value", "constant")
+    assert src[("surfaces", "glis", "polish")] == glue.Source("surfaces/glis/polish", "constant")
     assert src[("surfaces", f"film:{PLUS}", "d")].key == "surfaces/film/settings/thickness_m"
     assert src[("surfaces", f"film:{PLUS}", "b:R", "value")] == glue.Source("surfaces/paint/REFLECTIVITY", "value")
     assert src[("surfaces", f"film:{PLUS}", "eta")].column == "fixed"

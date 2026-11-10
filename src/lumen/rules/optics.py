@@ -195,6 +195,14 @@ def surface_names(s: schema.Surface) -> tuple[str, str, str]:
     return _enum(MODELS, s.model), _enum(FINISHES, s.finish), _enum(TYPES, s.type)
 
 
+def value_key(s: schema.Surface) -> str:
+    """Return the parameter name of an opticalsurface's ``value``: glisur's ``polish``, else unified's ``sigma_alpha``.
+
+    G4OpBoundaryProcess::GetFacetNormal reads it as the polish (glisur) or as sigma_alpha in rad (unified).
+    """
+    return "polish" if surface_names(s)[0] == "glisur" else "sigma_alpha"
+
+
 # ----------------------------------------------------------------------------------------------------- reporting
 def coverage(df: schema.DetectorFile, lam_domain) -> list[str]:
     """Return report lines: every table whose knots do not cover ``lam_domain`` (nm); Geant4 clamps there."""

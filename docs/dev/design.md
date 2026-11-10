@@ -188,7 +188,7 @@ array, its sha256 in the manifest. The full GDML world is kept; the detector vol
 | Key | Value |
 |---|---|
 | `materials/<Material>/<PROPERTY>` | a Geant4 material property (table `{energy, value}` or constant) |
-| `surfaces/<Surface>/<PROPERTY>` | a surface property; the opticalsurface's `value` (unified's sigma_alpha, glisur's polish) is `surfaces/<Surface>/value` |
+| `surfaces/<Surface>/<PROPERTY>` | a surface property; the opticalsurface's `value` is `surfaces/<Surface>/sigma_alpha` (unified) or `surfaces/<Surface>/polish` (glisur) |
 | `sensors/<group>/<field>` | an array over the group's sensors in id order |
 | `source/<field>` | a field of the source passed to `simulate` (`x`, `direction`, `time`, `n_photons`, `lam`, `spectrum`, …) |
 

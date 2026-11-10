@@ -52,7 +52,7 @@ def test_params_list_the_default_with_its_source(det):
     assert p.explain(KEY) == "Geant4 default 0, G4OpBoundaryProcess.cc:310"
     # the unbound unified ground metal: its omitted constants are read at 0 (G4OpBoundaryProcess.cc:405-413)
     assert p["surfaces/Liner/SPECULARSPIKECONSTANT"] == 0.0 and "surfaces/Liner/TRANSMITTANCE" not in p
-    assert "surfaces/Win/value" not in p  # a polished finish samples no facet
+    assert "surfaces/Win/sigma_alpha" not in p and "surfaces/Win/polish" not in p  # a polished finish samples no facet
 
 
 def test_setting_a_default_key_adds_the_property(det):
