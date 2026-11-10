@@ -6,7 +6,7 @@
     loaded.sensors    # sensor id -> the instance's placement path (one id per world instance: scene.PATH)
     loaded.report     # what was decided: the detector volume, the sensors found and how, the normalisations
 
-    scene = split_unions(loaded.scene, 16)                        # large unions placed as their pieces (exact)
+    scene = split_unions(loaded.scene)                            # large unions placed as their pieces (exact)
     scene = place(base, part, into="world", R=R, t=t, prefix="frame")  # compose a part into a scene
     scale = scene_scale(scene)                                    # m
 
@@ -928,7 +928,10 @@ def n_leaves(node):
     return len(so.flatten(node)[1])
 
 
-def split_unions(scene, min_leaves=16):
+SPLIT_LEAVES = 16  # a union of this many leaves or more is placed as its pieces (every detector)
+
+
+def split_unions(scene, min_leaves=SPLIT_LEAVES):
     """Return a Scene where each large union solid is a member-less definition placing its pieces.
 
     A large union solid is one member, no daughters, no sensor, ``min_leaves`` leaves or more (a CPA frame of ~150

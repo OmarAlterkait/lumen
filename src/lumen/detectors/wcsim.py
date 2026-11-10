@@ -11,9 +11,8 @@ WCSim semantics these recipes follow (WCSim e2dc7a48 source):
 - Quantum and collection efficiency are off in the reference runs; they are applied after tracking.
 - Only WCSim's photocathode model 0 (= G4OpBoundaryProcess) is implemented; models 1 and 2 (thin-film cathodes) are
   refused, as they would not show in the GDML.
-- A material whose ABSLENGTH is below ``ABSORB_AT_ENTRY`` at every knot, used by a tessellated (mesh) volume, is
-  opaque in effect (ANNIE's StainlessSteel: Geant4 refracts a photon in and absorbs it within about 1e-11 m); it is
-  bound opaque, its border and skin surfaces still apply.
+- ANNIE's StainlessSteel mesh (ABSLENGTH 1e-11 m) is bound opaque by the general absorbed-at-entry rule
+  (``lumen.build.import_rules``).
 
 ANNIE's quantum efficiencies (Multi_Tank_Types) are read from WCSim's C++ source at conversion time
 (``annie_qe``): the 20-point tables of each tube type, its maximum and the tuning's QEratio, stored with the detector
@@ -22,7 +21,6 @@ file.
 
 from __future__ import annotations
 
-import dataclasses
 import re
 from pathlib import Path
 
@@ -35,38 +33,16 @@ from lumen.recipe import Recipe
 DETECTOR = "WCBarrel"  # WCSim's water volume (WC is air, expHall vacuum)
 SENSOR_LV = "InteriorWCPMT"
 CATHODE_MODEL = 0  # the reference's /WCSim/tuning/PMTCathodePara model
-ABSORB_AT_ENTRY = 1e-6  # m: an ABSLENGTH below this at every knot makes a mesh volume's material opaque in effect
 WAVELENGTHS = (300.0, 600.0)  # nm
 ANNIE_TANK_TYPES = ("R7081", "D784KFLB", "R5912HQE", "R7081HQE")  # SetANNIEPhase2Geometryv7's tank collections
 QE_POINTS = 20  # WCSim's QE tables have 20 points
 
 
-def _detector_lvs(df: schema.DetectorFile, root: str) -> set:
-    lvs, stack = set(), [root]
-    while stack:
-        lv = stack.pop()
-        if lv not in lvs:
-            lvs.add(lv)
-            stack += [df.placements[i].volume for i in df.volumes[lv].daughters]
-    return lvs
-
-
-def opaque_mesh_materials(df: schema.DetectorFile, inputs: dict) -> schema.DetectorFile:
-    """Bind opaque every mesh volume's material that absorbs at entry (see the module docstring)."""
+def cathode_model(df: schema.DetectorFile, inputs: dict) -> schema.DetectorFile:
+    """Refuse a photocathode model other than WCSim's model 0 (see the module docstring)."""
     if CATHODE_MODEL != 0:
         raise ValueError(f"WCSim photocathode model {CATHODE_MODEL}: only model 0 is implemented")
-    lvs = _detector_lvs(df, df.detector_volume)
-    meshes = {df.volumes[lv].material for lv in lvs
-              if df.volumes[lv].solid and df.solids[df.volumes[lv].solid].type == "tessellated"}  # fmt: skip
-    mats, rep = dict(df.materials), list(df.report)
-    for name in sorted(m for m in meshes if m in mats):
-        a = mats[name].properties.get("ABSLENGTH")
-        if a is not None and a.energy is not None and float(np.max(a.value)) < ABSORB_AT_ENTRY:
-            note = f"mesh material with ABSLENGTH < {ABSORB_AT_ENTRY} m at every knot: absorbed at entry"
-            mats[name] = dataclasses.replace(mats[name], optics=schema.OpticsModel("lumen:opaque", 1, {"medium": name},
-                                                                               "recipe", note))  # fmt: skip
-            rep.append(f"recipe: material {name} bound opaque ({note})")
-    return dataclasses.replace(df, materials=mats, report=tuple(rep))
+    return df
 
 
 def recipe(name: str, detector_volume: str = DETECTOR, decisions=(), inputs=(), **kw) -> Recipe:
@@ -74,7 +50,7 @@ def recipe(name: str, detector_volume: str = DETECTOR, decisions=(), inputs=(), 
     group = SensorGroup("pmt", "border_into", "lumen:geant4", lv_pattern=f"^{SENSOR_LV}",
                         settings={"efficiency_on_entry": 1.0, "name_prefix": "pmt"})  # fmt: skip
     return Recipe(name=name, detector_volume=detector_volume, wavelength_range=WAVELENGTHS, groups=(group,),
-                  decisions=(opaque_mesh_materials, *decisions), inputs=tuple(inputs), **kw)  # fmt: skip
+                  decisions=(cathode_model, *decisions), inputs=tuple(inputs), **kw)  # fmt: skip
 
 
 # ------------------------------------------------------------------------------- ANNIE: tube types and QE tables

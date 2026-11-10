@@ -141,9 +141,7 @@ def test_unbound_borders_and_surface_inert_keys_round_trip(tmp_path):
 
 def _toy_recipe():
     def decide(df, inputs):
-        o = schema.OpticsModel(
-            "lumen:opaque", 1, {"medium": "steel", "expected_axes": [[1.0, 0.0, 0.0]]}, "recipe", "toy"
-        )
+        o = schema.OpticsModel("lumen:opaque", 1, {"medium": "steel"}, "recipe", "toy")
         steel = dataclasses.replace(
             df.materials["Steel"],
             optics=o,
@@ -183,8 +181,8 @@ def _toy_recipe():
         )
         borders = df.borders + (schema.Border("b2", "brdf", "pmt0x10", "tank", "recipe", True, "lossy border"),)
         return dataclasses.replace(df, materials={**df.materials, "Steel": steel}, skins=skins, borders=borders,
-                                   surfaces={**df.surfaces, "film": film, "brdf": brdf}, outside_surface="Liner",
-                                   build_options={"split_unions": 16})  # fmt: skip
+                                   surfaces={**df.surfaces, "film": film, "brdf": brdf},
+                                   outside_surface="Liner")  # fmt: skip
 
     group = sensorsets.SensorGroup("pmt", "border_into", "lumen:geant4", lv="PmtLV",
                                    settings={"efficiency_on_entry": 1.0}, readout={"gate": [-1.0, 2.0]})  # fmt: skip

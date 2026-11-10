@@ -3,11 +3,8 @@
 SBND (sbnd_v02_00_full_simulation.gdml, sbndcode 4e41b3d8): the GDML holds every optical property SBND's full
 optical simulation gives Geant4. The recipe's decisions, each checked against the GDML first:
 
-- The TPB film: volCPATPB is a 23 nm TPB box on one face of each CPA foil (inside volCPA_FoilTPB, LAr, exactly foil
-  plus film thick). It is index-matched to LAr (equal RINDEX tables, checked), so TPB is bound to LAr's medium and the
-  foil's skin becomes a wavelength-shifting film over the foil's own surface on the film's face (``lumen:wls_film``:
-  the film's WLSABSLENGTH, thickness, Geant4's WLSCOMPONENT sampler and isotropic emission), crossed layer by layer as
-  Geant4 tracks it. The foil's back face and edges are the bare foil surface.
+- The TPB film (volCPATPB, 23 nm on one face of each CPA foil) is lowered by the general film rule
+  (``lumen.build.import_rules``, D51): TPB bound to LAr, the foil's skin a ``lumen:wls_film`` on the film's face.
 - The outside: the detector volume (volCryostat) is exactly the inner box of volCryoMembrane (steel), placed at the
   same position, so the outside carries the membrane's skin (checked).
 - Every material without RINDEX is one opaque medium (Geant4 kills a photon there).
@@ -34,52 +31,14 @@ from lumen.format import schema
 from lumen.format.sensorsets import SensorGroup
 from lumen.recipe import Recipe
 
-LAR, TPB = "LAr", "TPB"
-TPB_LV, FOIL_LV, FOILTPB_LV = "volCPATPB", "volCPAFoil", "volCPA_FoilTPB"
+LAR = "LAr"
 CRYOSTAT_LV, MEMBRANE_LV, ENCLOSURE_LV = "volCryostat", "volCryoMembrane", "volDetEnclosure"
 SBND_WAVELENGTHS = (100.0, 900.0)  # nm: LAr scintillation (104-172) and TPB emission (350-826)
-FILM_SURFACE = "cpa_tpb"
-FILM_AXES = [[1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]]  # the CPA films face +-x (the drift axis), checked at load
-SPLIT_UNIONS = 16  # unions of more pieces are placed as their pieces in the navigator's scene
 GEOMETRY_TOLERANCE = 1e-12  # m: two GDML lengths that agree to this are equal (1e-9 mm)
-
-
-def _box(df: schema.DetectorFile, lv: str) -> np.ndarray:
-    s = df.solids[df.volumes[lv].solid]
-    if s.type != "box":
-        raise ValueError(f"{lv}: solid {s.name} is a {s.type}, expected a box")
-    return np.array([s.params["x"], s.params["y"], s.params["z"]], np.float64)
 
 
 def _daughters(df, lv):
     return {df.placements[i].volume: df.placements[i] for i in df.volumes[lv].daughters}
-
-
-def tpb_facts(df: schema.DetectorFile) -> dict:
-    """Check the film geometry the SBND recipe relies on; return the film thickness d (m) and side (+1 / -1 in x)."""
-    film, foil, both = _box(df, TPB_LV), _box(df, FOIL_LV), _box(df, FOILTPB_LV)
-    pv = _daughters(df, FOILTPB_LV)
-    names = {TPB_LV, FOILTPB_LV} | {p.name for p in df.placements if p.volume in (TPB_LV, FOILTPB_LV)}
-    if any(k.volume in (TPB_LV, FOILTPB_LV) for k in df.skins) or any(
-        b.pv1 in names or b.pv2 in names for b in df.borders
-    ):
-        raise ValueError(f"{TPB_LV} / {FOILTPB_LV} carry an optical surface: the film lowering does not apply")
-    if set(pv) != {TPB_LV, FOIL_LV} or df.volumes[FOILTPB_LV].material != LAR:
-        raise ValueError(f"{FOILTPB_LV}: expected LAr holding exactly {FOIL_LV} and {TPB_LV}")
-    xf, xt = pv[FOIL_LV].position[0], pv[TPB_LV].position[0]
-    side = 1.0 if xt > xf else -1.0
-    tol = GEOMETRY_TOLERANCE
-    ok = (abs(film[0] + foil[0] - both[0]) < tol and np.allclose(film[1:], foil[1:]) and np.allclose(foil[1:], both[1:])
-          and abs((xt - side * film[0] / 2) - (xf + side * foil[0] / 2)) < tol
-          and abs(abs(xt) + film[0] / 2 - both[0] / 2) < tol)  # fmt: skip
-    if not ok:
-        raise ValueError(f"TPB film geometry is not a {film[0]} m layer on one face of the foil filling {FOILTPB_LV}")
-    if df.volumes[TPB_LV].material != TPB:
-        raise ValueError(f"{TPB_LV} is not of material {TPB}")
-    a, b = df.materials[TPB].properties["RINDEX"], df.materials[LAR].properties["RINDEX"]
-    if not (np.array_equal(a.energy, b.energy) and np.array_equal(a.value, b.value)):
-        raise ValueError("TPB RINDEX differs from LAr's: the film is not index-matched")
-    return dict(d=float(film[0]), side=side)
 
 
 def membrane_skin(df: schema.DetectorFile) -> str:
@@ -99,38 +58,16 @@ def membrane_skin(df: schema.DetectorFile) -> str:
 
 def sbnd_optics(df: schema.DetectorFile, inputs: dict) -> schema.DetectorFile:
     """SBND's optics decisions (see the module docstring), each recorded with origin "recipe"."""
-    film = tpb_facts(df)
     outside = membrane_skin(df)
     mats, rep = {}, list(df.report)
     for name, m in df.materials.items():
-        if name == TPB:
-            o = schema.OpticsModel(
-                "lumen:same_as", 1, {"material": LAR}, "recipe", "index-matched film on the CPA foil"
-            )
-        elif "RINDEX" not in m.properties:
+        if "RINDEX" not in m.properties:
             o = schema.OpticsModel("lumen:opaque", 1, {"medium": "opaque"}, "recipe", "no RINDEX: one opaque medium")
         else:
             o = m.optics
         mats[name] = dataclasses.replace(m, optics=o)
-    backing = next(k.surface for k in df.skins if k.volume == FOIL_LV)
-    settings = dict(film_material=TPB, front_material=LAR, backing=backing, thickness_m=film["d"],
-                    local_axis=[film["side"], 0.0, 0.0], expected_axes=FILM_AXES)  # fmt: skip
-    surf = schema.Surface(
-        FILM_SURFACE,
-        "",
-        "",
-        "",
-        0.0,
-        {},
-        schema.OpticsModel("lumen:wls_film", 1, settings, "recipe", "TPB film on the foil's drift-volume face"),
-    )
-    skins = df.skins + (schema.Skin(FILM_SURFACE, FILM_SURFACE, FOIL_LV, "recipe", "replaces the bare foil's skin"),)
-    rep += [f"recipe: TPB bound to LAr; the CPA foil's skin is a {film['d']} m TPB film over {backing}",
-            f"recipe: the outside carries {MEMBRANE_LV}'s skin {outside}"]  # fmt: skip
-    return dataclasses.replace(df, materials=mats, surfaces={**df.surfaces, FILM_SURFACE: surf}, skins=skins,
-                               outside_surface=outside,
-                               build_options={**df.build_options, "split_unions": SPLIT_UNIONS},
-                               report=tuple(rep))  # fmt: skip
+    rep.append(f"recipe: the outside carries {MEMBRANE_LV}'s skin {outside}")
+    return dataclasses.replace(df, materials=mats, outside_surface=outside, report=tuple(rep))
 
 
 def channel_of(df: schema.DetectorFile, mother_lv: str, child_lv: str) -> int:
