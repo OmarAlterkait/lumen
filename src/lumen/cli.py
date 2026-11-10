@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import sys
 import time
+from pathlib import Path
 
 CHECKS = ("charge", "gradients", "geometry", "overlaps")
 
@@ -35,6 +36,8 @@ def _parser() -> argparse.ArgumentParser:
     v.add_argument("--photons", type=int, help="gradients: photons per replica")
     v.add_argument("--reverse", action="store_true", help="gradients: also reverse mode against forward mode")
     v.add_argument("--only", help="gradients: comma-separated prefixes of the parameter families to check")
+    v.add_argument("--shard", help="gradients: I/N, run the families j with j %% N == I (one job each, on many GPUs)")
+    v.add_argument("--merge", action="store_true", help="gradients: merge the shards' records into the check's")
     v.add_argument("--g4ref", help="geometry: the g4ref binary (Geant4 10.7.4), or a probe CSV made elsewhere")
     return ap
 
@@ -49,8 +52,9 @@ def _run(a, name):
     if a.check == "gradients":
         only = tuple(a.only.split(",")) if a.only else ()
         log = lambda s: sys.stderr.write(s + "\n")  # noqa: E731 -- one line per family, as it finishes
+        shard = tuple(int(x) for x in a.shard.split("/")) if a.shard else None
         return gradients.check(name, detector=a.detector_file, photons=a.photons, replicas=a.replicas,
-                               reverse=a.reverse, only=only, log=log, **common)  # fmt: skip
+                               reverse=a.reverse, only=only, log=log, shard=shard, **common)  # fmt: skip
     if a.check == "geometry":
         return geometry.validate(name, detector=a.detector_file, g4ref=a.g4ref, **common)
     return toys.check(name, replicas=a.replicas, **common)
@@ -71,8 +75,17 @@ def validate(a) -> int:
     ok = True
     for name in a.names or references.names(a.check, a.references):
         t0 = time.time()
-        rows = _run(a, name)
-        path = records.write(rows, a.out or "validation", f"{a.check}_{name}")
+        out, tag = a.out or "validation", f"{a.check}_{name}"
+        if getattr(a, "merge", False):
+            from lumen.validate import gradients
+
+            files = sorted(Path(out).glob(f"{tag}_shard*.json"))
+            rows = gradients.merge(name, [records.read([f]) for f in files])
+        else:
+            rows = _run(a, name)
+            if getattr(a, "shard", None):
+                tag += "_shard{}of{}".format(*a.shard.split("/"))
+        path = records.write(rows, out, tag)
         gated = [r for r in rows if r["pass"] is not None]
         bad = [r["quantity"] for r in gated if not r["pass"]]
         ok &= not bad

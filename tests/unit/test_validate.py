@@ -104,3 +104,22 @@ def test_the_gradient_families_and_their_values():
                      "painted.sigma_alpha[surface:A]": "mul", "Water:absorption": "mul"}  # fmt: skip
     p = gradients.apply(p0, fams, np.array([0.1 if f[0] == "painted.R[surface:A]" else 0.0 for f in fams]))
     assert float(p["kernel"]["painted"]["R"][0]) == pytest.approx(0.3 + 0.1 * 0.3)
+
+
+def test_a_sharded_gradient_check_merges_into_one_summary():
+    """Each shard holds families j % n == i; the merge needs every family exactly once, from one sharding."""
+    from lumen.validate import gradients
+
+    def fam(q, ok, n=2):
+        return records.row("gradients", "toy", f"dQ {q}", 1.0, passed=ok, seconds=1.0, shard_of=n, families_total=3,
+                           family="abc".index(q), settings={"photons": 16})  # fmt: skip
+
+    a, b = [fam("a", True), fam("c", True)], [fam("b", None)]
+    rows = gradients.merge("toy", [a, b])
+    s = rows[-1]
+    assert s["quantity"] == "families passing" and s["pass"] is True and s["value"] == 2
+    assert s["extra"]["gated"] == 2 and s["extra"]["families"] == 3
+    with pytest.raises(ValueError, match="two shards"):
+        gradients.merge("toy", [a, a])
+    with pytest.raises(ValueError, match="2 of 3"):
+        gradients.merge("toy", [a, []])

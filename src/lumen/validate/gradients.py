@@ -380,11 +380,14 @@ def _proposed(s, rows, ops, o):
     return int((np.asarray(t.per_item["z"]) == 0.0).sum())
 
 
-def check(name, *, detector=None, photons=None, replicas=None, reverse=False, only=(), extra=(), log=None) -> list:  # noqa: PLR0913 -- the check's settings
+def check(name, *, detector=None, photons=None, replicas=None, reverse=False, only=(), extra=(), log=None,  # noqa: PLR0913 -- the check's settings
+          shard=None) -> list:  # fmt: skip
     """Run the gradient check named ``name`` (a manifest entry); return its record rows (``log``: a line per family).
 
     Each family is differentiated alone (wrt = that family), so its edge rows are its own: the families with none
-    share one compiled loop, each edge family has its own.
+    share one compiled loop, each edge family has its own. ``shard`` = (i, n): only the families j with j % n == i,
+    and no summary row (``merge`` makes it from the shards' rows); the reverse rows go with shard 0. The photons,
+    keys and statistics are the same in every shard, so a family's row does not depend on the sharding.
     """
     import lumen
     from lumen.validate import photons as ph
@@ -398,7 +401,10 @@ def check(name, *, detector=None, photons=None, replicas=None, reverse=False, on
     nf, ng, n = len(fams), o["groups"], o["photons"]
     th0 = jnp.zeros(nf, F32)
     benches, out, fwd = {}, [], []
+    mine = range(nf) if shard is None else range(shard[0], nf, shard[1])
     for j, (nm, keys, row, mode, _) in enumerate(fams):
+        if j not in mine:
+            continue
         t1 = time.time()
         edge = estimator.edge_rows(det.parts.optics, p0, [keys[:3] + (row,)] if keys[0] == "kernel" else [])
         if edge not in benches:
@@ -431,22 +437,48 @@ def check(name, *, detector=None, photons=None, replicas=None, reverse=False, on
                                reference="finite differences on the same random numbers", mode=mode, h=h,
                                stencil=stencil, hx=hx, charge=cq, time_weighted=ct, ad_over_fdx=adfdx, fdx_charge=xq,
                                fdx_time_weighted=xt, note=note, zero=zero, proposed=b.proposed,
-                               seconds=time.time() - t1))  # fmt: skip
+                               seconds=time.time() - t1, shard_of=shard[1] if shard else 1, families_total=nf,
+                               family=j, settings=o))  # fmt: skip
         if log:
             log(
                 f"{name} {nm}: AD {cq['ad']:+.4e} FD {cq['fd']:+.4e} z {cq['z']:+.2f}, AD / FDX {adfdx[0]:.6f}, "
                 f"{'reported' if passed is None else 'pass' if passed else 'FAIL'} ({time.time() - t1:.0f} s)"
             )
-    if reverse:
+    if reverse and (shard is None or shard[0] == 0):
         b = benches.get(()) or _bench(det, p0, fams, (), spec, o)
         fwd0 = [tuple(np.asarray(v, np.float64) for v in b.jv(th0, th0.at[j].set(1.0))) for j in range(nf)]
         out += _reverse(name, b.obs, b.ops, fwd0, b.s.n_sensors, o)
-    gated = [r for r in out if r["pass"] is not None]
+    if shard is not None:
+        return out
+    return out + [summary(name, out, nf, time.time() - t0, o)]
+
+
+def summary(name, rows, nf, seconds, settings):
+    """Return the "families passing" row of a check's family and reverse rows."""
+    gated = [r for r in rows if r["pass"] is not None]
     fam = [r for r in gated if r["quantity"].startswith("dQ ")]
-    out.append(records.row("gradients", name, "families passing", sum(r["pass"] for r in fam), passed=all(
+    return records.row("gradients", name, "families passing", sum(r["pass"] for r in fam), passed=all(
         r["pass"] for r in gated), reference="finite differences on the same random numbers", families=nf,
-        gated=len(fam), reported=nf - len(fam), seconds=time.time() - t0, settings=o))  # fmt: skip
-    return out
+        gated=len(fam), reported=nf - len(fam), seconds=seconds, settings=settings)  # fmt: skip
+
+
+def merge(name, shards) -> list:
+    """Return a sharded check's rows (``shards``: the shards' row lists) with its summary row.
+
+    Refuses shards that do not cover the families exactly once, or that ran with different settings.
+    """
+    rows = [r for s in shards for r in s if r["quantity"] != "families passing"]
+    ex = [r["extra"] for r in rows if r["quantity"].startswith("dQ ")]
+    fam = [e.get("family") for e in ex]  # the family's index (two families' labels can coincide when truncated)
+    if len(fam) != len(set(fam)):
+        raise ValueError(f"gradients {name}: a family appears in two shards")
+    n = {e.get("shard_of") for e in ex}
+    if len(n) != 1 or None in n or len(shards) != n.pop():
+        raise ValueError(f"gradients {name}: {len(shards)} shard files, not one per shard of one sharding")
+    nf = ex[0]["families_total"]
+    if len(fam) != nf:
+        raise ValueError(f"gradients {name}: the shards hold {len(fam)} of {nf} families")
+    return rows + [summary(name, rows, nf, max(e.get("seconds", 0.0) for e in ex), ex[0].get("settings"))]
 
 
 def _rows(s, spec, o):
