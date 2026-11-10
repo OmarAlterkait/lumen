@@ -24,9 +24,9 @@ Surfaces
                               (world rotation times ``local_axis``, rounded to 6 decimals) into ``<lv>|film<axis>``,
                               each with the surface ``<surface>:<split lv>``.
 Skins and borders
-    The GDML's skins are bound where their logical volume is in the tree; a recipe skin on a volume replaces the
-    GDML's. ``df.outside_surface`` is the skin of the outside region. The GDML's borders are read with the sensor
-    set's ``border_into`` group (``border_library``).
+    The GDML's skins are bound where their logical volume is in the tree; a recipe's or import rule's skin on a
+    volume replaces the GDML's. ``df.outside_surface`` is the skin of the outside region. The GDML's borders are read
+    with the sensor set's ``border_into`` group (``border_library``).
 Sensor groups
     ``border_into`` with model ``lumen:geant4``: the borders into the group's volumes are sensors through the
     surface's own detection (``settings["efficiency_on_entry"]`` replaces the efficiency on entry, the sensors are
@@ -117,28 +117,7 @@ def split_films(df: schema.DetectorFile, tree, instances):
             films.setdefault(lv, (s, np.array(key)))
             p = PV(p.name, lv, p.material, p.mother, p.copy)
         pvs.append(p)
-    _check_axes(film_lvs, films)
     return Tree(tuple(pvs), dict(tree.aliases), dict(tree.groups), {lv: ax for lv, (_, ax) in films.items()}), films
-
-
-AXIS_MATCH = 1e-6  # a film axis matches an expected one to this
-
-
-def _check_axes(film_lvs, films):
-    """Refuse films whose world axes are not the set the recipe expects (``expected_axes``), when it gives one.
-
-    The film lowering assumes each film lies on one known face: a placement rotated onto another axis would put the
-    film on a face the recipe did not check (the baseline's SBND recipe refused anything but films facing +-x).
-    """
-    for lv, s in film_lvs.items():
-        want = s.optics.settings.get("expected_axes")
-        if want is None:
-            continue
-        found = [ax for sl, (fs, ax) in films.items() if fs is s and sl.split("|film")[0] == lv]
-        ok = len(found) == len(want) and all(any(np.allclose(f, w, atol=AXIS_MATCH) for f in found) for w in want)
-        if not ok:
-            raise LibraryError(f"film {s.name!r} on {lv!r}: placements face {sorted(map(tuple, found))}, the recipe "
-                               f"expects {sorted(map(tuple, want))}")  # fmt: skip
 
 
 # ------------------------------------------------------------------------------------------------------- the media
@@ -214,10 +193,10 @@ def film_entry(df, s: schema.Surface, axis, types) -> regions.SurfaceEntry:
 
 
 def _effective_skins(df):
-    """Return {LV: surface}: the GDML's skins, a recipe skin replacing the GDML's on its volume."""
+    """Return {LV: surface}: the GDML's skins, a recipe's or import rule's skin replacing the GDML's on its volume."""
     out, recipe = {}, {}
     for k in df.skins:
-        if k.origin == "recipe":
+        if k.origin != "gdml":
             if k.volume in recipe:
                 raise LibraryError(f"logical volume {k.volume!r} has two recipe skins ({recipe[k.volume]!r}, "
                                    f"{k.surface!r})")  # fmt: skip

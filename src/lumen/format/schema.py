@@ -137,18 +137,16 @@ def _vector(v) -> bool:
 KINDS = {
     "a name": lambda v: isinstance(v, str),
     "a number": _number,
-    "a positive integer": lambda v: _number(v) and int(v) == v and v > 0,
     "true or false": lambda v: isinstance(v, bool),
     "a 3-vector": _vector,
-    "a list of 3-vectors": lambda v: isinstance(v, (list, tuple)) and all(_vector(x) for x in v),
 }
 # the settings an optics model records (lumen.build.library reads them) and the build options, by kind
 OPTICS_SETTINGS = {
     "medium": "a name", "material": "a name", "film_material": "a name", "front_material": "a name",
-    "backing": "a name", "thickness_m": "a number", "local_axis": "a 3-vector", "expected_axes": "a list of 3-vectors",
+    "backing": "a name", "thickness_m": "a number", "local_axis": "a 3-vector",
     "scatter": "true or false", "absorb": "true or false",
 }  # fmt: skip
-BUILD_OPTIONS = {"split_unions": "a positive integer"}
+BUILD_OPTIONS: dict = {}  # none: the build's rewrites are rules (lumen.build.lowering.split_unions by leaf count)
 
 
 def check_settings(what: str, settings: dict, known: dict) -> None:
@@ -274,10 +272,9 @@ class DetectorFile:
     ``detector_volume`` is the logical volume that is simulated (light leaving it is absorbed: ``outside``), and
     ``outside_surface`` the surface a photon meets on leaving it, when the recipe names one; ``wavelength_range``
     (nm) is where every optical table must be defined. ``build_options`` holds the recipe's choices for building the
-    geometry, of ``BUILD_OPTIONS`` (``split_unions``: unions of more pieces than this are placed as their pieces).
-    ``meshes`` holds the
-    tessellated solids' triangle arrays by name. ``provenance`` records the source file, its sha256, the importer
-    and recipe, and ``report`` every normalisation and decision, in words. ``tokens`` keeps, sparsely, the source
+    geometry, of ``BUILD_OPTIONS`` (none today). ``meshes`` holds the tessellated solids' triangle arrays by name.
+    ``provenance`` records the source file, its sha256, the importer and recipe, and ``report`` every normalisation
+    and decision, in words. ``tokens`` keeps, sparsely, the source
     text of the lengths and energies whose Geant4 reading the canonical writer would not reproduce
     (``lumen.gdml.tokens``): an export writes them back while the value is unchanged.
     """

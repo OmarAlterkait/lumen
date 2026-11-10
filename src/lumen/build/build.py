@@ -36,8 +36,7 @@ class Parts:
 def build(df, sensor_set) -> Parts:
     """Return the Parts of a detector file and sensor set."""
     loaded = lowering.lower(df, detector=df.detector_volume, sensors=sensor_set.is_sensor)
-    n = df.build_options.get("split_unions")
-    nav_scene = lowering.split_unions(loaded.scene, n) if n else loaded.scene
+    nav_scene = lowering.split_unions(loaded.scene)
     base = volume_tree.tree_from_geometry(loaded)
     insts = tuple(volume_tree.instances(loaded))
     tree, library, bindings, sources = optics_library.library_and_bindings(bound(df), base, insts, sensor_set)
