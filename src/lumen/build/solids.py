@@ -17,12 +17,8 @@ holds them (full lengths where GDML gives full lengths). Constructors attach an 
 (``node.bbox``); ``node_bbox`` combines boxes by the CSG rules, and ``box_inside`` / ``box_outside`` prove a box
 inside or outside a solid (sufficient tests, used to prove placements contained or disjoint).
 
-Notes
------
-Ported from lumen.scene.solids (rebuild/next ec8de54c), itself from LUCiD's lucid.csg.solids (geom-vec a0579a25).
-The device kernels (the interval sets along a ray, the CSG interval algebra, the torus root finder) come with the
-navigator. The constructors used to take Geant4's mm and convert; the detector file gives metres, so the conversion is
-gone and the arithmetic is otherwise unchanged.
+The device kernels (the interval sets along a ray, the CSG interval algebra, the torus root finder) live with the
+navigator (``lumen.geometry``). Lengths are in metres.
 """
 
 from __future__ import annotations
@@ -243,8 +239,7 @@ def common_origin_and_shared_planes(leaves, ident=None):
 class Compiled:
     """A flattened solid: its leaves (float64 numpy) and its static CSG expression, with float64 point membership.
 
-    What the float64 oracle evaluates (the host part of the baseline's Compiled; the device arrays and the ray query
-    come with the navigator).
+    What the float64 oracle evaluates (the device arrays and the ray query live with the navigator).
     """
 
     def __init__(self, node, ident=None):

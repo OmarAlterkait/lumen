@@ -8,7 +8,7 @@ A diagnostic declares ``outputs()`` {name: (cells, exact)}, ``init(ph)`` its mem
 ``Trace``: each photon's state after each of its first ``steps`` steps, ``TRACE_FIELDS`` per step (float32 cells,
 each written once; integers below 2^24; ``srf`` + 1 in two 16-bit halves). ``last`` is the event that started the
 current straight path (0 the source, 1 a bulk event, 2 + o a surface outcome o; a STRAIGHT crossing keeps it).
-``lost`` is the step's lost and abandoned weight together (the baseline's lost).
+``lost`` is the step's lost plus abandoned weight.
 """
 
 from __future__ import annotations

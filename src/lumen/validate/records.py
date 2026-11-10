@@ -72,7 +72,7 @@ def row(check, detector, quantity, value, error=None, *, z=None, passed=None, re
 def write(rows, out_dir, name) -> Path:
     """Write the rows (with the run's environment) to ``out_dir/<name>.json``; return its path.
 
-    Refuses a directory inside a reference store: check outputs never overwrite reference products (D50).
+    Refuses a directory inside a reference store: check outputs never overwrite reference products.
     """
     from lumen.validate import references
 

@@ -16,10 +16,7 @@ it: a zero-length exit to the mother, or a zero-length entry into that daughter.
     cx = next_crossing(nav, o, d, vol, srf=-1, t_max=1e3)  # Crossing
     t, n = surface_at(nav, cx, o, d)                        # the winner's (t, normal), live in (o, d)
 
-Notes
------
-Ported from the baseline's lumen.geometry.navigator (Navigator.query and its helpers), from LUCiD's vtrack prototype.
-The push contract (``t_min`` > 0) is gone: a query starts at its origin.
+A query starts at its origin. ``t`` is the distance along the ray (m) throughout this module.
 """
 
 from __future__ import annotations
@@ -50,14 +47,14 @@ __all__ = ["Crossing", "Navigator", "locate", "next_crossing", "surface_at"]
 
 
 class Crossing(NamedTuple):
-    """The next visible crossing of a query (one thread; the fields of the baseline's query, typed).
+    """The next visible crossing of a query (one thread).
 
     ``t`` (live through custom_jvp), ``hit``, ``normal`` (faces the photon); the volumes: ``vol_start`` (located),
     ``vol_before`` / ``vol_after`` (of the visible crossing), ``vol_reflect`` (where a reflection stays); ``srf`` the
     surface met; ``step_too_small``: a straight continue event (Geant4's StepTooSmall, or the rounds ran out on
     invisible crossings); ``winner`` (item, leaf, face, zero): the handle on the winning surface (``surface_at``). The
     legacy optical classes (``cls_*``), ``sensor``, ``zero`` and the invisible crossings passed (``t_pass0``,
-    ``t_pass1``, ``n_pass``) serve the baseline's step.
+    ``t_pass1``, ``n_pass``) serve the step.
     """
 
     t: jax.Array

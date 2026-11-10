@@ -42,7 +42,7 @@ from lumen.rules import boundary
 from lumen.surfaces import _legacy as legacy
 from lumen.surfaces.outcomes import DETECT
 
-# the baseline's surface-type order (lumen.interface.KINDS); every other type sorts after these, by name
+# the surface-type order of the packed tables; every other type sorts after these, by name
 ORDERED_TYPES = (
     legacy.PASS,
     legacy.ABSORBER,

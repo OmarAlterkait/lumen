@@ -12,11 +12,7 @@ i)``; replicas split the photons into contiguous blocks with their own cells. ta
 On the GPU the item is one top-level loop, so tallymap refills a lane per step (``SCHEDULE``): a photon's start
 (``spec.init``, which locates it) is its first iteration's work, inside the kernel. ``kernel_schedules`` reports the
 schedule each CUDA kernel was built for. ``init`` returns a live photon at vertex 0 (``max_vertices`` >= 1).
-
-Notes
------
-Ported from the baseline's lumen.engine_tallymap.run; its environment switches and diagnostics options are gone
-(``lumen.diagnostics`` instead).
+Diagnostics: ``lumen.diagnostics``.
 """
 
 from __future__ import annotations
@@ -39,7 +35,8 @@ SCHEDULE = "step"  # tallymap refills a lane per step, not per photon: 1.09-1.39
 
 
 class Tally(NamedTuple):
-    """A run's outputs ({name: cells}), each photon's ``per_item`` report, and whether no photon was truncated."""
+    """A run's outputs ({name: cells}), each photon's ``per_item`` report, ``complete`` (no photon truncated) and
+    ``overflow`` (an exact sum overflowed)."""  # noqa: D205, D209
 
     outputs: dict
     per_item: dict
@@ -54,7 +51,7 @@ def _static(spec, model, max_vertices, replicas, diagnostics, backend):
     return (spec, model, int(max_vertices), int(replicas), tuple(diagnostics), backend)
 
 
-def run(  # noqa: PLR0913 -- SPEC section 5's signature
+def run(  # noqa: PLR0913 -- docs/dev/design.md section 5's signature
     spec, model, ops, rows, key, *, max_vertices=MAX_VERTICES, replicas=1, diagnostics=(), backend="auto", first_id=0,
     n_active=None,
 ):  # fmt: skip

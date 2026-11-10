@@ -1,6 +1,7 @@
 """The public surface: convert a GDML file into a detector file, and load a detector.
 
-    path = lumen.convert("sk.gdml", lumen.detectors.wcsim.SK, "sk.lumen")     # once
+    from lumen.detectors import wcsim
+    path = lumen.convert("sk.gdml", wcsim.SK, "sk.lumen")                    # once
     det = lumen.load("sk.lumen")                                             # or a registered name: "sk"
     p = det.params()                                                         # every parameter, by GDML name
     arrays = det.pack(p)                                                     # the engine's packed arrays
@@ -222,15 +223,15 @@ def simulate(det, source, params=None, *, samples: int, seed: int, replicas: int
              chunk: int = 1 << 20, backend: str = "auto", wrt=()) -> Light:  # fmt: skip
     """Return the Light of ``samples`` photons of ``source`` through ``det`` at ``params`` (default: its own).
 
-    ``source``: a ``lumen.sources`` source, its fields from ``params``' ``source/`` keys where given (its random
-    numbers under ``fold_in(key(seed), SOURCE_STREAM)``); for the port tools also an Emission batch of at least
-    ``samples`` rows, or a function ``(first_id, count) -> Emission``. ``wrt``: the source keys a derivative is
-    taken in; one that moves the photons (a position) turns on the moving-source method, with the clearance about
-    the source's origins (none when they are traced), and needs a source whose directions are drawn. The
-    photons run in chunks of ``chunk`` (``lumen.readout.photon_chunks``), photon i under ``fold_in(key(seed), i)``.
-    The histograms are those of the sensor set's group with a sensor model (``lumen:pmt``), on its static grid
-    (``lumen.readout.make_grid`` with ``gate`` (ns), default the group's ``readout["gate"]``); ``simulate`` refuses
-    before launch (MemoryError) when they exceed the device's budget.
+    ``source``: a ``lumen.sources`` source, its fields from ``params``' ``source/`` keys where given (its random numbers
+    under ``fold_in(key(seed), SOURCE_STREAM)``), or an Emission batch of at least ``samples`` rows, or a function
+    ``(first_id, count) -> Emission``. ``wrt``: the source keys a derivative is taken in; one that moves the photons (a
+    position) turns on the moving-source method, with the clearance about the source's origins (none when they are
+    traced), and needs a source whose directions are drawn. The photons run in chunks of ``chunk``
+    (``lumen.readout.photon_chunks``), photon i under ``fold_in(key(seed), i)``. The histograms are those of the sensor
+    set's group with a sensor model (``lumen:pmt``), on its static grid (``lumen.readout.make_grid`` with ``gate`` (ns),
+    default the group's ``readout["gate"]``); ``simulate`` refuses before launch (MemoryError) when they exceed the
+    device's budget.
     """
     from lumen import readout as ro
     from lumen import run as runner

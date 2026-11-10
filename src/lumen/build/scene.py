@@ -17,10 +17,6 @@ depth-first pre-order rank, daughters in index order, a daughter outranks its mo
 effective solid. Geant4 takes its placements as overlap-free (daughters inside their mothers, siblings disjoint);
 where that holds the clip changes nothing. Overlap resolution beyond it is never silent: an approximation or decision
 is listed in ``Scene.approximations``. ``lumen.validate.oracle`` evaluates this rule in float64.
-
-Notes
------
-Ported from lumen.scene.model (rebuild/next ec8de54c), itself from LUCiD's lucid.csg.geometry (geom-vec a0579a25).
 """
 
 from __future__ import annotations

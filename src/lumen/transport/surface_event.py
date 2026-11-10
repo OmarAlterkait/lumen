@@ -4,14 +4,10 @@ The surface type of the crossed pair (the legacy surface types, ``lumen.surfaces
 branch each, its parameters gathered by the pair's row) gives the ten outcomes' probabilities. The DETECT share is
 deposited in expectation by the step; one continuing outcome is drawn from the reference probabilities and weighted
 live / reference. Its direction: a deterministic map (straight, refraction, mirror, backscatter) with the Jones map of
-the type's complex amplitudes, Geant4's facet chain for GLOSSY (``lumen.surfaces.facets``, held as a whole path and
-weighted by its live / reference path density), a Lambertian lobe for DIFFUSE and DIFFUSE_T, and the type's
-re-emission lobe for REEMIT. A layered surface is crossed one layer per vertex at the same point.
-
-Notes
------
-Ported from the baseline's lumen.step (_kernel_probs, interface_event, _propagate, _chain_state); G4OpBoundaryProcess
-(PostStepDoIt, DielectricMetal, DoReflection) for what each type means.
+the type's complex amplitudes, Geant4's facet path for GLOSSY (``lumen.surfaces.facets``, weighted as a whole path
+by its live / reference path density), a Lambertian lobe for DIFFUSE and DIFFUSE_T, and the type's re-emission lobe
+for REEMIT. A layered surface is crossed one layer per vertex at the same point. What each type means:
+G4OpBoundaryProcess (PostStepDoIt, DielectricMetal, DoReflection).
 """
 
 from __future__ import annotations

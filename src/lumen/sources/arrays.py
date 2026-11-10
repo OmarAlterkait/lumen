@@ -3,7 +3,7 @@
 x, d (N, 3) m and unit, t (N,) ns, lam (N,) nm, w (N,) the expected photons each stands for (used as given),
 ``polarisation`` (N, 2, 3) the Jones vector's real and imaginary parts (None: unpolarised). ``drawn``: the list's
 directions were drawn from a density in solid angle (default False: an external list gives no source-position
-derivative, SPEC section 11).
+derivative).
 """
 
 from __future__ import annotations

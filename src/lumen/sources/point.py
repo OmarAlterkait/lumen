@@ -26,8 +26,8 @@ class Point(Source):
     """Photons from ``x`` (m) at ``time`` (ns), weights summing in expectation to ``n_photons``.
 
     ``lam`` (nm), or ``spectrum``: a Table (energies eV, intensities) drawn by Geant4's sampler from the nominal
-    table and reweighted to the live one. ``direction`` None: isotropic (a normal triple per photon, normalised:
-    the baseline checks' draw); else a unit vector, a beam. ``x`` (N, 3), and ``lam``, ``time`` or ``direction``
+    table and reweighted to the live one. ``direction`` None: isotropic (a normal triple per photon,
+    normalised); else a unit vector, a beam. ``x`` (N, 3), and ``lam``, ``time`` or ``direction``
     with a photon axis, give photon i of a run its own row (a check's several sources).
     """
 

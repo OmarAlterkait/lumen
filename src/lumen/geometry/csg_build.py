@@ -9,10 +9,6 @@ Every kind (one distinct solid) runs the same device instructions on different d
   skipped.
 
     tables = csg_tables([solid, ...])          # CsgTables: T (leaves), K (kinds), G (programs), kind boxes
-
-Notes
------
-Ported from the baseline's lumen.geometry.evaluator (its host part), itself from LUCiD's lucid.csg.uniform.
 """
 
 from __future__ import annotations

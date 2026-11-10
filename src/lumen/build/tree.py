@@ -19,10 +19,7 @@ World instances, in the canonical order (from the root, a definition's members b
 - ``PV.copy`` is the instance's sensor id (``scene.PATH`` numbered per world instance, ``scene.PLACEMENT``
   inherited, or explicit), None for a non-sensor.
 
-Notes
------
-Ported from lumen.adapters.geometry and the PV / Tree records of lumen.describe (rebuild/next ec8de54c). The LUCiD
-model lookup is gone (lumen reads only its own Scene), as are sensor_tags and pass_pairs (they read the optics).
+lumen reads only its own Scene; sensor indices and pass pairs come from the optics (``lumen.build.surfaces``).
 """
 
 from __future__ import annotations

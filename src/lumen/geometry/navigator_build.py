@@ -15,10 +15,7 @@
   one solid, one pose) get their partner ``coin_hi``; the import's lowered holes (a solid kept without its holes, the
   siblings filling them, ``Scene.hole_fillers``) make those siblings daughter candidates of the holed solid (``fill``).
 
-Notes
------
-Ported from the baseline's lumen.geometry.navigator (the constructor), from LUCiD's vtrack prototype. The baseline's
-``overlaps=`` links and ``mesh_descend`` are not ported: the navigator follows Geant4's tracking, no configuration.
+The navigator follows Geant4's tracking, with no configuration.
 """
 
 from __future__ import annotations

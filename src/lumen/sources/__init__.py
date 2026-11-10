@@ -1,4 +1,4 @@
-"""Light sources (SPEC sections 5, 11): ``emit(params, key, n, first_id, samples) -> Emission``.
+"""Light sources: ``emit(params, key, n, first_id, samples) -> Emission``.
 
     src = lumen.sources.Point((0.0, 0.0, 0.0), n_photons=1e6, lam=400.0)
     light = lumen.simulate(det, src, samples=1 << 20, seed=1)

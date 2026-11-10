@@ -27,8 +27,7 @@ the float32 resolution of the coordinates, the **band**. The rules, each with th
 Notes
 -----
 Geant4 sources: G4Navigator (LocateGlobalPointAndSetup, LevelLocate, the zero-step thresholds), G4VoxelNavigation
-(ComputeStep), G4NormalNavigation, G4TriangularFacet, G4OpBoundaryProcess (StepTooSmall). Collected unchanged from the
-baseline's navigator and step.
+(ComputeStep), G4NormalNavigation, G4TriangularFacet, G4OpBoundaryProcess (StepTooSmall).
 """
 
 from __future__ import annotations

@@ -6,10 +6,6 @@ over Fibonacci-sphere directions; ``Clearance`` turns those radii into a field o
 
     clear = ray_clearance(nav, points)                 # (n,) m
     field = Clearance(points, clear)                   # field(x): max_i (clear_i - |x - points_i|), at least 0
-
-Notes
------
-Ported from the baseline's lumen.geometry.tracked (ray_clearance, set_clearance, clearance).
 """
 
 from __future__ import annotations

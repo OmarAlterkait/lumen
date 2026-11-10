@@ -1,8 +1,7 @@
-"""Pack parameters into the engine's arrays: Params (GDML names) to the legacy optical-class rows.
+"""Pack a ``Params`` (GDML names) into the engine's arrays: the surface lookup's per-type rows and the media.
 
-The values of a ``Params`` are applied to the detector file and its sensor set (``lumen.format.apply``); the surfaces
-and media are rebuilt from them and packed into the class compiler's rows. The packing is done on the host here; the
-traced packing (every value an operand of the photon loop) comes with the operands.
+The values are applied to the detector file and its sensor set (``lumen.format.apply``); the surfaces and media are
+rebuilt from them and packed, on the host. ``simulate`` passes the packed arrays to the photon loop as operands.
 """
 
 from __future__ import annotations
@@ -13,7 +12,7 @@ from lumen.format.apply import apply, sensor_set
 
 
 def named(detector, params) -> dict:
-    """Return the class compiler's named parameters for ``params`` (the baseline's calibration space)."""
+    """Return the surface lookup's named parameters for ``params``."""
     df, sset = apply(build.bound(detector.file), params), sensor_set(detector.sensor_set, params)
     parts = detector.parts
     _, library, _, _ = optics_library.library_and_bindings(df, parts.base_tree, parts.instances, sset)

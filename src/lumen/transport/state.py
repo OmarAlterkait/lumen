@@ -11,11 +11,6 @@
 ``srf`` the surface it sits on (the navigator's surface identity, -1 none), ``sn`` the normal of the event that left
 it and ``nz`` the zero-length crossings in a row (the stuck rule). Diagnostics keep their own per-photon memory; they
 are never state. Sources fill an ``Emission`` and ``start`` builds the Photon.
-
-Notes
------
-Ported from the baseline's lumen.state (Photon, emit, with_free, chain); its ``last`` field is a diagnostic now
-(``lumen.diagnostics``).
 """
 
 from __future__ import annotations
@@ -117,7 +112,7 @@ def start(row: Emission, vol, cls, *, stacked=False, moving=False, edge=False) -
     """Return the Photon of an emission row in volume ``vol`` (-1: located at its first step) and class ``cls``.
 
     The optional parts exist only when asked for: ``stacked`` (a layered surface exists), ``moving`` (the
-    moving-source method), ``edge`` (edge rows are on). The sensor tag starts unknown (-1), as the baseline's.
+    moving-source method), ``edge`` (edge rows are on). The sensor tag starts unknown (-1).
     """
     x, d = jnp.asarray(row.x, F32), jnp.asarray(row.d, F32)
     pol = jnp.asarray(row.polarisation, F32)

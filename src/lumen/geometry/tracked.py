@@ -3,17 +3,11 @@
 The step's photon carries its volume and the surface it sits on; the surface lookup (``lumen.build.surfaces``)
 gives each placed volume a class, each sensor volume a tag, and the class pairs a photon crosses without a vertex (pass
 pairs). This module joins the two: the class of every navigator volume by its placed-volume name, and the query in
-the form the baseline's step reads.
+the form the step reads.
 
     geom = from_parts(parts)                   # parts: lumen.build.build.build(...); or from_scene(scene, optics)
-    q = geom.query(None, x, d, cls, t_max, vol=vol, last=srf, sn=sn)       # dict, the baseline's step contract
+    q = geom.query(None, x, d, cls, t_max, vol=vol, last=srf, sn=sn)       # dict, the step's contract
     t, n = geom.surface(None, q, x, d)         # the winner's (t, normal), live in (x, d)
-
-Notes
------
-Ported from the baseline's lumen.geometry.tracked (from_scene, TrackedGeometry) and lumen.adapters.geometry
-(pass_pairs). Not ported: the push contract (``eps_push``, ``t_min``), the overlap links (``overlaps=``,
-``link_overlaps``), the pose match (``pose_alias``, ``instances=``) and the report (``lumen.validate.overlaps``).
 """
 
 from __future__ import annotations
@@ -73,7 +67,7 @@ class TrackedGeometry:
         return id(self)
 
     def query(self, gp, x, d, cls, t_max, vol=-1, last=-1, sn=None):  # noqa: PLR0913 -- the step's contract
-        """Return the next visible crossing in the baseline's step form (dict; ``gp`` and ``cls`` are not read).
+        """Return the next visible crossing in the step's form (dict; ``gp`` and ``cls`` are not read).
 
         ``vol`` < 0: not known (a source's photon), located here, once; ``last``: the srf the photon sits on;
         ``sn``: the normal of the event that left it. ``tag``: the optics tag of the volume entered (-1 none);

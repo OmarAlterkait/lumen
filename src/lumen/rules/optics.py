@@ -65,7 +65,7 @@ The complex index of either is taken at the range's centre and must be flat over
 range or supply a spectral reader). A sensitive detector that counts every absorption (WCSim's) replaces the
 efficiency: ``sensor(..., eff=1)``.
 
-Spectral surface parameters (REFLECTIVITY(E), ...) are (law, law parameters) pairs; the region compiler
+Spectral surface parameters (REFLECTIVITY(E), ...) are (law, law parameters) pairs; the surface lookup
 (``lumen.build.surfaces.compile``) packs them.
 """
 
@@ -81,8 +81,7 @@ from lumen.surfaces import _legacy as legacy
 from lumen.surfaces.outcomes import DETECT
 from lumen.units import HC
 
-# the lobes' admissible widths (the baseline lumen rebuild/next ec8de54c: lumen.lobes.glisur.R_MIN and
-# lumen.lobes.unified.SIGMA_MIN, SIGMA_MAX; those lobes are not ported, the surface types name them)
+# the facet lobes' admissible widths (the surface types name them)
 GLISUR_R_MIN = 0.01  # the smallest 1 - polish of a GLISUR facet chain
 SIGMA_MIN, SIGMA_MAX = 0.005, 0.5  # rad: the unified facet lobe's sigma_alpha range
 

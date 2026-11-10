@@ -4,8 +4,8 @@ A source is a frozen dataclass whose ``FIELDS`` are parameters ``source/<field>`
 takes each from ``params`` where it has the key, else from the source, plus the material values it ``reads``.
 ``uniforms(key, k, n, first_id)``: row i is photon first_id + i's k uniforms in (0, 1), from row first_id + i of
 ``jax.random.bits(key, (N, k))`` (partitionable threefry: a row depends on its index only); ``gaussian`` of them is
-``jax.random.normal`` bit for bit (the baseline checks' point source). ``photon_uniforms``: the baseline sources'
-per-photon layout (photon i's key ``fold_in(key, i)`` at vertex 0, as the transport's).
+``jax.random.normal`` bit for bit. ``photon_uniforms``: photon i's uniforms from its own key ``fold_in(key, i)`` at
+vertex 0, as the transport draws them.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ sg = jax.lax.stop_gradient
 
 
 class GradientNotAvailable(ValueError):  # noqa: N818 -- the documented error catalogue's name
-    """A derivative the method cannot give (SPEC section 9)."""
+    """A derivative the method cannot give (docs/explanation/known-limits.md)."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -100,7 +100,8 @@ def _guard(name):
     def rule(primals, tangents):
         if not isinstance(tangents[0], jax.custom_derivatives.SymbolicZero):
             raise GradientNotAvailable(f"{name} moves photons whose directions are not drawn from a density "
-                                       "(drawn_direction False): no derivative (SPEC section 9)")  # fmt: skip
+                                       "(drawn_direction False): no derivative "
+                                       "(docs/explanation/known-limits.md)")  # fmt: skip
         return primals[0], jnp.zeros_like(primals[0])
 
     f = jax.custom_jvp(lambda a: a)
@@ -120,7 +121,7 @@ def uniforms(key, k: int, n: int | None = None, first_id=0):
 
 
 def photon_uniforms(key, k: int, n: int, first_id=0):
-    """Return (n, k): photon first_id + i's k uniforms at vertex 0 of its key (the baseline's per-photon layout)."""
+    """Return (n, k): photon first_id + i's k uniforms at vertex 0 of its own key."""
     ids = jnp.asarray(first_id, jnp.int32) + jnp.arange(n, dtype=jnp.int32)
     return jax.vmap(lambda i: uniforms(rng.vertex_key(rng.photon_key(key, i), 0), k))(ids)
 

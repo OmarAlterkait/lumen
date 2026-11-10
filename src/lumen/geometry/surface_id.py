@@ -12,10 +12,6 @@ mesh codes, LM the most leaves of a kind, FM the most faces of a leaf.
 
 Gradients: the traversal is detached; the winning (item, leaf, face) is re-evaluated live, ``dt = -g . (do + t dd) /
 (g . d)`` (a custom_jvp), g the winning leaf's gradient (a mesh triangle's normal).
-
-Notes
------
-Ported from the baseline's lumen.geometry.navigator (srf_pack, srf_decode, hit_grad, live_t, the mesh hit's plane).
 """
 
 from __future__ import annotations

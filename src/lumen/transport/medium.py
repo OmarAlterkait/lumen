@@ -4,12 +4,8 @@ One ``lax.switch`` branch per medium (a real per-photon branch under tallymap) a
 event's direction. A channel's lobe is drawn at the reference values and weighted by its live / reference density; a
 polarised phase function (Rayleigh) is drawn from the photon's own state. After a scattering the state is projected on
 the plane perpendicular to the new direction (G4OpRayleigh's rule, and G4OpMieHG's); a re-emitted photon is
-unpolarised, at a wavelength drawn from the channel's spectrum after a delay drawn from Exp(tau) (G4OpWLS).
-
-Notes
------
-Ported from the baseline's lumen.step (_medium_at, _index_at, _channel_lobe, _bulk_state). Mie (G4OpMieHG) is a
-channel like any other: a medium without MIEHG has no Mie branch.
+unpolarised, at a wavelength drawn from the channel's spectrum after a delay drawn from Exp(tau) (G4OpWLS). Mie
+(G4OpMieHG) is a channel like any other: a medium without MIEHG has no Mie branch.
 """
 
 from __future__ import annotations

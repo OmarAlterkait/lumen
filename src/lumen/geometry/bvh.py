@@ -6,11 +6,6 @@
 
 A tree is stored depth first: a node's left child follows it, ``skip`` is the node after its subtree (the stackless
 order), and a leaf (``count`` > 0) covers ``items[start:start + count]``.
-
-Notes
------
-Ported from the baseline's lumen.geometry.navigator (its BVH builder, after lucid.csg.bvh's level-synchronous
-rewrite).
 """
 
 from __future__ import annotations

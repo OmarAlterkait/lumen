@@ -6,8 +6,7 @@ The material's light from its GDML values: SCINTILLATIONYIELD (per MeV) and two 
 time and share (Geant4 11's SCINTILLATIONCOMPONENTi, ...TIMECONSTANTi, ...YIELDi; ``geant4="10.7"``: FAST/SLOW
 COMPONENT, FAST/SLOWTIMECONSTANT, YIELDRATIO). A segment is quenched by Birks' law E / (1 + kB E / L), kB ``birks``
 (m/MeV; never set by a GDML: 0); a point is not. Photons are isotropic, uniform along a segment, delayed by their
-component's decay (no rise time: Geant4's default). Ported from the baseline's scintillation_point / _segment
-(random numbers: lam, dir (2), comp, time[, pos]) and visible_energy.
+component's decay (no rise time: Geant4's default). Random numbers: lam, dir (2), comp, time[, pos].
 """
 
 from __future__ import annotations

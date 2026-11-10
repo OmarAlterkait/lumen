@@ -10,10 +10,7 @@ and a volume the tree locates the point in that is neither the volume nor below 
     m = check_meshes(nav)              # dict(pairs {(mesh, volume): points}, protrude {mesh: points}, n_points)
     for line in report(nav, c, m): print(line)
 
-Notes
------
-Ported from the baseline's lumen.geometry.navigator (check, check_meshes, the runner) and lumen.geometry.tracked
-(the report). The checks report; they never change the navigator (the baseline's links from them are not ported).
+The checks report; they never change the navigator.
 
 A check's program is compiled once and reused: with jax.vmap, per navigator layout (``layout``) and settings, the
 navigator's arrays entering as arguments, so a repeated check, or a check of another navigator of the same layout,

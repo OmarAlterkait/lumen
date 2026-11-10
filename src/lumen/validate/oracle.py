@@ -19,10 +19,6 @@ after is taken at t* + push; a change whose medium after equals the medium befor
 a null crossing) is not visible and the scan resumes at t* + push, as the transport would. A ``Mesh`` member is an
 opaque part: it holds no point (never a label); its first triangle hit (Moller-Trumbore, float64) is a change to its
 medium. Host numpy, one ray at a time: a referee, not a transport.
-
-Notes
------
-Ported from lumen.scene.oracle (rebuild/next ec8de54c), itself from LUCiD's lucid.csg.oracle (geom-vec a0579a25).
 """
 
 from __future__ import annotations

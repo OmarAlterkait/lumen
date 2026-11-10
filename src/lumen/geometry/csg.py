@@ -15,10 +15,6 @@ exits in float32; the intervals do not.
     E.inside(k, x); E.inside_ray(k, o, d, t)              # jnp scalars, one thread
     r = E.first_change(k, o, d, t0, t1)                   # dict(hit, t, inside (after), leaf, face, inside0, first)
     g = E.leaf_grad(k, leaf, face, x)                     # the winning surface's gradient (live t, normal)
-
-Notes
------
-Ported from the baseline's lumen.geometry.evaluator (ported from LUCiD's lucid.csg.uniform, geom-vec a0579a25).
 """
 
 from __future__ import annotations
@@ -286,7 +282,7 @@ class Csg:
 
         return (lax.fori_loop(0, pl, step, I32(0)) & 1) == 1
 
-    def _leaf(self, kind, l):  # noqa: E741 -- the baseline's name for a kind-local leaf
+    def _leaf(self, kind, l):  # noqa: E741 -- l: a kind-local leaf
         """Return the global leaf id of kind-local leaf l (the empty leaf past the end)."""
         K = self.dev()["K"]
         return jnp.where(l < K["nl"][kind], K["l0"][kind] + l, self.empty_leaf)

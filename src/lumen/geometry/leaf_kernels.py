@@ -4,10 +4,6 @@ Membership along a ray is half-open, [lo, hi) per interval; an empty slot is (IN
 -INF / +INF and never a crossing (|t| >= BIG). Gradients: the order of endpoints is detached, their values live; the
 torus roots are found by detached bracketing and bisection and made live by one attached Newton step (the implicit
 function theorem): exact first derivatives in every parameter.
-
-Notes
------
-Ported from the baseline's lumen.scene.solids (its device part), itself from LUCiD's lucid.csg.solids.
 """
 
 from __future__ import annotations

@@ -7,7 +7,7 @@ lumen's own manifest is ``lumen/detectors/references.json``. A detector package 
 adds its own (``DetectorPackage.references``, the path of a manifest of the same form), so a detector outside lumen
 is validated by the same commands with no change here; its manifest may name its own store (``"store"``). Products
 live read-only in the store, ``LUMEN_DATA`` unless the manifest names one: ``<store>/<id>/``. A check never writes
-into a store (D50): ``inside_store`` tells the record writer where not to write.
+into a store: ``inside_store`` tells the record writer where not to write.
 """
 
 from __future__ import annotations

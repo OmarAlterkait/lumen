@@ -5,7 +5,7 @@
 cos theta = 1 / (beta n); the wavelength is drawn from the fixed proposal 1 / lam^2 on [lam_min, lam_max], so the
 weight 2 pi alpha z^2 L (1 - 1 / (beta n)^2)_+ (1 / lam_min - 1 / lam_max) / samples carries the index. The cone is
 sharp (no direction drawn from a density: no position derivative); the polarisation Geant4's; a photon starts
-uniformly along the segment when the charge passes. Ported from the baseline's cherenkov_segment (lam, pos, phi).
+uniformly along the segment when the charge passes (random numbers: lam, pos, phi).
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""The light of a Geant4 charged-step dump (SPEC section 11), Cherenkov or scintillation, one step per photon.
+"""The light of a Geant4 charged-step dump, Cherenkov or scintillation, one step per photon.
 
     src = Geant4Steps.of(det.params(), "Water", "cherenkov", start=a, end=b, t_start=t0, t_end=t1,
                          beta_start=b0, beta_end=b1, charge=q, edep=e)   # (n, 3) m, ns, c, e, eV

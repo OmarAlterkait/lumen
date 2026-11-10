@@ -2,10 +2,10 @@
 
     rows = gradients.check("sbnd", reverse=True)       # the manifest's "sbnd" entry: its sources and wavelength
 
-Families are discovered from the detector's packed parameters (only declared ones exist, D68): every medium's
-absorption and scattering lengths and re-emission constants (multiplied: v (1 + th)), every surface type's
-parameters per row: a probability parameter (the surface type's ``domain``: a fraction in [0, 1], a film's yield or
-thickness in [0, inf)) added at min(v - lo, hi - v) (a row at an edge of its domain: one-sided, inward), others
+Families are discovered from the detector's packed parameters (only declared ones exist: docs/dev/design.md section
+6.2): every medium's absorption and scattering lengths and re-emission constants (multiplied: v (1 + th)), every surface
+type's parameters per row: a probability parameter (the surface type's ``domain``: a fraction in [0, 1], a film's yield
+or thickness in [0, inf)) added at min(v - lo, hi - v) (a row at an edge of its domain: one-sided, inward), others
 multiplied. Refractive indices are not differentiated (moving_paths+reweight, not available in 0.1).
 
 Per family, on K replicas of ``photons`` photons (one run; the same photons and keys on every side):
@@ -49,7 +49,7 @@ TRUNCATION_STEPS = 2  # h-scan steps of a family whose FD resolves its own trunc
 # ZERO: a family whose AD is exactly 0 on every output while the edge rows proposed its outcome (or it moves no draw)
 # is structurally zero (a dead end: ANNIE's LAPPD glass T); an exactly-0 AD with the outcome never proposed (the
 # edge rows missing) is not, and stays gated as any family
-INFINITE_VARIANCE = ("polish",)  # GLISUR's polish: unbiased, infinite variance (SPEC section 9)
+INFINITE_VARIANCE = ("polish",)  # GLISUR's polish: unbiased, infinite variance (docs/dev/design.md section 9)
 NO_DRAW = 1e-5  # shared- and fixed-reference FD closer than this (relative): the family moves no draw
 REVERSE = 1e-4  # |reverse - forward| relative to the family's forward derivative
 CONVERGED = 2.0  # |z| of F(4h) - F(h) below which the edge h-scan stops
@@ -256,7 +256,7 @@ def _with_rounding(c, c4):
 
     The fixed-reference sides evaluate the parameter's terms (log sigma, alpha^2 / sigma^2, ...) at v (1 +- h) in
     float32: each such evaluation rounds the same way on every photon, so the error is a bias that adds up along a
-    photon's reflections and grows as 1 / h (port/a9: 2.5e-4 per unified-lobe reflection in d log w at h = 1/1024,
+    photon's reflections and grows as 1 / h (e.g. 2.5e-4 per unified-lobe reflection in d log w at h = 1/1024,
     none in float64). Rounding that scales as 1 / h makes FDX(h / 4) - FDX(h) three times FDX(h)'s error.
     """
     return dict(c, rounding=abs(c4["fd"] - c["fd"]) / 3.0)
@@ -296,7 +296,7 @@ def judge(cq, ct, xq, xt, no_draw, exact_gated=True):
     if all(max(abs(c["ad"]), abs(c["fd"])) <= 3 * c["floor"] for c in (cq, ct)):
         return None, "below float32 resolution"
     exact = all(_exact(c) for c in (xq, xt))
-    note = "" if exact_gated else "infinite variance (SPEC section 9): AD / FDX reported; "
+    note = "" if exact_gated else "infinite variance (docs/explanation/known-limits.md): AD / FDX reported; "
     exact = exact or not exact_gated
     fd_ok = no_draw or all(abs(c["z"]) <= stats.Z_MAX and spread_passes(c)
                            for c in (cq, ct))  # fmt: skip

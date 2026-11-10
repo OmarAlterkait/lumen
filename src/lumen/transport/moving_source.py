@@ -19,17 +19,13 @@ holds the vertex just met, so every carried tangent stays O(1) on an expanding c
 dy/du ~100 per bounce). A volume end near a moving origin co-moves with it, V = w U, w = exp(-r^2 / R0^2), R0 =
 min(CO_MOVING_RADIUS, a quarter of the origin's clearance); its divergence enters the weight.
 
-Known limits (SPEC section 9): the moving shadow edge between a moving source and its first held vertex is not
-carried; the caustic at a held end (refraction through a PMT window) has an infinite-variance tail; an ill-conditioned
-end solve after a grazing hit loses float32 precision; a zero-length segment in a medium opaque on the band's scale
-carries no attenuation or time derivative.
-
-Notes
------
-Ported from the baseline's lumen.chart (float32 with the per-vertex anchor) and the chart parts of lumen.step.
+Known limits (docs/dev/design.md section 9): the moving shadow edge between a moving source and its first held
+vertex is not carried; the caustic at a held end has an infinite-variance tail; an ill-conditioned end solve after a
+grazing hit loses float32 precision; a zero-length segment in a medium opaque on the band's scale carries no
+attenuation or time derivative.
 """
 
-# ruff: noqa: N803 -- the baseline's math names (Vl, M, W, Y, ...) as arguments, as in the module docstring
+# ruff: noqa: N803 -- the module docstring's math names (A, B, CA, CB, Y, ...) as arguments
 from __future__ import annotations
 
 from typing import NamedTuple
@@ -43,7 +39,7 @@ sg = jax.lax.stop_gradient
 PAIRS = ((0, 0), (0, 1), (1, 1))
 TINY_DET = 1e-12  # a Jacobian below this: the end is not held (weight factor 1)
 ANCHOR_COND = 1e-6  # the anchor's 2x2 determinant, relative to |A1| |A2|, below which the gauge is not moved
-CO_MOVING_RADIUS = 0.05  # m: the largest co-moving radius about a moving origin (the baseline's chart_r0)
+CO_MOVING_RADIUS = 0.05  # m: the largest co-moving radius about a moving origin
 CLEARANCE_SHARE = 0.25  # the co-moving radius is at most this share of the origin's clearance
 
 

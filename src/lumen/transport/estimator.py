@@ -12,18 +12,11 @@ derived from ``wrt`` and the domains, never an option). At those
 rows every continuing outcome of the surface type whose reference probability is 0 is proposed at eps: drawn, the
 photon carries eps / q and ``Photon.z`` carries p / eps, exactly 0 in value and dp / eps in derivative. eps gives the
 floored outcomes the fixed share e = EDGE_BUDGET of the draws at that row, whatever the continuing reference mass S
-(the baseline's e = EDGE_BUDGET (1 - S) starved them on a reflector: at R = 0.9, S = 0.9 and e = 0.001, so the
-derivative's positive part, the path the floored outcome opens, came from a draw in a thousand at weight 1 / eps,
-heavy-tailed: on a closed unified box its replicas' spread was underestimated and the AD sat 1-3 sigma low; at e =
-0.01 its error is three times smaller and AD and FD agree). The value pays e of the draws at an edge row (photons with
-z = 0); the estimand is unchanged (D68). A bulk lobe's parameter at an edge of its domain (the lobe's ``domains``: Mie's
+(a share that shrinks with 1 - S leaves the derivative's positive part to rare heavy-tailed draws on a reflector).
+The value pays e of the draws at an edge row (photons with z = 0); the estimand is unchanged (docs/dev/design.md
+section 8). A bulk lobe's parameter at an edge of its domain (the lobe's ``domains``: Mie's
 forward ratio at 0 or 1) in ``wrt`` has its reference moved inside by the same share (``lobe_reference``); its live
 weight is the direction density's ratio.
-
-Notes
------
-Ported from the baseline's lumen.estimator (magic, magic_log, choose, edge_rows_for, edge_rows, edge_floor). The
-defensive mix is gone: the port is its mix 0 (the proposal is the normalised reference).
 """
 
 from __future__ import annotations
@@ -36,7 +29,7 @@ from lumen._core.safe import safe_div
 from lumen.surfaces.outcomes import N_OUTCOMES, TERMINAL
 
 sg = jax.lax.stop_gradient
-EDGE_BUDGET = 0.01  # the share of an edge row's draws the floored outcomes take (the baseline's edge_budget x (1 - S))
+EDGE_BUDGET = 0.01  # the fixed share of an edge row's draws given to its floored outcomes
 
 
 def magic(live, ref):

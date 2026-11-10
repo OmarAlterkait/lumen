@@ -1,25 +1,10 @@
-"""One step of a photon: Geant4's optical physics between two vertices, with the reweighting estimator.
+"""One step of a photon: Geant4's optical physics between two vertices, with reweighting.
 
     ph2, dep = step(model, ops, ph, key)
 
-In order: draw the step's random numbers (``LAYOUT``, from the photon's key and vertex count) -> recover a stuck
-photon (``lumen.rules.navigation``'s stuck rule) -> evaluate the medium at the live and reference values -> draw the
-free path at the reference event rate -> the next visible crossing (the navigator) -> the moving-source holds (or the
-photon as drawn) -> a bulk event if the free path ends first, else a surface event -> Russian roulette and the time
-limit -> advance (``vol``, ``srf``, ``sn``, ``nz``) -> the deposit.
-
-**Expected detection.** Detection is never sampled: at every crossing the DETECT share times the probability of
-reaching the surface is deposited (Rao-Blackwellised over the free path), and the photon goes on with a continuing
-outcome or a bulk event. Time advances with the medium's group index; the wavelength changes only at re-emission.
-
-**Health.** ``lost``: a crossing no surface type joins (0 for a complete description); ``escaped``: no crossing within
-``t_max`` and no bulk event; ``abandoned``: the stuck rule gave up (Geant4's fAbandonThreshold_NoZeroSteps);
-``late``: retired past ``t_end``.
-
-Notes
------
-Ported from the baseline's lumen.step at its mix 0, on the navigator, polarised: its defensive mix, absorb_sample,
-roulette_vertex, polarised=False, the push contract, query_mfp and chart_r0 as an option are gone (SPEC section 8).
+The order of operations and the health counters: docs/dev/design.md section 8. Detection is expected, not sampled:
+every crossing deposits the DETECT share times the probability of reaching it, and the photon goes on with a
+continuing outcome or a bulk event. Distances are in m, times in ns; time advances with the medium's group velocity.
 Geant4: G4OpBoundaryProcess, G4OpAbsorption, G4OpRayleigh, G4OpMieHG, G4OpWLS, G4Navigator.
 """
 
@@ -68,11 +53,10 @@ class Controls(NamedTuple):
 
 @dataclass(frozen=True, eq=False)
 class Model:
-    """The static model: the geometry, the optics tables, the step config and the clearance field.
+    """The compiled model: geometry (with its classes), surface and medium tables, step config, clearance field.
 
-    The geometry carries its optical classes (``lumen.geometry.tracked``); the clearance field
-    (``lumen.geometry.clearance.Clearance``) serves the moving-source method; ``hit_angle``: the deposit carries the
-    hit angle (a sensor model reads CE).
+    The clearance field (``lumen.geometry.clearance.Clearance``) serves the moving-source method; ``hit_angle``: the
+    deposit carries the hit angle (a sensor model reads CE).
     """
 
     geometry: Any
@@ -94,7 +78,7 @@ class Model:
 
 
 class Operands(NamedTuple):
-    """The traced inputs (SPEC section 5): navigator arrays, float tables, parameters, reference, controls, grid.
+    """The traced inputs of the photon loop (docs/dev/design.md section 5); every field is an operand.
 
     ``nav``: the navigator's arrays (``Navigator.operands``); ``tables``: the facet, spectrum and clearance tables
     (``operands``).
@@ -145,7 +129,11 @@ class Deposit(NamedTuple):
 
 
 class _End(NamedTuple):
-    """The segment's end as the outcome sees it: held by the moving-source method, or as drawn."""
+    """The segment's end as the outcome sees it, held by the moving-source method or as drawn.
+
+    ``f`` weight factor; ``t`` distance (m); ``wi``, ``er``, ``ei`` direction and Jones vector; ``dt`` time shift (ns);
+    ``pr`` outcome probabilities; ``reach`` exp(-mu t); ``att`` exp(-mu_abs t); ``n`` normal; ``jets`` (moving source).
+    """
 
     f: Any
     t: Any
@@ -161,7 +149,7 @@ class _End(NamedTuple):
 
 
 class _Free(NamedTuple):
-    """The free path's end: weight factor, length, direction, state, time shift, position."""
+    """The free path's end: weight factor, length s (m), direction, Jones vector, time shift dt (ns), position x (m)."""
 
     f: Any
     s: Any
@@ -173,10 +161,15 @@ class _Free(NamedTuple):
 
 
 class Vertex(NamedTuple):
-    """Everything one step computed before its event.
+    """What one step knows before its event.
 
-    ``os_`` is the drawn outcome clamped to a valid index and ``drawn`` whether one was drawn (o >= 0); ``ctx`` the
-    crossing as the surface type reads it (lam, wi, n, n1, n2, er, ei: the state, filled for an unpolarised photon).
+    Medium: ``mu_abs``, ``mu`` (scattering), ``mu_c`` (per channel), ``*_r`` at the reference (1/m), ``v_g`` (m/ns),
+    ``mi`` the medium. ``s`` the free path (m). Crossing: ``q`` (the navigator's dict), ``t_if`` its distance (m),
+    ``reach_live`` / ``reach_ref`` = exp(-mu t_if), ``att_if`` = exp(-mu_abs t_if). Surface: ``kidx`` the surface
+    type, ``row``, ``cont`` (a continue event), ``te`` (live TypeEval), ``sigma_r``, ``pr_q`` (drawn from), ``fl``
+    (floored), ``qo`` (the proposal), ``o`` the drawn outcome (-1 none), ``os_`` it clamped, ``drawn`` (o >= 0);
+    ``ctx`` the crossing as the surface type reads it (lam, wi, n, n1, n2, er, ei: the state, filled for an
+    unpolarised photon). ``u``: the step's uniforms. ``end``, ``free``, ``chain``: the moving-source parts.
     """
 
     u: dict
@@ -225,7 +218,7 @@ def _recover(ph):
 
 
 def _query(model, ops, ph, cls0):
-    """Return the next visible crossing (the baseline's query dict); inside a layered surface, the remembered one."""
+    """Return the next visible crossing (the navigator's dict); inside a layered surface, the remembered one."""
     geom, moving = geometry(model, ops), model.step.moving_source
     t_q = ops.controls.t_max
 

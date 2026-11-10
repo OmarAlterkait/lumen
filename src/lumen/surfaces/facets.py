@@ -3,13 +3,14 @@
 A chain lobe is Geant4's DielectricMetal reflection off a rough surface: a facet normal drawn for the current
 direction, a mirror reflection about it, repeated while the direction points into the surface. Its marginal density has
 no closed form; its path density (the product of one facet reflection's density along the chain) has, so the step
-holds the whole path (``Lobe.path``, ``Lobe.path_logpdf``).
+weights the whole path (``Lobe.path``, ``Lobe.path_logpdf``).
 
 - **unified** (GetFacetNormal, unified): tilt alpha ~ N(0, sigma_alpha), kept if ``u f_max <= sin(alpha)`` and alpha
   < pi/2 (f_max = min(1, 4 sigma)), azimuth uniform, redrawn while the facet faces away. Per solid angle of the facet
   m the photon meets D(m) [V.m > 0] / F(theta, sigma), D(m) = exp(-alpha^2 / 2 sigma^2) min(1, f_max / sin alpha) /
   (2 pi Z(sigma)), F the facing share (tabulated: float64 quadrature, float32 bicubic Hermite, C1). One reflection
-  wo = mirror(wi, m) has density D(h) / (4 F V.h), h = unit(V + wo). Valid sigma_alpha in [0.005, 0.5].
+  wo = mirror(wi, m) has density D(h) / (4 F V.h), h = unit(V + wo). Valid sigma_alpha: ``rules.optics.SIGMA_MIN``
+  to ``SIGMA_MAX``.
 - **GLISUR** (GetFacetNormal, glisur): M = n + r s, s uniform in the unit ball, r = 1 - polish, redrawn while
   V . M <= 0. Per solid angle of m = M / |M|: p_m = 2 q (3 c^2 + q^2) / (3 Z), c = m . n, q^2 = c^2 - (1 - r^2), Z the
   cut ball's volume. Bounded, vanishing at the cone's edge: no boundary term. The width is carried as "sigma_alpha".
@@ -18,11 +19,10 @@ Sampling: rejection, at most FACET_TRIES draws per facet and CHAIN_K_MAX facets 
 
 Notes
 -----
-G4OpBoundaryProcess v11.3.2 (identical in 10.7): GetFacetNormal, DoReflection, DielectricMetal. Ported from the
-baseline's lumen.lobes.unified and lumen.lobes.glisur, arithmetic unchanged.
+G4OpBoundaryProcess v11.3.2 (identical in 10.7): GetFacetNormal, DoReflection, DielectricMetal.
 """
 
-# ruff: noqa: N803 -- the baseline's math names (Vl, M, W, Y, ...) as arguments, as in the module docstring
+# ruff: noqa: N803 -- the module docstring's math names (Vl, M, W, Y, ...) as arguments
 import functools
 import math
 

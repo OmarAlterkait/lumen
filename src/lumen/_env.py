@@ -16,8 +16,8 @@ else ``<LUMEN_CACHE>/tallymap``, never under HOME (tallymap's own default is ``~
 And it turns on JAX's persistent compilation cache when this module is imported (``xla_cache``): an explicit
 ``JAX_COMPILATION_CACHE_DIR`` (JAX reads it itself) or a directory already set in ``jax.config`` is respected;
 otherwise ``<LUMEN_CACHE>/xla``, and never under HOME (then the cache stays off). On jax 0.6.2 a program loaded from
-the cache is bitwise the one a fresh compile gives, on the CPU and the GPU (port/gates/persistent_cache.json,
-tests/physics/test_persistent_cache.py); on jax 0.5.3 it was not (the CPU face miss).
+the cache is bitwise the one a fresh compile gives, on the CPU and the GPU (tests/physics/test_persistent_cache.py);
+on jax 0.5.3 it was not.
 """
 
 from __future__ import annotations
