@@ -28,9 +28,8 @@ from lumen._core import rng
 from lumen.transport.step import step
 
 MAX_VERTICES = 1 << 22  # the guard (vertices per photon), not a physics cut
-TALLYMAP_BACKEND = {"cuda": "cuda", "cpu": "lockstep"}  # lumen's backend names -> tallymap's
-CLOSED_OVER = "baked_floats"  # the diagnostics key of an item program's closed-over float arrays
-OVERFLOW = "exact_overflow"  # the stats key of an exact sum's overflow
+TALLYMAP_BACKEND = {"cuda": "cuda", "cpu": "xla"}  # lumen's backend names -> tallymap's
+OVERFLOW = "fixed_point_overflow"  # the stats key of an exact sum's overflow
 SCHEDULE = "step"  # tallymap refills a lane per step, not per photon: 1.09-1.39x faster for lumen (L40S)
 
 
@@ -103,7 +102,7 @@ class ClosedOverValues(ValueError):  # noqa: N818 -- the documented error catalo
 def _refuse_closed_over():
     from tallymap import _diagnostics
 
-    floats = _diagnostics.PROGRAMS[-1][CLOSED_OVER] if _diagnostics.PROGRAMS else []
+    floats = _diagnostics.float_consts(_diagnostics.PROGRAMS[-1]["consts"]) if _diagnostics.PROGRAMS else []
     if floats:
         raise ClosedOverValues(f"the photon loop closes over {len(floats)} float array(s) {floats[:4]}: pass "
                                "every value through the Operands (lumen.transport.step.operands)")  # fmt: skip
@@ -118,7 +117,7 @@ def _loop(static, ops, rows, key, first_id, n_active):
     shapes = loop.outputs(replicas) | {"truncated": (1, True), "n_truncated": (1, True)}
     for dg in diagnostics:
         shapes |= dg.outputs()
-    outputs = {k: tm.Sum((cells,), exact=exact and cuda) for k, (cells, exact) in shapes.items()}
+    outputs = {k: tm.Sum((cells,), fixed_point=exact and cuda) for k, (cells, exact) in shapes.items()}
 
     def item(tl, x, b):
         o, k, fid = b
@@ -153,7 +152,7 @@ def _loop(static, ops, rows, key, first_id, n_active):
 
     xs = dict(row=rows, id=jnp.arange(n, dtype=jnp.int32))
     opts = dict(outputs=outputs, max_steps=max_vertices + 1, backend=TALLYMAP_BACKEND["cuda" if cuda else "cpu"],
-                _schedule=SCHEDULE, in_axes=(0, None))  # fmt: skip
+                schedule=SCHEDULE, in_axes=(0, None))  # fmt: skip
     r = tm.vmap(item, **opts)(xs, (ops, key, first_id), n_active=n_active)
     _refuse_closed_over()
     complete = (r.outputs["n_truncated"][0] == 0) & (r.stats["n_truncated"] == 0)
@@ -170,4 +169,4 @@ def kernel_schedules() -> list[str]:
     """
     from tallymap import _diagnostics
 
-    return [k["mode"] for k in _diagnostics.KERNELS]
+    return [k["schedule"] for k in _diagnostics.KERNELS]

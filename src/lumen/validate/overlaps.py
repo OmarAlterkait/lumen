@@ -68,7 +68,9 @@ def runner(one, backend=None):
         def item(tl, x):
             return tl, {f"o{j}": v for j, v in enumerate(one(x["u"], x["id"]))}
 
-        f = jax.jit(lambda xs: tm.vmap(item, outputs={"z": tm.Sum((1,), exact=False)}, in_axes=0, backend="cuda")(xs))
+        f = jax.jit(
+            lambda xs: tm.vmap(item, outputs={"z": tm.Sum((1,), fixed_point=False)}, in_axes=0, backend="cuda")(xs)
+        )
 
         def run(u, i):
             r = f(dict(u=u, id=i))

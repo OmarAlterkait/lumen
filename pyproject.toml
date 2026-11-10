@@ -15,12 +15,12 @@ classifiers = ["Private :: Do Not Upload"]
 dependencies = [
     "numpy>=1.24",
     # jax is pinned exactly (port/gates/jax_versions.json: 0.5.3's CPU thunk runtime misses faces with the persistent
-    # cache on; 0.11.2 breaks tallymap ec953da's reverse mode); the S3DF lock is cluster/s3df/requirements-jax062.lock
+    # cache on; tallymap 0.6.0rc1 is tested on 0.6.2, 0.11.2 measured); the S3DF lock is cluster/s3df/requirements-jax062.lock
     "jax==0.6.2",
     "jaxlib==0.6.2",
     "scipy>=1.10",  # spatial search of sibling placements (scipy.spatial.cKDTree) in the geometry lowering
-    # The photon loop: tallymap lumen/perf ec953da (0.5.0+lumen.2), pinned by commit in cluster/s3df/requirements-jax062.lock.
-    "tallymap>=0.5,<0.6",
+    # The photon loop: tallymap v0.6.0rc1 (7a8f1f7), pinned by commit in cluster/s3df/requirements-jax062.lock.
+    "tallymap>=0.6.0rc1,<0.7",
 ]
 
 [project.scripts]

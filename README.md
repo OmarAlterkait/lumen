@@ -41,7 +41,6 @@ git clone https://github.com/OmarAlterkait/lumen.git
 cd lumen
 python -m venv .venv && source .venv/bin/activate
 pip install "jax[cuda12]==0.6.2"
-# tallymap: PLACEHOLDER pin until its v0.6.0rc1 tag is published
 pip install "tallymap @ git+https://github.com/OmarAlterkait/tallymap.git@v0.6.0rc1"
 pip install -e .
 pip install matplotlib                                   # optional: the tutorial's figures

@@ -144,7 +144,7 @@ def test_the_runner_passes_tallymap_its_schedule(monkeypatch):
     spec = item.photons(item.HistogramShape(1, (300.0, 500.0)))
     with pytest.raises(RuntimeError, match="stop"):
         run.run(spec, None, None, _row(2), jnp.zeros(2, jnp.uint32), backend="cpu")
-    assert seen["_schedule"] == run.SCHEDULE == "step" and seen["backend"] == run.TALLYMAP_BACKEND["cpu"]
+    assert seen["schedule"] == run.SCHEDULE == "step" and seen["backend"] == run.TALLYMAP_BACKEND["cpu"]
 
 
 def test_auto_is_the_cpu_backend_without_a_gpu(monkeypatch):
