@@ -141,14 +141,14 @@ class Hits:
 @dataclass(frozen=True)
 class ExpectedHits:
     """Per sensor: ``pe``, ``mu`` (photoelectrons in the window, dark included), ``p_hit``, the hits' charge
-    distribution ``charge_pdf`` (S, N) as masses on the grid ``charge`` (N,) (in measured units, summing to p_hit),
+    distribution ``charge_pdf`` (S, N) as masses on the grid ``charge_grid`` (N,) (in measured units, summing to p_hit),
     ``resolved``, and what the first-hit likelihood needs (node masses, overflow cells and the values).
     """  # noqa: D205
 
     pe: Any
     mu: Any
     p_hit: Any
-    charge: Any
+    charge_grid: Any
     charge_pdf: Any
     resolved: Any
     nodes: Any
@@ -159,7 +159,7 @@ class ExpectedHits:
 
 
 _pytree(Hits, ("hit", "t", "q"), ())
-_pytree(ExpectedHits, ("pe", "mu", "p_hit", "charge", "charge_pdf", "resolved", "nodes", "late", "early", "values",
+_pytree(ExpectedHits, ("pe", "mu", "p_hit", "charge_grid", "charge_pdf", "resolved", "nodes", "late", "early", "values",
                        "hist"), ())  # fmt: skip
 
 
@@ -207,7 +207,7 @@ def _charge_logp(e: ExpectedHits, q):
     m, v = e.hist.model, e.values
     s = v["frontend"]["charge_scale"]
     dq = m.charge_step * s
-    x = jnp.clip((q - e.charge[0]) / dq, 0.0, e.charge.shape[0] - 1.001)
+    x = jnp.clip((q - e.charge_grid[0]) / dq, 0.0, e.charge_grid.shape[0] - 1.001)
     i = jnp.floor(x).astype(jnp.int32)
     f = x - i
     pick = jnp.take_along_axis(e.charge_pdf, jnp.stack([i, i + 1], -1), -1)

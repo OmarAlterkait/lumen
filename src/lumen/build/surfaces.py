@@ -110,7 +110,7 @@ class Library:
 def _check_params(what, kind, params):
     have, want = set(params), set(kind.params)
     if have != want:
-        raise DescriptionError(f"{what}: kind {kind.name} takes parameters {sorted(want)}, got {sorted(have)} "
+        raise DescriptionError(f"{what}: surface type {kind.name} takes parameters {sorted(want)}, got {sorted(have)} "
                                f"(missing {sorted(want - have)}, unknown {sorted(have - want)})")  # fmt: skip
 
 
@@ -123,14 +123,14 @@ def check_library(lib: Library):
         if not isinstance(e, SurfaceEntry) or not isinstance(e.kind, legacy.SurfaceType):
             raise DescriptionError(f"surface {name!r}: expected a SurfaceEntry(SurfaceType, params)")
         if DETECT in e.kind.outcomes:
-            raise DescriptionError(f"surface {name!r}: kind {e.kind.name} detects; detection needs a sensor binding "
-                                   "(library.sensors), not a surface")  # fmt: skip
+            raise DescriptionError(f"surface {name!r}: surface type {e.kind.name} detects; detection needs a sensor "
+                                   "binding (library.sensors), not a surface")  # fmt: skip
         _check_params(f"surface {name!r}", e.kind, e.params)
     for name, e in lib.sensors.items():
         if not isinstance(e, SensorEntry) or not isinstance(e.kind, legacy.SurfaceType):
             raise DescriptionError(f"sensor {name!r}: expected a SensorEntry(SurfaceType, params)")
         if DETECT not in e.kind.outcomes:
-            raise DescriptionError(f"sensor {name!r}: kind {e.kind.name} cannot detect")
+            raise DescriptionError(f"sensor {name!r}: surface type {e.kind.name} cannot detect")
         _check_params(f"sensor {name!r}", e.kind, e.params)
 
 
@@ -309,17 +309,17 @@ def _check_sensor_borders(library, b, sensor, entry, skin):
     for n in sorted(sensor):
         if skin[n] is not None:
             raise DescriptionError(f"sensor PV {n!r} also has a skin surface {skin[n]!r} on its LV: ambiguous "
-                                   "(the sensor kind is the boundary of a sensor)")  # fmt: skip
+                                   "(the sensor's surface type is the boundary of a sensor)")  # fmt: skip
     for (pre, post), s in sorted(b.borders.items()):
         if post in sensor and not (entry[post] == "border" and s == sensor[post]):
             raise DescriptionError(f"border surface {s!r} ({pre!r} -> {post!r}) into sensor PV {post!r}: ambiguous "
-                                   "(the sensor kind is the boundary of a sensor; a border may name the sensor itself "
-                                   "when its binding has entry='border')")  # fmt: skip
+                                   "(the sensor's surface type is the boundary of a sensor; a border may name the "
+                                   "sensor itself when its binding has entry='border')")  # fmt: skip
         if post in sensor:  # the entry border of an entry='border' sensor (above)
             continue
         if s in library.sensors and pre not in sensor:  # an exit sensor: detected leaving pre, credited to pre
             raise DescriptionError(f"border sensor {s!r} ({pre!r} -> {post!r}): {pre!r} is not a sensor PV, so a "
-                                   "detection leaving it has no tag to go to")  # fmt: skip
+                                   "detection leaving it has no sensor index to go to")  # fmt: skip
     entered = {post for (_, post), s in b.borders.items() if post in sensor and s == sensor[post]}
     for n in sorted(n for n in sensor if entry[n] == "border" and n not in entered):
         raise DescriptionError(f"sensor PV {n!r} has entry='border' but no border bound to {sensor[n]!r} leads "
@@ -369,7 +369,7 @@ class Optics:
     class_pvs: tuple[tuple[str, ...], ...]
     surface_types: tuple[legacy.SurfaceType, ...]
     type_of: np.ndarray  # (C, C) int32 index into surface_types, -1: never crossed
-    row_of: np.ndarray  # (C, C) int32 row in params["kernel"][kind.name], -1: never crossed
+    row_of: np.ndarray  # (C, C) int32 row in params["surface_types"][kind.name], -1: never crossed
     medium_of: np.ndarray  # (C,) int32 index into media
     media: tuple[bulk.Medium, ...]
     media_names: tuple[str, ...]  # library names, keys of params["media"]
@@ -444,7 +444,7 @@ def _packed_table(name, ents):
 
 
 def pack(optics: Optics, named: dict) -> dict:
-    """Return the step's params (``kernel`` rows by type, ``media``) from named params (``named_params``' structure).
+    """Return the step's params (``surface_types`` rows by type, ``media``) from named params (``named_params``).
 
     Values may be traced: gradients flow to the named params.
     """
@@ -465,7 +465,7 @@ def pack(optics: Optics, named: dict) -> dict:
             else:
                 kp[name] = jnp.stack([jnp.asarray(e[name], jnp.float32) for e in ents])
         kernel[kind.name] = kp
-    return {"kernel": kernel, "media": {n: f32(named["media"][n]) for n in optics.media_names}}
+    return {"surface_types": kernel, "media": {n: f32(named["media"][n]) for n in optics.media_names}}
 
 
 # ------------------------------------------------------------------------------------------------- the compiler
@@ -564,7 +564,7 @@ class _Regions:
         if key[0] == key[1]:
             if kind is not legacy.PASS:
                 raise OpticsError(
-                    f"class {self.class_names[key[0]]!r} touches itself across a {kind.name} boundary ({reason}; "
+                    f"volume group {self.class_names[key[0]]!r} touches itself across a {kind.name} surface ({reason}; "
                     f"e.g. {pre!r} -> {post!r}): the crossing would be invisible. Declare the placements disjoint "
                     "(bindings.disjoint) if they do not touch, or give them distinct signatures"
                 )
@@ -577,7 +577,8 @@ class _Regions:
         if (f[0], f[1], f[5]) != (kind, origin, side):
             a, b = f[3][0]
             raise OpticsError(
-                f"class pair {self.class_names[key[0]]!r} -> {self.class_names[key[1]]!r} resolves to two kernels: "
+                f"volume groups {self.class_names[key[0]]!r} -> {self.class_names[key[1]]!r} resolve to two surface "
+                "types: "
                 f"{a!r} -> {b!r}: {f[0].name} {f[1] or ''} ({f[2][0]}), {pre!r} -> {post!r}: {kind.name} "
                 f"{origin or ''} ({reason}). The signature missed a distinction"
             )
@@ -872,7 +873,8 @@ def compile(library: Library, tree, bindings: Bindings, lam_domain) -> Optics:
     optics = _resolve_all(library, tree, bindings, lam_domain)
     optics = dataclasses.replace(optics, type_laws=_spectral_laws(library, optics))
     named = named_params(optics, library)
-    return dataclasses.replace(optics, params=_numpy(pack(optics, named), {"kernel": None, "media": named["media"]}))
+    order = {"surface_types": None, "media": named["media"]}
+    return dataclasses.replace(optics, params=_numpy(pack(optics, named), order))
 
 
 def _numpy(tree, order):

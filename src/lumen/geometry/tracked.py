@@ -126,8 +126,8 @@ def _check_coincident(nav, optics, vols):
     for grp in nav.coincident:
         ca, cb = optics.class_of[vols[grp[0]]], optics.class_of[vols[grp[-1]]]
         if ca != cb and (ko[ca] >= 0).any() and int(ko[ca, cb]) < 0:
-            raise GeometryError(f"coincident siblings {[vols[i] for i in grp]}: no interface between them (classes "
-                                f"{ca} -> {cb}); Geant4 crosses one leaving the first")  # fmt: skip
+            raise GeometryError(f"coincident siblings {[vols[i] for i in grp]}: no interface between them (volume "
+                                f"groups {ca} -> {cb}); Geant4 crosses one leaving the first")  # fmt: skip
 
 
 def from_scene(scene, optics, nav=None, cache=False):

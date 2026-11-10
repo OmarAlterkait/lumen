@@ -19,7 +19,7 @@ import jax.numpy as jnp
 from lumen.transport import state
 from lumen.transport.step import geometry
 
-HEALTH = ("lost", "abandoned", "escaped", "late")  # weights; plus the counts "stuck" (pushed, abandoned)
+HEALTH = ("lost", "abandoned", "escaped", "retired")  # weights; plus the counts "stuck" (pushed, abandoned)
 
 
 class HistogramShape(NamedTuple):
@@ -134,7 +134,7 @@ def histograms(r: HistogramLayout, outputs, model, group: str, gate) -> Any:
 def health_adds(dep) -> list:
     """Return the health adds of a Deposit: the weights of ``HEALTH`` and the "stuck" counts (pushed, abandoned)."""
     adds = [(k, jnp.int32(0), getattr(dep, k)) for k in HEALTH]
-    return adds + [("stuck", jnp.where(f, i, -1), 1.0) for i, f in enumerate((dep.pushed, dep.abandon))]
+    return adds + [("stuck", jnp.where(f, i, -1), 1.0) for i, f in enumerate((dep.stuck_pushed, dep.stuck_abandoned))]
 
 
 HEALTH_OUTPUTS = {"stuck": (2, False)} | {k: (1, True) for k in HEALTH}

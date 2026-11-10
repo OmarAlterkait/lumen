@@ -26,9 +26,9 @@ def _ad(s, path, row):
     p0 = photons.packed(s.det)
 
     def q(x):
-        t = p0["kernel"][path[1]][path[2]]
+        t = p0["surface_types"][path[1]][path[2]]
         t = {**t, "value": t["value"].at[row].add(x)} if isinstance(t, dict) else t.at[row].add(x)
-        p = {**p0, "kernel": {**p0["kernel"], path[1]: {**p0["kernel"][path[1]], path[2]: t}}}
+        p = {**p0, "surface_types": {**p0["surface_types"], path[1]: {**p0["surface_types"][path[1]], path[2]: t}}}
         ref = jax.tree_util.tree_map(jax.lax.stop_gradient, p)
         ops = photons.operands(s, p, ref, steps.Controls(roulette=0.0))
         rows = photons.pencil([-0.5, 0.0, 0.0], [1.0, 0.0, 0.0], 400.0, N)
@@ -42,7 +42,7 @@ def test_the_edge_floor_gives_the_closed_form_derivative_at_t_zero(toy):
     s0 = toy("rt_boxes")
     p0 = photons.packed(s0.det)
     row = 0
-    path = ("kernel", "dielectric_rt", "T", row)
+    path = ("surface_types", "dielectric_rt", "T", row)
     edge = estimator.edge_rows(s0.det.parts.optics, p0, [path])
     assert edge == (("dielectric_rt", row),), edge  # T = 0 is at its domain's edge (the type's domain)
     ad, err = _ad(toy("rt_boxes", step=steps.StepConfig(edge_rows=edge)), path, row)
@@ -63,8 +63,9 @@ def _plate(s, x_param=None, x=0.0, edge=False, seed=900):
     rows = photons.pencil([-0.6, 0.0, 0.3], [0.6, 0.0, -0.8], 400.0, M)
 
     def q(y):
-        v = p0["kernel"][kind][x_param] if x_param else None
-        p = p0 if v is None else {**p0, "kernel": {**p0["kernel"], kind: {**p0["kernel"][kind], x_param: (
+        v = p0["surface_types"][kind][x_param] if x_param else None
+        st = p0["surface_types"]
+        p = p0 if v is None else {**p0, "surface_types": {**st, kind: {**st[kind], x_param: (
             {**v, "value": v["value"].at[0].add(y)} if isinstance(v, dict) else v.at[0].add(y))}}}  # fmt: skip
         ops = photons.operands(s, p, jax.tree_util.tree_map(jax.lax.stop_gradient, p), steps.Controls(roulette=0.0))
         t = runner.run(item.photons(s.tally), s.model, ops, rows, photons.raw_key(seed), replicas=K, max_vertices=2000)
@@ -80,7 +81,7 @@ def test_a_unified_constant_at_zero_gives_its_exact_derivative(toy, param):
     s0, s1 = toy("lobe_plate", 0.2), toy("lobe_plate", 0.2, **{KEYS[param]: 1.0})
     q0, q1 = _plate(s0, seed=901), _plate(s1, seed=901)
     kind = next(k.name for k in s0.det.parts.optics.surface_types if "p_lobe" in k.params)
-    edge = estimator.edge_rows(s0.det.parts.optics, photons.packed(s0.det), [("kernel", kind, param, 0)])
+    edge = estimator.edge_rows(s0.det.parts.optics, photons.packed(s0.det), [("surface_types", kind, param, 0)])
     assert edge == ((kind, 0),), edge
     ad = _plate(toy("lobe_plate", 0.2, step=steps.StepConfig(edge_rows=edge)), param, edge=True)
     for c in (0, 1):  # Q and the time-weighted Q

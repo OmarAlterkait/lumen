@@ -1,6 +1,6 @@
 """Diagnostics: probes with their own per-photon memory, run alongside the photon loop; never photon state.
 
-    run(loop, model, ops, rows, key, ..., diagnostics=(Trace(steps=24, n_photons=N),))
+    run(loop, model, ops, rows, key, ..., diagnostics=(Trace(steps=24, n_traced=N),))
 
 A diagnostic declares ``outputs()`` {name: (cells, exact)}, ``init(ph)`` its memory for one photon and
 ``update(mem, ph, ph2, dep, pid)`` -> (memory, [(output, cell, value)]) after each step.
@@ -42,14 +42,14 @@ def last_event(last, event):
 
 @dataclass(frozen=True)
 class Trace:
-    """The per-step state of the first ``steps`` steps of ``n_photons`` photons (see the module docstring)."""
+    """The per-step state of the first ``steps`` steps of ``n_traced`` photons (see the module docstring)."""
 
     steps: int
-    n_photons: int
+    n_traced: int
 
     def outputs(self):
         """Return {"trace": (cells, exact)}."""
-        return {"trace": (self.n_photons * self.steps * len(TRACE_FIELDS), False)}
+        return {"trace": (self.n_traced * self.steps * len(TRACE_FIELDS), False)}
 
     def init(self, ph):
         """Return the memory of a fresh photon: its ``last`` (0, the source)."""
@@ -69,5 +69,5 @@ class Trace:
         return last, [("trace", jnp.where(base >= 0, base + i, -1), v) for i, v in enumerate(row)]
 
     def read(self, cells):
-        """Return the trace (n_photons, steps, len(TRACE_FIELDS)) from its output cells."""
-        return np.asarray(cells, np.float32).reshape(self.n_photons, self.steps, len(TRACE_FIELDS))
+        """Return the trace (n_traced, steps, len(TRACE_FIELDS)) from its output cells."""
+        return np.asarray(cells, np.float32).reshape(self.n_traced, self.steps, len(TRACE_FIELDS))

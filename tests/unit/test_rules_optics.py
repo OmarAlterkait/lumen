@@ -273,7 +273,7 @@ def test_compile_packs_spectral_kernel_params(df):
                          disjoint=tuple((a, c) for i, a in enumerate(pvs) for c in pvs[i + 1:]))  # fmt: skip
     o = regions.compile(lib, t, b, (100.0, 900.0))
     assert ("glisur_metal", "R") in o.type_laws
-    blk = o.params["kernel"]["glisur_metal"]["R"]
+    blk = o.params["surface_types"]["glisur_metal"]["R"]
     law = o.type_laws[("glisur_metal", "R")]
     lam = np.linspace(100, 900, 50)
     for i, origin in enumerate(o.rows["glisur_metal"]):
@@ -281,12 +281,12 @@ def test_compile_packs_spectral_kernel_params(df):
         e = lib.surfaces[origin.split(":", 1)[1]].params["R"]
         want = np.full_like(lam, e) if not isinstance(e, tuple) else np.interp(HC / lam, e[1]["energy"], e[1]["value"])
         assert np.max(np.abs(got - want)) < 1e-6, origin
-        assert abs(float(o.params["kernel"]["glisur_metal"]["polish"][i])
+        assert abs(float(o.params["surface_types"]["glisur_metal"]["polish"][i])
                    - lib.surfaces[origin.split(":", 1)[1]].params["polish"]) < 1e-7  # fmt: skip
     # named params and pack reproduce the compiled kernel exactly
     packed = regions.pack(o, regions.named_params(o, lib))
     for k in ("energy", "value"):
-        assert np.array_equal(np.asarray(packed["kernel"]["glisur_metal"]["R"][k]), blk[k])
+        assert np.array_equal(np.asarray(packed["surface_types"]["glisur_metal"]["R"][k]), blk[k])
 
 
 def test_border_bindings_on_a_tree(df):

@@ -94,4 +94,4 @@ def test_the_gradient_family_is_the_params_key(det):
     assert [(f[1][1], str(det.parts.optics.rows[f[1][1]][f[2]])) for f in fams] == [ROW]
     assert fams[0][3] == "edge"  # at 0: one-sided, inward
     packed = det.pack(det.params().set(KEY, 0.25))
-    assert float(np.asarray(packed["kernel"][ROW[0]]["T"])[fams[0][2]]) == 0.25
+    assert float(np.asarray(packed["surface_types"][ROW[0]]["T"])[fams[0][2]]) == 0.25

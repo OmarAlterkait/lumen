@@ -78,10 +78,10 @@ def _lobe_domain(tables, medium, channel, name):
 def edge_rows(tables, params, wrt):
     """Return the edge rows: where a ``wrt`` parameter sits at an edge of its domain.
 
-    ``wrt`` holds packed-parameter paths: ("kernel", type, name) (every row) or ("kernel", type, name, row) for a
-    surface parameter with a domain (the type's ``domain``), giving (type name, row); and ("media", medium, channel,
-    "lobe", name) for a bulk lobe's parameter with a domain (the lobe's ``domains``), giving (medium, channel, name).
-    Anything else has no edge here.
+    ``wrt`` holds packed-parameter paths: ("surface_types", type, name) (every row) or ("surface_types", type, name,
+    row) for a surface parameter with a domain (the type's ``domain``), giving (type name, row); and ("media", medium,
+    channel, "lobe", name) for a bulk lobe's parameter with a domain (the lobe's ``domains``), giving (medium, channel,
+    name). Anything else has no edge here.
     """
     out = set()
     for path in wrt:
@@ -90,10 +90,10 @@ def edge_rows(tables, params, wrt):
             if dom is not None and _at_edge(np.asarray(params["media"][path[1]][path[2]]["lobe"][path[4]]), dom):
                 out.add((path[1], path[2], path[4]))
             continue
-        dom = domain(tables, path[1], path[2]) if len(path) >= 3 and path[0] == "kernel" else None
+        dom = domain(tables, path[1], path[2]) if len(path) >= 3 and path[0] == "surface_types" else None
         if dom is None:
             continue
-        v = params["kernel"][path[1]][path[2]]
+        v = params["surface_types"][path[1]][path[2]]
         a = np.asarray(v["value"] if isinstance(v, dict) else v, np.float64)
         a = a.reshape(a.shape[0], -1) if a.ndim else a.reshape(1, 1)
         rows = range(a.shape[0]) if len(path) < 4 or path[3] is None else (int(path[3]),)

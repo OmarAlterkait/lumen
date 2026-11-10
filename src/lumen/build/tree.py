@@ -283,8 +283,8 @@ def _check_classes(want, class_of):
         raise TreeError(f"class_of misses {len(want - have)} PVs, e.g. {sorted(want - have)[:SHOWN]}")
     shared = sorted(pv for pv in want if pv != OUTSIDE_PV and class_of[pv] == class_of[OUTSIDE_PV])
     if shared:
-        raise TreeError(f"{len(shared)} PVs share the outside's region {class_of[OUTSIDE_PV]} (e.g. {shared[:3]}): a "
-                        "query prunes them as background; bind the outside material "
+        raise TreeError(f"{len(shared)} PVs share the outside's volume group {class_of[OUTSIDE_PV]} (e.g. "
+                        f"{shared[:3]}): a query prunes them as background; bind the outside material "
                         f"{OUTSIDE_MATERIAL!r} to a medium of its own")  # fmt: skip
     if have - want:
         raise TreeError(f"class_of names {len(have - want)} PVs this Scene does not have, e.g. "
@@ -292,7 +292,7 @@ def _check_classes(want, class_of):
     for pv in want:
         c = class_of[pv]
         if isinstance(c, bool) or not isinstance(c, (int, np.integer)) or int(c) < 0:
-            raise TreeError(f"class_of[{pv!r}] = {c!r}: region ids are non-negative integers")
+            raise TreeError(f"class_of[{pv!r}] = {c!r}: volume group ids are non-negative integers")
 
 
 def _variants(root, class_of):

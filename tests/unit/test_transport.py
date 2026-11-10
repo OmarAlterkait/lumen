@@ -51,10 +51,10 @@ def _tables():
 def test_edge_rows_come_from_wrt_and_the_domains():
     tables, kp = _tables()
     lobe = {"g_forward": 0.6, "g_backward": 0.3, "forward_ratio": 1.0}
-    params = {"kernel": kp, "media": {"w": {"mie": {"lobe": lobe}}}}
-    assert estimator.edge_rows(tables, params, [("kernel", "painted", "R")]) == (("painted", 0),)
-    assert estimator.edge_rows(tables, params, [("kernel", "painted", "R", 1)]) == ()
-    assert estimator.edge_rows(tables, params, [("kernel", "painted", "f_spec", 0)]) == (("painted", 0),)
+    params = {"surface_types": kp, "media": {"w": {"mie": {"lobe": lobe}}}}
+    assert estimator.edge_rows(tables, params, [("surface_types", "painted", "R")]) == (("painted", 0),)
+    assert estimator.edge_rows(tables, params, [("surface_types", "painted", "R", 1)]) == ()
+    assert estimator.edge_rows(tables, params, [("surface_types", "painted", "f_spec", 0)]) == (("painted", 0),)
     mie = ("media", "w", "mie", "lobe", "forward_ratio")
     assert estimator.edge_rows(tables, params, [mie]) == (("w", "mie", "forward_ratio"),)
     lobe["forward_ratio"] = 0.7
@@ -107,7 +107,7 @@ def test_the_default_item_tallies_by_sensor_and_band():
     def dep(sensor, lam):
         z = F32(0.0)
         fields = dict(sensor=jnp.int32(sensor), lam=F32(lam), q=F32(0.5), time=F32(4.0), lost=z, abandoned=z,
-                      escaped=z, late=z, pushed=jnp.bool_(True), abandon=jnp.bool_(False))  # fmt: skip
+                      escaped=z, retired=z, stuck_pushed=jnp.bool_(True), stuck_abandoned=jnp.bool_(False))  # fmt: skip
         return type("D", (), fields)
 
     adds = [(k, int(c), float(v)) for k, c, v in spec.emits(dep(2, 450.0), jnp.int32(1), None)]

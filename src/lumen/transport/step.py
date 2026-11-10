@@ -110,8 +110,8 @@ def geometry(model, ops):
 class Deposit(NamedTuple):
     """What one step deposits: the expected detection (sensor, weight, time ns, wavelength nm) and the health.
 
-    ``pushed`` / ``abandon`` flag the stuck rule; ``event`` (-2 a bulk event, else the surface outcome, -1 none) and
-    ``pair`` (class left x C + class met) are for diagnostics. ``hit`` (rad): the hit angle on the sensor
+    ``stuck_pushed`` / ``stuck_abandoned`` flag the stuck rule; ``event`` (-2 a bulk event, else the surface outcome, -1
+    none) and ``pair`` (class left x C + class met) are for diagnostics. ``hit`` (rad): the hit angle on the sensor
     (``hit_angle``; 0 when the model has none).
     """
 
@@ -122,9 +122,9 @@ class Deposit(NamedTuple):
     lost: jax.Array
     abandoned: jax.Array
     escaped: jax.Array
-    late: jax.Array
-    pushed: jax.Array
-    abandon: jax.Array
+    retired: jax.Array
+    stuck_pushed: jax.Array
+    stuck_abandoned: jax.Array
     event: jax.Array
     pair: jax.Array
     hit: jax.Array = 0.0
@@ -261,7 +261,7 @@ def _surface(model, ops, q, ctx, shared):
     # surface type, no deposit, never lost; any type's row stands in, overridden
     cont = q["cont"] & q["hit"]
     stype, row = jnp.where(cont, jnp.maximum(stype, 0), stype), jnp.where(cont, jnp.maximum(row, 0), row)
-    live_eval = se.type_probs(tables, ops.params["kernel"], stype, row, ctx)
+    live_eval = se.type_probs(tables, ops.params["surface_types"], stype, row, ctx)
     live_eval = live_eval._replace(
         probs=_straight_if(cont, live_eval.probs), film=live_eval.film & ~cont, coated=live_eval.coated & ~cont
     )
@@ -269,7 +269,7 @@ def _surface(model, ops, q, ctx, shared):
         pr_r, sigma_r = sg(live_eval.probs), sg(live_eval.sigma_alpha)
     else:
         ctx_r = dict(ctx, n1=sg(ctx["n1"]), n2=sg(ctx["n2"]), er=sg(ctx["er"]), ei=sg(ctx["ei"]))
-        kr = se.type_probs(tables, ops.reference["kernel"], stype, row, ctx_r)
+        kr = se.type_probs(tables, ops.reference["surface_types"], stype, row, ctx_r)
         pr_r, sigma_r = sg(kr.probs), sg(kr.sigma_alpha)
     return stype, row, cont, live_eval, _straight_if(cont, pr_r), sigma_r
 
@@ -298,7 +298,7 @@ def _pinned_end(model, ops, ph, sc):
     wi_c = ms.moved(ph.d, chain.B, du)
     er_c, ei_c = ms.moved(ctx["er"], chain.Er, du), ms.moved(ctx["ei"], chain.Ei, du)
     n_c = ms.moved(G["n"], ms.col(G1, "n"), du)  # the surface's normal at the PINNED end
-    pr_c = se.type_probs(model.tables, ops.params["kernel"], sc.stype, sc.row,
+    pr_c = se.type_probs(model.tables, ops.params["surface_types"], sc.stype, sc.row,
                          dict(ctx, wi=wi_c, n=n_c, er=er_c, ei=ei_c)).probs  # fmt: skip
     m, ma = sc.mu, sc.mu_abs
     return PinnedEnd(f, t_c, wi_c, er_c, ei_c, jnp.sum(sg(chain.ht) * du), _straight_if(sc.cont, pr_c),
@@ -397,7 +397,14 @@ def _moved_outcome(model, ops, ph, sc, out, sens):
     """
     x_hit, d_new, w_lobe, er_n, ei_n, dt, ok, layer, delta_o = out
     E, (G, G1, G2) = sc.end, sc.end.jets
-    rule_ctx = (model.tables, ops.params["kernel"], sc.stype, sc.row, sc.ctx, (sc.mu + sc.mu_abs, sc.v_g, sc.zero_ev))
+    rule_ctx = (
+        model.tables,
+        ops.params["surface_types"],
+        sc.stype,
+        sc.row,
+        sc.ctx,
+        (sc.mu + sc.mu_abs, sc.v_g, sc.zero_ev),
+    )
     ch_d = se.propagate(sc.chain, (G, G1, G2), sc.os_, rule_ctx)
     ch_f = ms.drawn_start(x_hit, d_new, sens[0], E=(sens[1], sens[2]))
     drawn = jnp.where(delta_o, ph.moving.drawn, True)
@@ -440,7 +447,7 @@ def _bulk(model, ops, ph, sc):
 def _after(model, ops, ph, sc, nx, b0):
     """Return the state after the event's roulette, w_min, edge factor, stuck rule and time limit.
 
-    (alive, weight, z, nz, abandon, abandoned weight, late weight).
+    (alive, weight, z, nz, abandon, abandoned weight, retired weight).
     """
     q, scatter, ctl, os_ = sc.q, sc.scatter, ops.controls, sc.os_
     w_new = nx.w
@@ -460,8 +467,8 @@ def _after(model, ops, ph, sc, nx, b0):
     abandoned = jnp.where(abandon, w_new * z_new, 0.0)
     alive = alive & ~abandon
     in_time = sg(ph.t + nx.dtime) <= ctl.t_end  # past the time limit: it can never count
-    late = jnp.where(alive & ~in_time, w_new * z_new, 0.0)
-    return alive & in_time, w_new, z_new, nz_new, abandon, abandoned, late
+    retired = jnp.where(alive & ~in_time, w_new * z_new, 0.0)
+    return alive & in_time, w_new, z_new, nz_new, abandon, abandoned, retired
 
 
 def _advance(model, sc, nx):
@@ -491,7 +498,7 @@ def step(model, ops, ph, key):
     lost = jnp.where(q["hit"] & ph.alive & (sc.stype < 0) & ~scatter,
                      ph.w * estimator.reweight(E.reach, sc.reach_ref) * E.att * E.f, 0.0) * z  # fmt: skip
     nx = jax.lax.cond(scatter, lambda _: _bulk(model, ops, ph, sc), lambda _: _surface_event(model, ops, ph, sc), None)
-    alive, w_new, z_new, nz_new, abandon, abandoned, late = _after(model, ops, ph, sc, nx, b0)
+    alive, w_new, z_new, nz_new, abandon, abandoned, retired = _after(model, ops, ph, sc, nx, b0)
     vol, srf, svol = _advance(model, sc, nx)
     stack = state.Stack(nx.layer, svol, q["cls_after"].astype(I32), q["sensor"].astype(I32)) if model.stacked else None
     mv = state.MovingSource(jnp.asarray(nx.drawn), jax.tree_util.tree_map(lambda a: a.astype(F32), nx.chain)) \
@@ -509,7 +516,7 @@ def step(model, ops, ph, key):
     event, pair = jnp.where(scatter, -2, nx.outcome).astype(I32), cb * jnp.asarray(tables.type_of).shape[0] + c_k
     out_side = False if dpre is None else jnp.asarray(dpre)[cb, c_k]
     hit = hit_angle(model, ops, ph, sc, out_side) if model.hit_angle else F32(0.0)
-    dep = Deposit(jnp.where(at_if, sensor_dep, -1), dep_q, time, ph.lam, lost, abandoned, escaped, late, pushed,
+    dep = Deposit(jnp.where(at_if, sensor_dep, -1), dep_q, time, ph.lam, lost, abandoned, escaped, retired, pushed,
                   abandon, event, pair, hit)  # fmt: skip
     return ph2, dep
 

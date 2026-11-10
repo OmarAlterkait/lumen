@@ -271,7 +271,7 @@ def simulate(det, source, params=None, *, samples: int, seed: int, replicas: int
     arrivals = per.sum(0)
     err = jnp.sqrt(replicas / max(replicas - 1, 1) * jnp.sum((per - per.mean(0)) ** 2, 0))
     mean_t = jnp.where(arrivals > 0.0, acc["arrival_t"] / jnp.where(arrivals > 0.0, arrivals, 1.0), jnp.nan)
-    health = {k: acc[k] for k in ("lost", "abandoned", "escaped", "late", "truncated", "n_truncated", "stuck")}
+    health = {k: acc[k] for k in ("lost", "abandoned", "escaped", "retired", "truncated", "n_truncated", "stuck")}
     prov = (("seed", int(seed)), ("samples", int(samples)), ("replicas", int(replicas)), ("chunk", size),
             ("backend", backend), ("detector", det.name), ("calibration", det.calibration),
             ("wrt", tuple(wrt)))  # fmt: skip

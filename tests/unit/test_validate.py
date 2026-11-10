@@ -54,7 +54,7 @@ def test_a_product_whose_file_changed_is_refused(manifest):
     f = manifest / "toyref" / "launched.json"
     f.write_bytes(b"[101]")
     references._VERIFIED.clear()
-    with pytest.raises(references.ReferenceError, match="sha256"):
+    with pytest.raises(references.ReferenceStoreError, match="sha256"):
         references.product("toyref", spec)
 
 
@@ -94,7 +94,7 @@ class _Optics:
 
 
 def test_the_gradient_families_and_their_values():
-    p0 = {"kernel": {"painted": {"R": np.array([0.3, 1.0], np.float32), "sigma_alpha": np.array([0.1, 0.0])}},
+    p0 = {"surface_types": {"painted": {"R": np.array([0.3, 1.0], np.float32), "sigma_alpha": np.array([0.1, 0.0])}},
           "media": {"Water0x1": {"absorption": {"energy": np.ones(2), "value": np.array([20.0, 30.0])},
                                  "index": {"energy": np.ones(2), "value": np.array([1.33, 1.34])}}}}  # fmt: skip
     p0 = jax.tree_util.tree_map(jnp.asarray, p0)
@@ -103,7 +103,7 @@ def test_the_gradient_families_and_their_values():
     assert names == {"painted.R[surface:A]": "add", "painted.R[surface:B]": "edge",
                      "painted.sigma_alpha[surface:A]": "mul", "Water:absorption": "mul"}  # fmt: skip
     p = gradients.apply(p0, fams, np.array([0.1 if f[0] == "painted.R[surface:A]" else 0.0 for f in fams]))
-    assert float(p["kernel"]["painted"]["R"][0]) == pytest.approx(0.3 + 0.1 * 0.3)
+    assert float(p["surface_types"]["painted"]["R"][0]) == pytest.approx(0.3 + 0.1 * 0.3)
 
 
 def test_a_sharded_gradient_check_merges_into_one_summary():

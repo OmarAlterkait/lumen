@@ -76,7 +76,7 @@ def families(optics, p0) -> list:
             ):
                 out.append((keys[1].split("0x")[0] + ":" + "/".join(str(k) for k in keys[2:] if k != "value"), keys,
                             None, "mul", None))  # fmt: skip
-        elif keys[0] == "kernel":
+        elif keys[0] == "surface_types":
             rows = optics.rows.get(keys[1])
             dom = estimator.domain(optics, keys[1], keys[2])
             for r in range(a.shape[0]) if a.ndim else (None,):
@@ -406,7 +406,7 @@ def check(name, *, detector=None, photons=None, replicas=None, reverse=False, on
         if j not in mine:
             continue
         t1 = time.time()
-        edge = estimator.edge_rows(det.parts.optics, p0, [keys[:3] + (row,)] if keys[0] == "kernel" else [])
+        edge = estimator.edge_rows(det.parts.optics, p0, [keys[:3] + (row,)] if keys[0] == "surface_types" else [])
         if edge not in benches:
             benches[edge] = _bench(det, p0, fams, edge, spec, o)
         b = benches[edge]

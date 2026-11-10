@@ -122,7 +122,7 @@ def test_lar_sensor_gets_its_own_class_and_the_active_volume_is_invisible():
         if b == c["TPC"]:
             assert p.kind is legacy.PASS, (a, b, p.kind)
     assert o.type_of[c["Bulk"], c["det0"]] == o.surface_types.index(legacy.COUNTING)
-    eff = o.params["kernel"]["counting"]["eff"][o.row_of[c["Bulk"], c["det0"]]]
+    eff = o.params["surface_types"]["counting"]["eff"][o.row_of[c["Bulk"], c["det0"]]]
     assert abs(float(eff) - 0.03) < 1e-7
     # tags by copy number, 0..N-1
     assert [o.tag_of[f"det{i}"] for i in range(4)] == [3, 2, 1, 0] and o.tag_pvs[0] == "det3"
@@ -178,17 +178,17 @@ def test_value_only_changes_leave_partition_and_tables_identical():
     assert a.surface_types == b.surface_types and a.media == b.media
     for f in ("type_of", "row_of", "medium_of"):
         assert np.array_equal(getattr(a, f), getattr(b, f)), f
-    ra, rb = a.params["kernel"]["reflector"]["R"], b.params["kernel"]["reflector"]["R"]
+    ra, rb = a.params["surface_types"]["reflector"]["R"], b.params["surface_types"]["reflector"]["R"]
     assert ra.shape == rb.shape == (2,) and not np.allclose(ra, rb)
     assert float(b.params["media"]["water"]["index"]["value"]) == pytest.approx(1.40)
-    assert float(b.params["kernel"]["photocathode"]["qe"][0]) == pytest.approx(0.3)
+    assert float(b.params["surface_types"]["photocathode"]["qe"][0]) == pytest.approx(0.3)
     # re-packing params for a value-changed library reproduces them without recompiling
     rp = regions.pack(a, regions.named_params(a, lib))
-    assert np.array_equal(np.asarray(rp["kernel"]["reflector"]["R"]), rb)
+    assert np.array_equal(np.asarray(rp["surface_types"]["reflector"]["R"]), rb)
     # rows gather the right surface
     cw, cb, cb2 = a.class_of["World"], a.class_of["Box"], a.class_of["Box2"]
-    assert a.params["kernel"]["reflector"]["R"][a.row_of[cw, cb]] == pytest.approx(0.9)
-    assert a.params["kernel"]["reflector"]["R"][a.row_of[cw, cb2]] == pytest.approx(0.5)
+    assert a.params["surface_types"]["reflector"]["R"][a.row_of[cw, cb]] == pytest.approx(0.9)
+    assert a.params["surface_types"]["reflector"]["R"][a.row_of[cw, cb2]] == pytest.approx(0.5)
     assert a.media[a.medium_of[cw]] is WATER
 
 
@@ -558,9 +558,9 @@ def _same(a, b):
     assert a.surface_types == b.surface_types and a.media == b.media
     for f in ("type_of", "row_of", "medium_of"):
         assert np.array_equal(getattr(a, f), getattr(b, f)), f
-    for k in a.params["kernel"]:
-        for p in a.params["kernel"][k]:
-            assert np.array_equal(a.params["kernel"][k][p], b.params["kernel"][k][p])
+    for k in a.params["surface_types"]:
+        for p in a.params["surface_types"][k]:
+            assert np.array_equal(a.params["surface_types"][k][p], b.params["surface_types"][k][p])
 
 
 def test_determinism_under_shuffled_input_and_idempotence():

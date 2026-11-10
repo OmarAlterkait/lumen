@@ -23,14 +23,14 @@ SCHEMA = "lumen-references/1"
 _VERIFIED: dict = {}
 
 
-class ReferenceError(LookupError):
+class ReferenceStoreError(LookupError):
     """A check or product the manifests do not list, a missing store, or a file whose sha256 differs."""
 
 
 def _read(path) -> dict:
     m = json.loads(Path(path).read_text())
     if m.get("schema") != SCHEMA:
-        raise ReferenceError(f"{path}: schema {m.get('schema')!r}, this lumen reads {SCHEMA}")
+        raise ReferenceStoreError(f"{path}: schema {m.get('schema')!r}, this lumen reads {SCHEMA}")
     return m
 
 
@@ -53,7 +53,7 @@ def spec(check: str, name: str, extra=()) -> dict:
              if e["name"] == name]  # fmt: skip
     if not found:
         known = sorted({e["name"] for m in manifests(extra) for e in m["checks"].get(check, ())})
-        raise ReferenceError(f"no {check} check named {name!r}; the manifests list {known}")
+        raise ReferenceStoreError(f"no {check} check named {name!r}; the manifests list {known}")
     return found[-1]
 
 
@@ -66,7 +66,7 @@ def store(spec_: dict | None = None) -> Path:
     """Return the store a spec's products live in (its manifest's, else ``LUMEN_DATA``)."""
     root = (spec_ or {}).get("_store") or _env.data_dir()
     if root is None:
-        raise ReferenceError("no reference store: set LUMEN_DATA to the directory holding the reference products")
+        raise ReferenceStoreError("no reference store: set LUMEN_DATA to the directory holding the reference products")
     return Path(root)
 
 
@@ -82,14 +82,14 @@ def product(pid: str, spec_: dict | None = None, extra=()) -> Path:
     """Return the directory of product ``pid`` after checking every file's sha256 against the manifest."""
     entry = next((m["products"][pid] for m in manifests(extra) if pid in m.get("products", {})), None)
     if entry is None:
-        raise ReferenceError(f"no reference product {pid!r} in the manifests")
+        raise ReferenceStoreError(f"no reference product {pid!r} in the manifests")
     d = store(spec_) / pid
     if (pid, str(d)) not in _VERIFIED:
         for name, digest in entry["files"].items():
             if not (d / name).exists():
-                raise ReferenceError(f"{d / name}: missing from the store")
+                raise ReferenceStoreError(f"{d / name}: missing from the store")
             if _sha256(d / name) != digest:
-                raise ReferenceError(f"{d / name}: sha256 differs from the manifest ({digest})")
+                raise ReferenceStoreError(f"{d / name}: sha256 differs from the manifest ({digest})")
         _VERIFIED[(pid, str(d))] = entry
     return d
 
@@ -99,7 +99,7 @@ def provenance(pid: str, extra=()) -> dict:
     for m in manifests(extra):
         if pid in m.get("products", {}):
             return m["products"][pid]
-    raise ReferenceError(f"no reference product {pid!r} in the manifests")
+    raise ReferenceStoreError(f"no reference product {pid!r} in the manifests")
 
 
 def inside_store(path) -> bool:
