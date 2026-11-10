@@ -19,7 +19,7 @@ RECIPE = Recipe(
             rule="border_into",              # counted across a border surface into the sensor volume
             surface="lumen:geant4", model="lumen:pmt",
             lv="PMT",                        # or lv_pattern=r"^PMT" (a regular expression on logical-volume names)
-            defaults="lumen:wcte_r14374@1",  # a shipped PMT value set; or the path of your own JSON file
+            defaults="lumen:wcte_r14374@2",  # a shipped PMT value set; or the path of your own JSON file
             readout={"gate": (-20.0, 80.0)}, # ns after emission
         ),
     ),

@@ -68,6 +68,80 @@ class Source:
         return f"{self.tag} {self.rel}:{a}-{b}"
 
 
+WCSIM_SETS = (
+    "sk_r3600",
+    "wcte_r14374",
+    "wcsim_annie_R7081",
+    "wcsim_annie_D784KFLB",
+    "wcsim_annie_R5912HQE",
+    "wcsim_annie_R7081HQE",
+)
+
+
+def per_absorbed_photon(d, rgcff, where):
+    """Return value set d (version 2) with its QE per photon absorbed at the cathode, not per photon reaching it.
+
+    lumen tracks WCSim's photocathode (GlassCathodeSurface: polished dielectric_dielectric, REFLECTIVITY rgcff flat,
+    EFFICIENCY 1) and counts the photons it absorbs; the readout then applies QE. A QE per photon reaching the
+    cathode counts the cathode's absorptance twice, so it is divided by the absorptance at normal incidence as lumen's
+    own boundary model gives it (DIELECTRIC_RT_SENSOR: one draw against R, then T, the rest absorbed and detected with
+    eff; 1 - rgcff here, at every wavelength). WCSim itself multiplies its QE by 1 / (1 - 0.25) (WCSimWCSD.cc:214,
+    SensitiveDetector_Only), so lumen's expected PE is 0.75 / 0.68 = 1 / 0.907 of WCSim's.
+    """
+    import copy
+
+    from lumen.surfaces.types import chained_cuts
+
+    _, _, a = chained_cuts(np.float64(rgcff), np.float64(0.0))
+    a = float(a)
+    d = copy.deepcopy(d)
+    q0 = list(d["qe"]["values"])
+    d["qe"]["values"] = [round(float(v) / a, 8) for v in q0]
+    if max(d["qe"]["values"]) > 1.0:
+        raise ValueError(f"{d['name']}: QE / absorptance exceeds 1")
+    d["version"] = 2
+    d["provenance"]["fields"]["qe"] += (f"; version 2: divided by the cathode absorptance at normal incidence "
+                                        f"{a:.6g} = 1 - rgcff (rgcff {rgcff}, {where}; lumen's DIELECTRIC_RT_SENSOR "
+                                        "with R = rgcff, T = 0, eff = 1), so it is the QE per photon the tracking "
+                                        f"absorbs at the cathode; version 1's values were {q0}")  # fmt: skip
+    return d
+
+
+def rgcff(src):
+    """Return (WCSim's tuning rgcff, where): the glass-cathode REFLECTIVITY (WCSimConstructMaterials.cc:1446-1454)."""
+    i = next(i for i, ln in enumerate(src.clean) if re.search(r"\brgcff\s*=", ln))
+    return float(re.search(r"rgcff\s*=\s*([0-9.]+)", src.clean[i]).group(1)), f"{src.tag} {src.rel}:{i + 1}"
+
+
+def bump_shipped(data, wcsim_root, annie_root):
+    """Write version 2 of the shipped WCSim value sets from version 1 (kept as <set>@1.json), and sk_r3600's CE text."""
+    rg = {"main": Source(wcsim_root, "src/WCSimTuningParameters.cc", "WCSim"),
+          "annie": Source(annie_root, "src/WCSimTuningParameters.cc", "WCSim annie")}  # fmt: skip
+    for name in WCSIM_SETS:
+        p = Path(data) / f"{name}.json"
+        d1 = json.loads(p.read_text())
+        if d1["version"] != 1:
+            raise ValueError(f"{p}: expected version 1")
+        d2 = per_absorbed_photon(d1, *rgcff(rg["annie" if name.startswith("wcsim_annie") else "main"]))
+        if name == "sk_r3600":
+            d2["provenance"]["fields"]["ce"] = SK_CE
+            d2["provenance"]["warning"] += "; " + SK_CE_WARNING
+        (Path(data) / f"{name}@1.json").write_text(p.read_text())
+        p.write_text(json.dumps(d2, indent=1) + "\n")
+
+
+SK_CE = (
+    "WCSim's 2011 collection-efficiency table (commit 3a56a2caeb, 2011-05-28; dropped for a flat 100 % in "
+    '2a3ff0adc6, 2015-03-19, the comment there: "Different from SKDetSim"), kept commented at WCSim develop '
+    "e2dc7a4 src/WCSimPMTObject.cc:70-71; its source and its coordinate are not documented (unverified); "
+    "WCSim's convention: theta = acos(z_local / r_local) about the PMT solid's origin"
+)
+SK_CE_WARNING = (
+    "CE unverified: WCSim's 2011 table, not SKDetSim's; its origin and coordinate are undocumented "
+    "(docs/dev/design.md section 12)"
+)
+
+
 def spe_table(src, cls):
     cdf, where, _ = src.array(f"{cls}::Getqpe()")
     assert len(cdf) == 501, (cls, len(cdf))
@@ -376,15 +450,20 @@ HC_EDGES = (100.0, 1239.841984 / 6.19, 900.0)  # nm: the 6.19 eV split of SBND's
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--bump-qe2", metavar="DATA", help="write version 2 of the shipped WCSim sets in DATA and stop")
     ap.add_argument("--wcsim", required=True)
     ap.add_argument("--annie", required=True)
-    ap.add_argument("--spline", required=True)
-    ap.add_argument("--out", required=True)
-    ap.add_argument("--tests", required=True)
-    ap.add_argument("--sbnd-fcl", required=True)
-    ap.add_argument("--sbnd-calib", required=True)
-    ap.add_argument("--sbnd-tpb", required=True)
+    ap.add_argument("--spline")
+    ap.add_argument("--out")
+    ap.add_argument("--tests")
+    ap.add_argument("--sbnd-fcl")
+    ap.add_argument("--sbnd-calib")
+    ap.add_argument("--sbnd-tpb")
     a = ap.parse_args()
+    if a.bump_qe2:
+        bump_shipped(a.bump_qe2, a.wcsim, a.annie)
+        print("wrote version 2 of", WCSIM_SETS)
+        return
     src, hh = Source(a.wcsim, "src/WCSimPMTObject.cc", "WCSim"), Source(a.wcsim, "include/WCSimWCDigitizer.hh", "")
     asrc = Source(a.annie, "src/WCSimPMTObject.cc", "WCSim annie")
     out, tests = Path(a.out), Path(a.tests)
@@ -403,6 +482,10 @@ def main():
         emu[f"annie_{ty}"] = emulation(d, sigma_c=c)
     sets.update(sbnd_sets(a.sbnd_fcl, a.sbnd_calib, a.sbnd_tpb))
     sets["microboone_qe"] = microboone_set()
+    tun = {"main": Source(a.wcsim, "src/WCSimTuningParameters.cc", "WCSim"),
+           "annie": Source(a.annie, "src/WCSimTuningParameters.cc", "WCSim annie")}  # fmt: skip
+    for name in WCSIM_SETS:
+        sets[name] = per_absorbed_photon(sets[name], *rgcff(tun["annie" if name.startswith("wcsim_annie") else "main"]))
     for name, d in sets.items():
         (out / f"{name}.json").write_text(json.dumps(d, indent=1) + "\n")
     for name, d in emu.items():

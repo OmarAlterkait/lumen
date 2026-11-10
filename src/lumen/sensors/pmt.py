@@ -1,8 +1,8 @@
 """The ``lumen:pmt`` sensor model: a PMT's detection and electronics after tracking, and its value sets.
 
-    model = lumen.sensors.load_model("lumen:sk_r3600@1")        # a shipped value set, or a path to a JSON file
+    model = lumen.sensors.load_model("lumen:sk_r3600@2")        # a shipped value set, or a path to a JSON file
     p = model.defaults("pmt", n_sensors)                        # {"sensors/pmt/<field>": array}
-    lumen.sensors.write_defaults("lumen:sk_r3600@1", "my_r3600.json")
+    lumen.sensors.write_defaults("lumen:sk_r3600@2", "my_r3600.json")
 
 A value set (``lumen-pmt-values/1``) holds structure (forms, knot positions, table lengths, the front end's sampling
 step and charge grid) and values. Structure is static: it fixes the histograms' grids and the compiled readout.
@@ -215,6 +215,9 @@ def _path(ref: str) -> Path:
     """Return the file of a value-set reference: ``lumen:<set>@<version>`` (package data) or a local path."""
     if ref.startswith("lumen:"):
         stem, _, ver = ref[len("lumen:") :].partition("@")
+        frozen = Path(str(resources.files("lumen.sensors") / "data" / f"{stem}@{ver}.json"))
+        if ver and frozen.exists():  # an earlier version, kept as shipped
+            return frozen
         p = Path(str(resources.files("lumen.sensors") / "data" / f"{stem}.json"))
         if not p.exists():
             have = sorted(q.stem for q in p.parent.glob("*.json"))

@@ -47,7 +47,7 @@ RECIPE = lumen.Recipe(
 - `model="lumen:pmt"` is the **sensor model** applied after tracking: quantum efficiency, time spread, charge, pulse
   shape and front end.
 - `defaults` names its values. `toy_pmt.json` is an illustrative set written for this tutorial, not a real PMT.
-  lumen also ships value sets transcribed from WCSim and sbndcode, such as `lumen:wcte_r14374@1`.
+  lumen also ships value sets transcribed from WCSim and sbndcode, such as `lumen:wcte_r14374@2`.
 
 `detector()` converts the GDML once into a **detector file** (`lumen-examples/example_tank-<digest>.lumen/`) and
 loads it:

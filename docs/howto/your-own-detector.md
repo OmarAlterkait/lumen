@@ -34,7 +34,7 @@ RECIPE = Recipe(
             rule="border_into",              # counted across a border surface into the sensor volume
             surface="lumen:geant4", model="lumen:pmt",
             lv="PMT",                        # or lv_pattern=r"^PMT" (a regular expression on logical-volume names)
-            defaults="lumen:wcte_r14374@1",  # a shipped PMT value set; or the path of your own JSON file
+            defaults="lumen:wcte_r14374@2",  # a shipped PMT value set; or the path of your own JSON file
             readout={"gate": (-20.0, 80.0)}, # ns after emission
         ),
     ),
@@ -55,9 +55,9 @@ How to fill it in for your detector:
   way in is counted, and the PMT's QE is applied after tracking). This is the rule for PMTs with a photocathode
   surface. `any_entry`: every entry into the volume counts, for sensitive volumes without a detecting surface.
 - **The surface reader**: `lumen:geant4` reads the detecting surface as stock Geant4 does.
-- **The sensor model and its values.** `lumen:pmt` with a shipped value set (`lumen:sk_r3600@1`,
-  `lumen:wcte_r14374@1`, `lumen:sbnd_pmt@1`, the ANNIE sets, ...) or your own. To start your own, copy one with
-  `lumen.sensors.write_defaults("lumen:wcte_r14374@1", "my_pmt.json")`, edit it, set `provenance.source` and
+- **The sensor model and its values.** `lumen:pmt` with a shipped value set (`lumen:sk_r3600@2`,
+  `lumen:wcte_r14374@2`, `lumen:sbnd_pmt@1`, the ANNIE sets, ...) or your own. To start your own, copy one with
+  `lumen.sensors.write_defaults("lumen:wcte_r14374@2", "my_pmt.json")`, edit it, set `provenance.source` and
   `provenance.status`, and pass the file's path as `defaults`.
 
 0.1 supports one `border_into` group per detector, and `simulate` reads out one group with a sensor model, which must

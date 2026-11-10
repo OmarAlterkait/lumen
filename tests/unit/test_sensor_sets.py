@@ -87,3 +87,13 @@ def test_unknown_set_and_registry(tmp_path):
     assert plugins.sensor_models.get("lumen:pmt") is load_model
     out = write_defaults("lumen:wcte_r14374@1", tmp_path / "mine.json")
     assert json.loads(out.read_text())["name"] == "wcte_r14374"
+
+
+@pytest.mark.parametrize("name", SETS[:6])
+def test_version_2_is_the_qe_per_absorbed_photon(name):
+    """The WCSim sets at @2: @1's QE over the tracked cathode absorptance 1 - rgcff = 0.68; @1 loads as shipped."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        m1, m2 = load_model(f"lumen:{name}@1"), load_model(f"lumen:{name}@2")
+    assert m1.set_name.endswith("@1") and m2.set_name.endswith("@2")
+    np.testing.assert_allclose(np.asarray(m2.values["qe"]), np.asarray(m1.values["qe"]) / 0.68, rtol=1e-6, atol=1e-8)
