@@ -170,3 +170,15 @@ def test_refusals(toy):
 def test_a_counting_group_setting_named_eff_is_refused():
     with pytest.raises(ValueError, match="'eff' is now 'efficiency'"):
         SensorSet("default", (SensorGroup("sen", "any_entry", "lumen:counting", lv="Sen", settings={"eff": 0.5}),))
+
+
+def test_a_version_1_sensor_set_reads_with_the_surface_reader_apart():
+    from lumen.format.sensorsets import from_json
+
+    def group(model):
+        return dict(rule="border_into", model=model, lv="X", lv_pattern=None, settings={}, defaults=None, readout=None)
+
+    head = dict(schema="lumen-sensors/1", name="default", group_order=["a", "b"], groups=dict(
+        a=group("lumen:pmt"), b=group("lumen:geant4")))  # fmt: skip
+    a, b = from_json(head, ()).groups
+    assert (a.surface, a.model) == ("lumen:geant4", "lumen:pmt") and (b.surface, b.model) == ("lumen:geant4", None)

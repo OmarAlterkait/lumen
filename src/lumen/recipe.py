@@ -1,10 +1,10 @@
 """A recipe: what a GDML file cannot say about a detector, applied once, when the detector is converted.
 
-A recipe names the detector volume (a logical volume, or ``auto:<materials>``: the outermost volume of the main bath
-of one of those materials), the wavelength range of the optics, the sensor groups (which volumes, how they count,
-which model reads them) and any further decisions, each a function that returns the detector file with its choice
-recorded (``origin="recipe"`` and a note); the general import rules follow (``lumen.build.import_rules``). No
-recipe code runs when a detector file is loaded.
+A recipe names the detector volume (a logical volume, or ``auto:<materials>``: the outermost volume of the main bath of
+one of those materials), the wavelength range of the optics, the sensor groups (which volumes, how they count, which
+surface reader and sensor model read them) and any further decisions, each a function that returns the detector file
+with its choice recorded (``origin="recipe"`` and a note); the general import rules follow
+(``lumen.build.import_rules``). No recipe code runs when a detector file is loaded.
 
     RECIPE = Recipe(name="sk", detector_volume="WCBarrel", wavelength_range=(300.0, 600.0),
                     groups=(SensorGroup("pmt", "border_into", "lumen:geant4", lv_pattern="^InteriorWCPMT"),))

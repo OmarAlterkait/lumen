@@ -31,6 +31,7 @@ The design is in `docs/dev/design.md`. Terms marked *dev* stay in developer docu
 | tally, timed tally, charge tally, `Tally`, `TallyShape` | **per-sensor histograms** (in time; in wavelength and hit angle); *dev*: `RunResult`, `HistogramShape` | `Light`, `run.py`, `transport/item.py` |
 | fold | **response applied after tracking** | `lumen.readout` |
 | Q, Tw, `photons` | **`arrivals`**, `mean_arrival_time`; *dev*: the loop outputs `arrival`, `arrival_t` | `Light`, `transport/item.py` |
+| `SensorGroup.model` naming a surface reader (`lumen:geant4`, `lumen:counting`) | **surface reader** (`SensorGroup.surface`); `model` is only the sensor model (`lumen:pmt`) | `format/sensorsets.py` |
 | tag | **sensor index** (`sensor`) | `det.sensors`, `Photon.sensor` |
 | `u` (uniforms) | **`rand`** (the step's random numbers) | `_core/rng.py` |
 | `u` (moving source) | the chain's two **free coordinates** u (the maths keeps the letter) | `transport/moving_source.py` |

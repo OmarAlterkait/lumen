@@ -30,3 +30,13 @@ the setting in the sensor set's JSON and the key in calibrations.
 was `source/x`), as in `simulate(..., wrt=["source/position"])`. Positional use (`Point((0, 0, 0), ...)`) is
 unchanged. `FromArrays` keeps the field names of the photons it is given (`x`, `d`, `t`, `lam`, `w`). Nothing on disk
 changes. To do: rename `x=` and `source/x` in scripts.
+
+## Sensor sets: schema `lumen-sensors/2`, the surface reader apart from the sensor model
+
+A sensor group named one `model` for two things: how its detecting surface behaves during tracking (`lumen:geant4`,
+`lumen:counting`) and the sensor model after tracking (`lumen:pmt`). Schema `lumen-sensors/2` keeps them apart:
+`surface` is the surface reader (the third argument of `SensorGroup`, as before) and `model` the sensor model (None
+for none). A `lumen-sensors/1` file is read as /2 says it: `model: "lumen:pmt"` becomes `surface: "lumen:geant4"`,
+`model: "lumen:pmt"`; any other name becomes the surface reader with no sensor model. To do: nothing for files
+(convert again to write /2); in scripts, `dataclasses.replace(group, model="lumen:pmt", defaults=...)` is unchanged,
+and a group built with `model=` as a keyword for the surface reader takes `surface=`.

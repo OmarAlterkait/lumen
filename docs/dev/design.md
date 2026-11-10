@@ -63,7 +63,7 @@ ray parameter is `t` (m) inside `geometry/` only.
   `t_end`.
 - **surface type**: one of the legacy Geant4 surface behaviours (§10); there is no "kind" or "kernel" in the API.
 - **sensor model**: the after-tracking PMT model only; how a detecting surface behaves during tracking is its
-  **surface reader**.
+  **surface reader** (`SensorGroup.surface`).
 
 ## 4. Package layout
 
@@ -214,12 +214,12 @@ file's. `format/apply.py` is the one path that applies values, for loading and f
 
 ### 6.3 Sensor sets
 
-Structure only: groups, each with one selector (`lv` or `lv_pattern`), a counting rule (`border_into`, `any_entry`),
-and a `model`: the after-tracking sensor model (`lumen:pmt`), or for a group without one the surface reader
-(`lumen:geant4`, `lumen:complex_index`, `lumen:counting`: how the detecting surface behaves during tracking); the
-name of its default values and its readout (gate, time bands). The sensor volumes are the union
-of the groups' selectors. Efficiency during tracking is derived: 1 when a sensor model applies QE after tracking,
-Geant4's EFFICIENCY otherwise. Sensor positions and axes are derived at load.
+Structure only: groups, each with one selector (`lv` or `lv_pattern`), a counting rule (`border_into`, `any_entry`), a
+surface reader (`surface`: how the detecting surface behaves during tracking, `lumen:geant4` or `lumen:counting`), an
+optional sensor model (`model`: after tracking, `lumen:pmt`), the name of its default values and its readout (gate,
+time bands). The sensor volumes are the union of the groups' selectors. Efficiency during tracking is derived: 1 when
+a sensor model applies QE after tracking, Geant4's EFFICIENCY otherwise. Sensor positions and axes are derived at
+load.
 
 ### 6.4 Digests and caches
 

@@ -28,12 +28,12 @@ Skins and borders
     volume replaces the GDML's. ``df.outside_surface`` is the skin of the outside region. The GDML's borders are read
     with the sensor set's ``border_into`` group (``border_library``).
 Sensor groups
-    ``border_into`` with model ``lumen:geant4``: the borders into the group's volumes are sensors through the
-    surface's own detection (``settings["efficiency_on_entry"]`` replaces the efficiency on entry, the sensors are
-    named ``<settings["name_prefix"] or the group name>:<surface>``). ``any_entry`` with model ``lumen:counting``: a
-    counting sensor of efficiency ``settings["efficiency"]`` on every placement of the group's volumes.
-    ``border_into`` with model ``lumen:pmt``: tracked as ``lumen:geant4`` with every absorption entering counted
-    (efficiency 1 on entry): the PMT's QE, CE and efficiency apply after tracking (``lumen.sensors``).
+    ``border_into`` with surface reader ``lumen:geant4``: the borders into the group's volumes are sensors through
+    the surface's own detection (``settings["efficiency_on_entry"]`` replaces the efficiency on entry, the sensors are
+    named ``<settings["name_prefix"] or the group name>:<surface>``); with sensor model ``lumen:pmt`` every
+    absorption entering is counted (efficiency 1 on entry) and the PMT's QE, CE and efficiency apply after tracking
+    (``lumen.sensors``). ``any_entry`` with surface reader ``lumen:counting``: a counting sensor of efficiency
+    ``settings["efficiency"]`` on every placement of the group's volumes.
 
 The outside material is always its own opaque medium, "outside". ``sources`` maps every parameter leaf of the
 library (the paths of ``surfaces.named_params``, e.g. ("media", "Water", "index", "value")) to the
@@ -225,7 +225,7 @@ def _surfaces(df, tree, films):
 
 
 # ----------------------------------------------------------------------------------------------------- the sensors
-BORDER_MODELS = ("lumen:geant4", "lumen:pmt")  # lumen:pmt: tracked as lumen:geant4 at efficiency 1 on entry
+BORDER_SURFACES = ("lumen:geant4",)  # the surface readers of a border_into group (rules.optics.SENSOR_SURFACES)
 
 
 def _border_groups(df, tree, groups):
@@ -235,8 +235,9 @@ def _border_groups(df, tree, groups):
     if not border:
         return set(), BorderSensor(), None
     g = border[0]
-    if g.model not in BORDER_MODELS:
-        raise LibraryError(f"sensor group {g.name!r}: border_into reads a model of {BORDER_MODELS}, not {g.model!r}")
+    if g.surface not in BORDER_SURFACES:
+        raise LibraryError(f"sensor group {g.name!r}: border_into reads its surfaces with one of {BORDER_SURFACES}, "
+                           f"not {g.surface!r}")  # fmt: skip
     pvs = {p for p in tree.order if g.selects(tree.by_name[p].lv)}
     eff_in = 1.0 if g.model == "lumen:pmt" else g.settings.get("efficiency_on_entry")
     how = BorderSensor(None, eff_in, g.settings.get("name_prefix", g.name))
@@ -249,8 +250,9 @@ def _counting(tree, groups):
     for g in groups:
         if g.rule != "any_entry":
             continue
-        if g.model != "lumen:counting":
-            raise LibraryError(f"sensor group {g.name!r}: any_entry reads the model 'lumen:counting', not {g.model!r}")
+        if g.surface != "lumen:counting":
+            raise LibraryError(f"sensor group {g.name!r}: any_entry counts with the surface reader 'lumen:counting', "
+                               f"not {g.surface!r}")  # fmt: skip
         sensors[g.name] = regions.SensorEntry(legacy.COUNTING, {"eff": float(g.settings["efficiency"])})
         sources[g.name] = {("eff",): Source(f"sensors/{g.name}/efficiency", "setting")}
         for lv in (x for x in lvs if g.selects(x)):
@@ -464,12 +466,12 @@ def _flatten(library, sources):
 class BorderSensor:
     """How border_library reads the borders into a sensor volume.
 
-    ``model`` names the sensor model (None: the default, stock Geant4's reading); ``eff_in`` replaces the detection
+    ``surface`` names the surface reader (None: the default, stock Geant4's reading); ``eff_in`` replaces the detection
     efficiency on entry (a sensitive detector that counts every absorption: WCSim's, 1); ``prefix`` names the
     sensors ("<prefix>:<surface>").
     """
 
-    model: str | None = None
+    surface: str | None = None
     eff_in: float | None = None
     prefix: str = "sensor"
 
@@ -572,7 +574,7 @@ def border_library(df, tree, sensor_pvs, lam_domain=None, how: BorderSensor | No
         if post in sensor_pvs:
             k = f"{how.prefix}:{s}"
             if k not in sensors:
-                sensors[k] = rules.sensor(rec, lam_domain, how.model, eff=how.eff_in)
+                sensors[k] = rules.sensor(rec, lam_domain, how.surface, eff=how.eff_in)
             lv = tree.by_name[post].lv
             if (k, lv) not in bound:
                 bound.add((k, lv))
@@ -581,7 +583,7 @@ def border_library(df, tree, sensor_pvs, lam_domain=None, how: BorderSensor | No
         elif pre in sensor_pvs and rules.nonzero(rec.properties, "EFFICIENCY"):
             k = f"{how.prefix}:{s}|out"
             if k not in sensors:
-                sensors[k] = rules.sensor(rec, lam_domain, how.model)
+                sensors[k] = rules.sensor(rec, lam_domain, how.surface)
             borders[(pre, post)] = k
         else:
             if s not in surfaces:
