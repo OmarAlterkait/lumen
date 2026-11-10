@@ -20,7 +20,7 @@ photon's Jones vector: ``pol_sample(p, wi, er, ei, rand)`` and ``pol_logpdf(p, w
 
 import math
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import jax.numpy as jnp
 
@@ -47,6 +47,7 @@ class Lobe:
     path_logpdf: Callable | None = None
     pol_sample: Callable | None = None
     pol_logpdf: Callable | None = None
+    domains: dict = field(default_factory=dict)  # parameter -> (lo, hi): an edge makes part of the lobe impossible
 
     def __repr__(self):
         """Show the lobe's name."""

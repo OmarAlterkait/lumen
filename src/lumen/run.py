@@ -47,37 +47,39 @@ class Tally(NamedTuple):
     overflow: jax.Array
 
 
-def run(  # noqa: PLR0913 -- SPEC section 5's signature
-    spec, model, ops, rows, key, *, max_vertices=MAX_VERTICES, replicas=1, diagnostics=(), backend="auto", first_id=0,
-    n_active=None, form="operands",
-):  # fmt: skip
-    """Return the Tally of the photons ``rows`` (an Emission batch) under ``key`` (raw key data).
-
-    ``form="operands"`` (the default): one jitted loop whose operands are ``ops``, the key, ``first_id`` and
-    ``n_active`` (only rows i < n_active run): changing any value never recompiles, and a loop that closes over a
-    float array is refused (``ClosedOverValues``). ``form="closure"``: the baseline's eager form, values baked in
-    (comparisons only).
-    """
+def _static(spec, model, max_vertices, replicas, diagnostics, backend):
     if int(max_vertices) < 1:
         raise ValueError(f"max_vertices must be >= 1, got {max_vertices}")
     check_device(backend)
-    static = (spec, model, int(max_vertices), int(replicas), tuple(diagnostics), backend, form)
-    if form == "memory":  # loop_memory: the compiled loop's memory analysis, not a run
-        m = _LOOP.lower(static[:-1] + ("operands",), ops, rows, key, jnp.asarray(first_id, jnp.int32), n_active)
-        m = m.compile().memory_analysis()
-        return dict(temp=int(m.temp_size_in_bytes), argument=int(m.argument_size_in_bytes),
-                    output=int(m.output_size_in_bytes))  # fmt: skip
-    loop = _loop if form == "closure" else _LOOP
-    return loop(static, ops, rows, key, jnp.asarray(first_id, jnp.int32), n_active)
+    return (spec, model, int(max_vertices), int(replicas), tuple(diagnostics), backend)
 
 
-def loop_memory(spec, model, ops, rows, key, **kw) -> dict:
+def run(  # noqa: PLR0913 -- SPEC section 5's signature
+    spec, model, ops, rows, key, *, max_vertices=MAX_VERTICES, replicas=1, diagnostics=(), backend="auto", first_id=0,
+    n_active=None,
+):  # fmt: skip
+    """Return the Tally of the photons ``rows`` (an Emission batch) under ``key`` (raw key data).
+
+    One jitted loop whose operands are ``ops``, the key, ``first_id`` and ``n_active`` (only rows i < n_active run):
+    changing any value never recompiles, and a loop that closes over a float array is refused (``ClosedOverValues``).
+    """
+    static = _static(spec, model, max_vertices, replicas, diagnostics, backend)
+    return _LOOP(static, ops, rows, key, jnp.asarray(first_id, jnp.int32), n_active)
+
+
+def loop_memory(  # noqa: PLR0913 -- run's signature
+    spec, model, ops, rows, key, *, max_vertices=MAX_VERTICES, replicas=1, diagnostics=(), backend="auto", first_id=0,
+    n_active=None,
+) -> dict:  # fmt: skip
     """Return XLA's memory analysis of the compiled loop, in bytes ("temp", "argument", "output"), without running it.
 
     The arguments are ``run``'s. tallymap's per-thread memory is its own (outside XLA's pool); "temp" is what XLA adds
     around the kernel.
     """
-    return run(spec, model, ops, rows, key, **kw, form="memory")
+    static = _static(spec, model, max_vertices, replicas, diagnostics, backend)
+    m = _LOOP.lower(static, ops, rows, key, jnp.asarray(first_id, jnp.int32), n_active).compile().memory_analysis()
+    return dict(temp=int(m.temp_size_in_bytes), argument=int(m.argument_size_in_bytes),
+                output=int(m.output_size_in_bytes))  # fmt: skip
 
 
 class DeviceError(RuntimeError):
@@ -101,17 +103,17 @@ class ClosedOverValues(ValueError):  # noqa: N818 -- the documented error catalo
     """The photon loop closes over a float array: a value baked into the kernel, which recompiles when it changes."""
 
 
-def _refuse_closed_over(tag):
+def _refuse_closed_over():
     from tallymap import _diagnostics
 
     floats = _diagnostics.PROGRAMS[-1][CLOSED_OVER] if _diagnostics.PROGRAMS else []
     if floats:
-        raise ClosedOverValues(f"the photon loop ({tag}) closes over {len(floats)} float array(s) {floats[:4]}: pass "
+        raise ClosedOverValues(f"the photon loop closes over {len(floats)} float array(s) {floats[:4]}: pass "
                                "every value through the Operands (lumen.transport.step.operands)")  # fmt: skip
 
 
 def _loop(static, ops, rows, key, first_id, n_active):
-    spec, model, max_vertices, replicas, diagnostics, backend, form = static
+    spec, model, max_vertices, replicas, diagnostics, backend = static
     n = rows.x.shape[0]
     cuda = backend == "cuda" or (backend == "auto" and jax.default_backend() == "gpu")
     if cuda:
@@ -121,8 +123,8 @@ def _loop(static, ops, rows, key, first_id, n_active):
         shapes |= dg.outputs()
     outputs = {k: tm.Sum((cells,), exact=exact and cuda) for k, (cells, exact) in shapes.items()}
 
-    def item(tl, x, *b):
-        o, k, fid = b[0] if b else (ops, key, first_id)
+    def item(tl, x, b):
+        o, k, fid = b
         pkey = rng.photon_key(k, fid + x["id"])
         slot = x["id"] * replicas // n
 
@@ -153,12 +155,10 @@ def _loop(static, ops, rows, key, first_id, n_active):
         return tl, spec.per_item(ph)
 
     xs = dict(row=rows, id=jnp.arange(n, dtype=jnp.int32))
-    closure = form == "closure"
     opts = dict(outputs=outputs, max_steps=max_vertices + 1, backend=TALLYMAP_BACKEND["cuda" if cuda else "cpu"],
-                _schedule=SCHEDULE, in_axes=0 if closure else (0, None))  # fmt: skip
-    r = tm.vmap(item, **opts)(*((xs,) if closure else (xs, (ops, key, first_id))), n_active=n_active)
-    if not closure:
-        _refuse_closed_over(form)
+                _schedule=SCHEDULE, in_axes=(0, None))  # fmt: skip
+    r = tm.vmap(item, **opts)(xs, (ops, key, first_id), n_active=n_active)
+    _refuse_closed_over()
     complete = (r.outputs["n_truncated"][0] == 0) & (r.stats["n_truncated"] == 0)
     return Tally(dict(r.outputs), dict(r.per_item), complete, r.stats.get(OVERFLOW, jnp.int32(0)))
 

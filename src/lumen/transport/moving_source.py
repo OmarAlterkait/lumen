@@ -61,6 +61,17 @@ class Chain(NamedTuple):
     xo: jax.Array  # (3,)
 
 
+def col(fs, k):
+    """Return the jets' field k stacked along u: (..., 2) from [f_1, f_2] (or 3 from the second derivatives)."""
+    return jnp.stack([f[k] for f in fs], -1)
+
+
+def no_sensitivities():
+    """Return the sensitivities of an outcome with no free direction: (log density gradient, Er, Ei), zeros."""
+    z = jnp.zeros((3, 2), jnp.float32)
+    return (jnp.zeros(3, jnp.float32), z, z)
+
+
 def sensitivity(state_fn, d):
     """Return d(er, ei)/du of a polarisation state_fn(d) -> (er, ei) along free_start's coordinates of d (values)."""
     e1, e2 = frames.basis(sg(d))
@@ -126,16 +137,22 @@ def _solve2(M, r):
     return jnp.where(ok, x, 0.0)
 
 
+def _tangent_system(n, Ys, y):
+    """Return (M, r): the end's motion dy/du (Ys, values) and its value-zero offset y - sg(y) in the plane of n."""
+    t1, t2 = frames.basis(sg(n))
+    M = jnp.stack([jnp.stack([jnp.sum(t * v) for v in Ys]) for t in (t1, t2)])
+    dy = y - sg(y)
+    return M, jnp.stack([jnp.sum(t1 * dy), jnp.sum(t2 * dy)])
+
+
 def surface_end(ch, y, n, Y, Y2, valid):
     """Return (du, weight factor) that hold the end y (live, on a fixed surface of normal n) by moving u.
 
     Y = (dy/du_1, dy/du_2) live, Y2 the second derivatives (values); du has value 0, the factor value 1.
     """
-    t1, t2 = frames.basis(sg(n))
     Ys = [sg(v) for v in Y]
-    M = jnp.stack([jnp.stack([jnp.sum(t * v) for v in Ys]) for t in (t1, t2)])
-    dy = y - sg(y)
-    du = -_solve2(M, jnp.stack([jnp.sum(t1 * dy), jnp.sum(t2 * dy)]))
+    M, r = _tangent_system(n, Ys, y)
+    du = -_solve2(M, r)
     nn = sg(n)
     J = jnp.sum(nn * jnp.cross(Y[0], Y[1]))
     Js = sg(J)
@@ -153,14 +170,12 @@ def anchor(ch, y, n, valid):
 
     surface_end's solve without its weight factor; an ill-conditioned solve gives 0 (the identity gauge).
     """
-    t1, t2 = frames.basis(sg(n))
     Ys = [sg(ch.A[:, i]) for i in range(2)]
-    M = jnp.stack([jnp.stack([jnp.sum(t * v) for v in Ys]) for t in (t1, t2)])
+    M, r = _tangent_system(n, Ys, y)
     det = M[0, 0] * M[1, 1] - M[0, 1] * M[1, 0]
     scale = jnp.sqrt(jnp.sum(Ys[0] * Ys[0]) * jnp.sum(Ys[1] * Ys[1]))  # |A1| |A2|: det's own units
     ok = valid & (jnp.abs(det) > ANCHOR_COND * scale) & (scale > 0.0)
-    dy = y - sg(y)
-    du = -_solve2(jnp.where(ok, M, jnp.eye(2, dtype=M.dtype)), jnp.stack([jnp.sum(t1 * dy), jnp.sum(t2 * dy)]))
+    du = -_solve2(jnp.where(ok, M, jnp.eye(2, dtype=M.dtype)), r)
     return jnp.where(ok, du, 0.0), ok
 
 

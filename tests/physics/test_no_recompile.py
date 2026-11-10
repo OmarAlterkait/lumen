@@ -86,7 +86,10 @@ def test_no_value_recompiles(setup):
 
 def test_a_loop_closing_over_a_float_array_is_refused(setup):
     det, model, spec, tally = setup
-    ops = steps.Operands(det.pack(), None, steps.Controls(), None, None, item.grid(tally))  # the model's own arrays
+    ops = steps.operands(model, det.pack(), grid=item.grid(tally))
+    baked = jnp.linspace(0.5, 1.0, 4, dtype=jnp.float32)  # a value the item closes over instead of reading an operand
+    start = spec.init
+    spec = spec._replace(init=lambda m, o, r: start(m, o, r)._replace(w=start(m, o, r).w * baked[1]))
     with pytest.raises(runner.ClosedOverValues, match="closes over"):
         runner.run(spec, model, ops, rows(), jax.random.key_data(jax.random.PRNGKey(0)), max_vertices=50,
                    backend="auto")  # fmt: skip

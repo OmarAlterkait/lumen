@@ -26,6 +26,7 @@ from lumen.surfaces import facets, lobes, outcomes, polar
 from lumen.surfaces.outcomes import DELTA, DETECT, DIFFUSE, DIFFUSE_T, FAR_SIDE, GLOSSY, N_OUTCOMES, REEMIT, STRAIGHT
 from lumen.transport import moving_source as ms
 from lumen.transport.estimator import magic, magic_log
+from lumen.transport.medium import reemit_draw
 
 sg = jax.lax.stop_gradient
 F32 = jnp.float32
@@ -107,13 +108,9 @@ def propagate(ch, jets, o, rule_ctx):
     """
     tables, pk, kidx, row, ctx, (mu_tot, v_g, zero) = rule_ctx
     G, G1, G2 = jets
-
-    def col(fs, k):
-        return jnp.stack([f[k] for f in fs], -1)
-
-    A, B = col(G1, "y"), col(G1, "d")
-    CA, CB = (sg(col(G2, k)) for k in ("y", "d"))
-    t_u = jnp.where(zero, 0.0, sg(col(G1, "t")))  # a zero-length segment in an opaque medium: none (step)
+    A, B = ms.col(G1, "y"), ms.col(G1, "d")
+    CA, CB = (sg(ms.col(G2, k)) for k in ("y", "d"))
+    t_u = jnp.where(zero, 0.0, sg(ms.col(G1, "t")))  # a zero-length segment in an opaque medium: none (step)
 
     def rule(wi_, n_, er_, ei_):
         out = type_probs(tables, pk, kidx, row, dict(ctx, wi=wi_, n=n_, er=er_, ei=ei_))
@@ -148,11 +145,6 @@ class _Lobes(NamedTuple):
     rand: jax.Array
     shared: bool
     moving: bool
-
-
-def _no_sens():
-    z = jnp.zeros((3, 2), F32)
-    return (jnp.zeros(3, F32), z, z)
 
 
 def _chain_branch(lobe, lb):
@@ -210,7 +202,7 @@ def outcome_direction(tables, kidx, o, cross, lb):
         def f(_):
             d_ = outcomes.direction_rules(wi, nrm, eta)[k_]()
             e_ = outcomes.jones_rules(comps, amps, s_ax, (er0, ei0), unit(d_))[k_]()
-            return (d_, one, *e_, *(_no_sens() if lb.moving else ()))
+            return (d_, one, *e_, *(ms.no_sensitivities() if lb.moving else ()))
 
         return f
 
@@ -233,14 +225,14 @@ def outcome_direction(tables, kidx, o, cross, lb):
 def reemission(tables, kidx, o, lam_tau, rand, arrays_of):
     """Return (wavelength, delay) after outcome o: REEMIT draws them from the type's spectrum and Exp(tau).
 
-    ``arrays_of(spectrum)``: its tables as operands (None: its own).
+    ``arrays_of(spectrum)``: its tables as operands.
     """
     lam, tau = lam_tau
     if not any(kd.reemit is not None for kd in tables.kinds):
         return lam, F32(0.0)
 
     def remit(kd):
-        return lambda _: (sg(kd.reemit.sample(rand[0], arrays_of(kd.reemit))), -tau * jnp.log(rand[1]))
+        return lambda _: reemit_draw(kd.reemit, tau, rand, arrays_of)
 
     def keep(_):
         return lam, F32(0.0)
@@ -248,6 +240,11 @@ def reemission(tables, kidx, o, lam_tau, rand, arrays_of):
     lam_r, dt_r = jax.lax.switch(jnp.maximum(kidx, 0), [remit(kd) if kd.reemit is not None else keep
                                                         for kd in tables.kinds], None)  # fmt: skip
     return jnp.where(o == REEMIT, lam_r, lam), jnp.where(o == REEMIT, dt_r, 0.0)
+
+
+def is_stack(tables, kidx):
+    """Return whether surface type kidx is a layered one (a film over a backing); -1 (none): False."""
+    return jnp.asarray([kd.stack for kd in tables.kinds] or [False])[jnp.maximum(kidx, 0)] & (kidx >= 0)
 
 
 def layer_after(tables, kidx, ok, film_coated, dirs, far):
@@ -260,21 +257,24 @@ def layer_after(tables, kidx, ok, film_coated, dirs, far):
     d_new, nrm = dirs
     into = jnp.sum(d_new * nrm) < 0.0
     layer = jnp.where(film, jnp.where(into, 2, 0), jnp.where(~into & coated, 1, 0)).astype(jnp.int32)
-    stk = jnp.asarray([kd.stack for kd in tables.kinds] or [False])[jnp.maximum(kidx, 0)] & (kidx >= 0)
+    stk = is_stack(tables, kidx)
     layer = jnp.where(stk & ok, layer, 0)
     return layer, jnp.where(stk, (layer == 0) & into, far)
 
 
-def outcome_weight(vx, o, delta_o, edge):
-    """Return the weight after outcome o: reached (live / reference), attenuated, times p_live / q (or the floor's)."""
-    os_ = jnp.maximum(o, 0)
-    w_surf = jnp.where(delta_o, vx.w * magic(vx.reach_live, vx.reach_ref) * vx.att_if,
-                       vx.endw(vx.w * magic(vx.end.reach, vx.reach_ref) * vx.end.att))  # fmt: skip
-    pr_o = jnp.where(delta_o, vx.pr[os_], vx.end.pr[os_])
-    r_o = pr_o / jnp.maximum(sg(vx.qo[os_]), 1e-30)
+def outcome_weight(w, vx, delta_o, edge):
+    """Return the weight after the drawn outcome: reached (live / reference), attenuated, times p_live / q.
+
+    ``w`` the photon's weight; at an edge row a floored outcome takes the floor's ratio instead.
+    """
+    os_, E = vx.os_, vx.end
+    w_surf = jnp.where(delta_o, w * magic(vx.reach_live, vx.reach_ref) * vx.att_if,
+                       w * magic(E.reach, vx.reach_ref) * E.att * E.f)  # fmt: skip
+    q_o = jnp.maximum(sg(vx.qo[os_]), 1e-30)
+    r_o = jnp.where(delta_o, vx.te.probs[os_], E.pr[os_]) / q_o
     if edge:  # drawn at eps where p = 0: the photon as at p = eps, p / eps in z
-        r_o = jnp.where(vx.fl[os_], vx.pr_q[os_] / jnp.maximum(sg(vx.qo[os_]), 1e-30), r_o)
-    return w_surf * jnp.where(o >= 0, r_o, 0.0)
+        r_o = jnp.where(vx.fl[os_], vx.pr_q[os_] / q_o, r_o)
+    return w_surf * jnp.where(vx.drawn, r_o, 0.0)
 
 
 __all__ = ["DELTA", "DETECT", "FAR_SIDE", "STRAIGHT", "TypeEval", "type_probs"]

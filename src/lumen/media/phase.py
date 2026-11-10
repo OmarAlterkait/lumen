@@ -182,4 +182,5 @@ MIE_HG = Lobe(
     logpdf=lambda p, wi, n, wo: mie_hg_logpdf(p, wi, wo),
     weight=_ones,
     axis=lambda p, wi, n: wi,
+    domains={"forward_ratio": (0.0, 1.0)},  # at 0 or 1 one HG lobe is never drawn
 )

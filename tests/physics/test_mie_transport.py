@@ -295,7 +295,7 @@ def test_the_forward_ratio_at_its_edge_keeps_its_one_sided_derivative(detectors)
     p0 = det.pack()
     m = medium_key(p0)
     rows = estimator.edge_rows(det.parts.optics, p0, [("media", m, "mie", "lobe", "forward_ratio")])
-    assert rows == ((f"mie:{m}", 0),)
+    assert rows == ((m, "mie", "forward_ratio"),)
     cfg = steps.StepConfig(edge_rows=rows)
     n, k = 1 << 21, 16
     runs = [_jvp(det, "forward_ratio", emission(n // k, seed=30 + s), cfg, seed=30 + s)[1][1] for s in range(k)]

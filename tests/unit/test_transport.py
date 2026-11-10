@@ -11,7 +11,7 @@ import pytest
 
 from lumen import diagnostics
 from lumen._core.safe import safe_div
-from lumen.media import phase
+from lumen.media import bulk, laws, phase
 from lumen.surfaces import _legacy as legacy
 from lumen.surfaces.outcomes import ABSORB, DETECT, SPECULAR, TERMINAL
 from lumen.transport import estimator, item, state
@@ -42,9 +42,10 @@ def test_the_proposal_is_the_baselines_defensive_mix_at_zero_bit_for_bit():
 
 
 def _tables():
-    """Two rows of one painted type (R 0 and 0.5): the estimator reads only the tables' types."""
+    """Two rows of one painted type (R 0 and 0.5) and a water with Mie: the estimator reads the types and media."""
+    water = bulk.Medium("w", laws.constant("index"), None, (bulk.mie(laws.constant("length")),))
     kp = {"painted": {"R": np.array([0.0, 0.5], np.float32), "f_spec": np.array([1.0, 1.0], np.float32)}}
-    return types.SimpleNamespace(kinds=(legacy.PAINTED,)), kp
+    return types.SimpleNamespace(kinds=(legacy.PAINTED,), media=(water,)), kp
 
 
 def test_edge_rows_come_from_wrt_and_the_domains():
@@ -55,7 +56,7 @@ def test_edge_rows_come_from_wrt_and_the_domains():
     assert estimator.edge_rows(tables, params, [("kernel", "painted", "R", 1)]) == ()
     assert estimator.edge_rows(tables, params, [("kernel", "painted", "f_spec", 0)]) == (("painted", 0),)
     mie = ("media", "w", "mie", "lobe", "forward_ratio")
-    assert estimator.edge_rows(tables, params, [mie]) == (("mie:w", 0),)
+    assert estimator.edge_rows(tables, params, [mie]) == (("w", "mie", "forward_ratio"),)
     lobe["forward_ratio"] = 0.7
     assert estimator.edge_rows(tables, params, [mie]) == ()
     assert estimator.edge_rows(tables, params, []) == ()
@@ -75,8 +76,11 @@ def test_the_edge_floor_proposes_the_zero_outcomes_at_their_share():
     q2, fl2 = estimator.edge_floor(pr, jnp.int32(0), jnp.int32(1), tables, (("painted", 0),))  # not an edge row
     assert not bool(jnp.any(fl2)) and np.array_equal(np.asarray(q2), np.asarray(pr))
     lobe = {"forward_ratio": jnp.asarray(1.0, F32), "g_forward": 0.6}
-    assert float(estimator.mie_reference(lobe, "w", (("mie:w", 0),))["forward_ratio"]) == pytest.approx(0.99)
-    assert estimator.mie_reference(lobe, "w", ()) is lobe
+    rows = (("w", "mie", "forward_ratio"),)
+    assert float(estimator.lobe_reference(lobe, phase.MIE_HG, ("w", "mie"), rows)["forward_ratio"]) == pytest.approx(
+        0.99
+    )
+    assert estimator.lobe_reference(lobe, phase.MIE_HG, ("w", "mie"), ()) is lobe
 
 
 def _row(n=3):

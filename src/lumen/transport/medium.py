@@ -77,28 +77,41 @@ class BulkDraw(NamedTuple):
     sens: tuple
 
 
+def spectrum_arrays(model, ops):
+    """Return spectrum -> its tables (the operands')."""
+    ids = [id(s) for s in model.spectra]
+    return lambda spec: ops.tables["spectra"][ids.index(id(spec))]
+
+
+def reemit_draw(spec, tau, rand, arrays_of):
+    """Return (wavelength, delay) of a re-emission: the spectrum's draw and Exp(tau), from two uniforms."""
+    return sg(spec.sample(rand[0], arrays_of(spec))), -tau * jnp.log(rand[1])
+
+
+def _lobe_fns(lobe):
+    """Return (sample, logpdf) of a lobe in the polarised signature (p, d, er, ei, ...): a plain one ignores er, ei."""
+    if lobe.pol_logpdf is not None:
+        return lobe.pol_sample, lobe.pol_logpdf
+    return (lambda p, d, er, ei, rand: lobe.sample(p, d, d, rand)), (lambda p, d, er, ei, wo: lobe.logpdf(p, d, d, wo))
+
+
 def _draw(ch, params, d, pol, rand, shared):
     """Return (wo, lp, lpr, the live log density as a function of wo) of one channel's lobe (params: live, ref)."""
     p, pr = params
     er, ei = pol
-    lobe = ch.lobe
-    if lobe.pol_logpdf is not None:
-        w_c = sg(lobe.pol_sample(pr, d, sg(er), sg(ei), rand))
-        lp = lobe.pol_logpdf(p, d, er, ei, w_c)
-        lpr = sg(lp) if shared else lobe.pol_logpdf(pr, d, sg(er), sg(ei), w_c)
-        return w_c, lp, lpr, lambda wo: lobe.pol_logpdf(sg(p), sg(d), sg(er), sg(ei), wo)
-    w_c = sg(lobe.sample(pr, d, d, rand))
-    lp = lobe.logpdf(p, d, d, w_c)
-    lpr = sg(lp) if shared else lobe.logpdf(pr, d, d, w_c)
-    return w_c, lp, lpr, lambda wo: lobe.logpdf(sg(p), sg(d), sg(d), wo)
+    sample, logpdf = _lobe_fns(ch.lobe)
+    w_c = sg(sample(pr, d, sg(er), sg(ei), rand))
+    lp = logpdf(p, d, er, ei, w_c)
+    lpr = sg(lp) if shared else logpdf(pr, d, sg(er), sg(ei), w_c)
+    return w_c, lp, lpr, lambda wo: logpdf(sg(p), sg(d), sg(er), sg(ei), wo)
 
 
-def channel_draw(ctx, mi, c, d, pol, lam):
-    """Return the BulkDraw of channel c of medium mi for direction d, state pol = (er, ei) and wavelength lam.
-
-    ``ctx``: (tables, live params, reference params, uniforms, shared, moving, edge rows, spectrum -> its tables).
-    """
-    tables, pm, pmr, u, shared, moving, rows, arrays_of = ctx
+def channel_draw(model, ops, mi, c, d, pol, lam, u):  # noqa: PLR0913 -- the event's inputs
+    """Return the BulkDraw of channel c of medium mi for direction d, state pol = (er, ei) and wavelength lam."""
+    tables, moving, rows = model.tables, model.step.moving_source, model.step.edge_rows
+    shared = ops.reference is None
+    pm, pmr = ops.params["media"], (ops.params if shared else ops.reference)["media"]
+    arrays_of = spectrum_arrays(model, ops)
     branches, offset = [], []
     for med in tables.media:
         offset.append(len(branches))
@@ -107,7 +120,7 @@ def channel_draw(ctx, mi, c, d, pol, lam):
             def f(_, med=med, ch=ch):
                 p = pm[med.name][ch.name].get("lobe", {})
                 q = pmr[med.name][ch.name].get("lobe", {})
-                ref = estimator.mie_reference(q, med.name, rows) if ch.name == "mie" else q
+                ref = estimator.lobe_reference(q, ch.lobe, (med.name, ch.name), rows)
                 floored = ref is not q
                 pr = jax.tree_util.tree_map(sg, ref)
                 w_c, lp, lpr, lp_out = _draw(ch, (p, pr), d, pol, u["lobe"], shared and not floored)
@@ -119,14 +132,12 @@ def channel_draw(ctx, mi, c, d, pol, lam):
                 if ch.reemit is None:
                     return BulkDraw(w_c, lp, lpr, lam, F32(0.0), F32(1.0), *st, sens)
                 v = pm[med.name][ch.name]
-                lam2 = sg(ch.reemit.sample(u["reemit"][0], arrays_of(ch.reemit)))
-                return BulkDraw(w_c, lp, lpr, lam2, -v["tau"] * jnp.log(u["reemit"][1]), jnp.asarray(v["yield"], F32),
-                                *st, sens)  # fmt: skip
+                lam2, delay = reemit_draw(ch.reemit, v["tau"], u["reemit"], arrays_of)
+                return BulkDraw(w_c, lp, lpr, lam2, delay, jnp.asarray(v["yield"], F32), *st, sens)
 
             branches.append(f)
     if not branches:
-        z = jnp.zeros((3, 2), F32)
-        return BulkDraw(d, F32(0.0), F32(0.0), lam, F32(0.0), F32(1.0), *pol,
-                        (jnp.zeros(3, F32), z, z) if moving else ())  # fmt: skip
+        sens = moving_source.no_sensitivities() if moving else ()
+        return BulkDraw(d, F32(0.0), F32(0.0), lam, F32(0.0), F32(1.0), *pol, sens)
     idx = jnp.asarray(offset, jnp.int32)[mi] + c
     return jax.lax.switch(jnp.clip(idx, 0, len(branches) - 1), branches, None)

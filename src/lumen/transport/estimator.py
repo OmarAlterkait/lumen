@@ -16,9 +16,9 @@ floored outcomes the fixed share e = EDGE_BUDGET of the draws at that row, whate
 derivative's positive part, the path the floored outcome opens, came from a draw in a thousand at weight 1 / eps,
 heavy-tailed: on a closed unified box its replicas' spread was underestimated and the AD sat 1-3 sigma low; at e =
 0.01 its error is three times smaller and AD and FD agree). The value pays e of the draws at an edge row (photons with
-z = 0); the estimand is unchanged (D68). A Mie forward ratio
-at 0 or 1 in ``wrt`` has its reference moved inside by the same share (``mie_reference``); its live weight is the
-direction density's ratio.
+z = 0); the estimand is unchanged (D68). A bulk lobe's parameter at an edge of its domain (the lobe's ``domains``: Mie's
+forward ratio at 0 or 1) in ``wrt`` has its reference moved inside by the same share (``lobe_reference``); its live
+weight is the direction density's ratio.
 
 Notes
 -----
@@ -37,8 +37,6 @@ from lumen.surfaces.outcomes import N_OUTCOMES, TERMINAL
 
 sg = jax.lax.stop_gradient
 EDGE_BUDGET = 0.01  # the share of an edge row's draws the floored outcomes take (the baseline's edge_budget x (1 - S))
-EDGE_SHARE_MIN, EDGE_SHARE_MAX = 1e-6, 0.5  # that share's clip
-MIE_RATIO = "forward_ratio"
 
 
 def magic(live, ref):
@@ -75,18 +73,29 @@ def _at_edge(a, dom=(0.0, 1.0)):
     return np.any((a <= dom[0]) | (a >= dom[1]))
 
 
+def _lobe_domain(tables, medium, channel, name):
+    """Return the (lo, hi) domain of a bulk lobe's parameter (the lobe's ``domains``), or None."""
+    for m in tables.media:
+        for ch in m.channels if m.name == medium else ():
+            if ch.name == channel:
+                return ch.lobe.domains.get(name)
+    return None
+
+
 def edge_rows(tables, params, wrt):
-    """Return the edge rows, ((type name, row), ...): where a ``wrt`` parameter sits at an edge of its domain.
+    """Return the edge rows: where a ``wrt`` parameter sits at an edge of its domain.
 
     ``wrt`` holds packed-parameter paths: ("kernel", type, name) (every row) or ("kernel", type, name, row) for a
-    surface parameter with a domain (the type's ``domain``), and ("media", medium, "mie", "lobe", "forward_ratio") for
-    a Mie forward ratio (the row is then ("mie:" + medium, 0)). Anything else has no edge here.
+    surface parameter with a domain (the type's ``domain``), giving (type name, row); and ("media", medium, channel,
+    "lobe", name) for a bulk lobe's parameter with a domain (the lobe's ``domains``), giving (medium, channel, name).
+    Anything else has no edge here.
     """
     out = set()
     for path in wrt:
-        if len(path) >= 5 and path[0] == "media" and path[2:5] == ("mie", "lobe", MIE_RATIO):
-            if _at_edge(np.asarray(params["media"][path[1]]["mie"]["lobe"][MIE_RATIO], np.float64)):
-                out.add((f"mie:{path[1]}", 0))
+        if len(path) >= 5 and path[0] == "media" and path[3] == "lobe":
+            dom = _lobe_domain(tables, path[1], path[2], path[4])
+            if dom is not None and _at_edge(np.asarray(params["media"][path[1]][path[2]]["lobe"][path[4]]), dom):
+                out.add((path[1], path[2], path[4]))
             continue
         dom = domain(tables, path[1], path[2]) if len(path) >= 3 and path[0] == "kernel" else None
         if dom is None:
@@ -96,13 +105,13 @@ def edge_rows(tables, params, wrt):
         a = a.reshape(a.shape[0], -1) if a.ndim else a.reshape(1, 1)
         rows = range(a.shape[0]) if len(path) < 4 or path[3] is None else (int(path[3]),)
         out |= {(path[1], r) for r in rows if _at_edge(a[r], dom)}
-    return tuple(sorted(out))
+    return tuple(sorted(out, key=str))
 
 
 def _row_table(tables, rows):
     """Return the static (n_types, n_rows) bool table of the surface edge rows."""
     names = [k.name for k in tables.kinds]
-    rows = [(k, r) for k, r in rows if not k.startswith("mie:")]
+    rows = [row for row in rows if len(row) == 2]  # the surface rows (a lobe's are (medium, channel, name))
     a = np.zeros((max(len(names), 1), max([r for _, r in rows] + [0]) + 1), bool)
     for kn, r in rows:
         if kn not in names:
@@ -129,14 +138,19 @@ def edge_floor(pr_r, kidx, row, tables, rows):
     fl = at & jnp.asarray(sup)[k] & (p <= 0.0)
     S = jnp.sum(jnp.where(cont, p, 0.0))
     n = jnp.maximum(jnp.sum(fl), 1)
-    e = min(max(EDGE_BUDGET, EDGE_SHARE_MIN), EDGE_SHARE_MAX)  # a fixed share (module docstring)
+    e = EDGE_BUDGET  # a fixed share (module docstring)
     eps = jnp.where(S > 0.0, S * e / (1.0 - e), 1.0) / n
     return jnp.where(fl, eps.astype(pr_r.dtype), p), fl
 
 
-def mie_reference(lobe_params, medium, rows):
-    """Return a Mie lobe's reference parameters with an edge forward ratio moved inside by EDGE_BUDGET."""
-    if (f"mie:{medium}", 0) not in rows:
-        return lobe_params
-    r = lobe_params[MIE_RATIO]
-    return dict(lobe_params, **{MIE_RATIO: jnp.clip(r, EDGE_BUDGET, 1.0 - EDGE_BUDGET)})
+def lobe_reference(lobe_params, lobe, key, rows):
+    """Return a bulk lobe's reference parameters with each one at an edge row moved inside its domain by EDGE_BUDGET.
+
+    ``key`` = (medium, channel); the edge rows (``edge_rows``) name (medium, channel, parameter).
+    """
+    moved = {}
+    for name, (lo, hi) in lobe.domains.items():
+        if (*key, name) in rows:
+            m = EDGE_BUDGET * (hi - lo)
+            moved[name] = jnp.clip(lobe_params[name], lo + m, hi - m)
+    return dict(lobe_params, **moved) if moved else lobe_params
