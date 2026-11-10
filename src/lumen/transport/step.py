@@ -416,7 +416,7 @@ def _moved_outcome(model, ops, ph, sc, out, sens):
     w_lobe = w_lobe * jnp.exp(jnp.sum(sg(ch_d.h) * dua))
     er_n, ei_n = ms.moved(er_n, ch_d.Er, dua), ms.moved(ei_n, ch_d.Ei, dua)
     dtime = dtime + jnp.sum(sg(ch_d.ht) * dua)
-    chain = jax.tree_util.tree_map(lambda a, b: jnp.where(delta_o, a, b), ms.rebase(ch_d, dua), ch_f)
+    chain = jax.tree_util.tree_map(lambda a, b: jnp.where(delta_o, a, b), ms.rescale(ms.rebase(ch_d, dua)), ch_f)
     return x_hit, d_new, w_lobe, er_n, ei_n, dtime, chain, drawn
 
 

@@ -37,6 +37,7 @@ from lumen._core import frames
 
 sg = jax.lax.stop_gradient
 PAIRS = ((0, 0), (0, 1), (1, 1))
+RESCALE_BAND = 8  # the chain is rescaled when its largest first-order sensitivity leaves [2^-8, 2^9)
 TINY_DET = 1e-12  # a Jacobian below this: the end is not pinned (weight factor 1)
 ANCHOR_COND = 1e-6  # the anchor's 2x2 determinant, relative to |A1| |A2|, below which the gauge is not moved
 CO_MOVING_RADIUS = 0.05  # m: the largest co-moving radius about a moving origin
@@ -183,6 +184,28 @@ def rebase(ch, du):
         return jnp.stack([C[:, 0] * du[0] + C[:, 1] * du[1], C[:, 1] * du[0] + C[:, 2] * du[1]], 1)
 
     return ch._replace(A=ch.A + m(CA), B=ch.B + m(CB))
+
+
+def rescale(ch):
+    """Return the chain in coordinates u' = 2^k u that bring its first-order sensitivities to about 1.
+
+    k = 0 while they are within a factor 2^RESCALE_BAND of 1.
+    The gauge of u is free: every pinned end solves for du in the chain's own columns, so a power-of-2 scale changes no
+    value or derivative and, away from overflow and underflow, no bit. A chain carried through many deterministic
+    outcomes (a photon bouncing between convex PMT windows) grows by the paths' magnification at each vertex: unscaled,
+    its second-order columns pass float32's range after ~20 bounces and the pinned-end weight becomes inf - inf.
+    """
+    m = jnp.maximum(jnp.max(jnp.abs(ch.A)), jnp.max(jnp.abs(ch.B)))
+    _, e = jnp.frexp(m)
+    k = jnp.where((m > 0.0) & (jnp.abs(e - 1) > RESCALE_BAND), e - 1, 0)
+
+    f = sg(jnp.ldexp(jnp.ones((), ch.A.dtype), -k))  # exactly 2^-k: products by it are exact
+
+    def by(a, power):
+        return a * f if power == 1 else (a * f) * f
+
+    return ch._replace(A=by(ch.A, 1), B=by(ch.B, 1), CA=by(ch.CA, 2), CB=by(ch.CB, 2), h=by(ch.h, 1),
+                       ht=by(ch.ht, 1), Er=by(ch.Er, 1), Ei=by(ch.Ei, 1))  # fmt: skip
 
 
 def volume_end(ch, x, d, s, V, valid):

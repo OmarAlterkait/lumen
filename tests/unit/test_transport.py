@@ -163,3 +163,42 @@ def test_auto_is_the_cpu_backend_without_a_gpu(monkeypatch):
     with pytest.raises(RuntimeError, match="stop"):
         run.run(spec, None, None, _row(2), jnp.zeros(2, jnp.uint32), backend="auto")
     assert seen["backend"] == run.TALLYMAP_BACKEND["cpu"]
+
+
+def test_a_many_bounce_chain_is_rescaled_without_changing_a_bit():
+    """A chain grown by many deterministic bounces (x 2^46; SK photon 20390 reached ~2^43) is brought back to ~1 by
+    a power of 2: the pinned end's weight factor and its derivative are bitwise those of the unscaled chain, and finite
+    where the unscaled second-order products overflow float32."""
+    from lumen.transport import moving_source as ms
+
+    rng = np.random.default_rng(3)
+    f32 = lambda a: jnp.asarray(a, jnp.float32)  # noqa: E731
+    ch = ms.Chain(f32(rng.normal(size=(3, 2)) * 2.0**-4), f32(rng.normal(size=(3, 2))), f32(rng.normal(size=(3, 3))),
+                  f32(rng.normal(size=(3, 3))), f32(rng.normal(size=2)), f32(rng.normal(size=2)),
+                  f32(rng.normal(size=(3, 2))), f32(rng.normal(size=(3, 2))), f32(np.zeros(3)))  # fmt: skip
+    n, y0 = f32([0.0, 0.0, 1.0]), f32([0.1, -0.2, 0.0])
+
+    def end(c, dy):  # the pinned end of a surface crossing whose point moves by dy (value 0)
+        Y = [c.A[:, i] + c.B[:, i] for i in range(2)]
+        Y2 = [c.CA[:, k] + c.CB[:, k] for k in range(3)]
+        return ms.surface_end(c, y0 + dy - jax.lax.stop_gradient(dy), n, Y, Y2, jnp.bool_(True))[1]
+
+    def grown(c, s):  # a chain of the same physics in a gauge s times finer
+        return c._replace(A=c.A * s, B=c.B * s, CA=c.CA * s * s, CB=c.CB * s * s, h=c.h * s, ht=c.ht * s,
+                          Er=c.Er * s, Ei=c.Ei * s)  # fmt: skip
+
+    big = grown(ch, f32(2.0**40))
+    r = ms.rescale(big)
+    assert 1.0 <= float(jnp.maximum(jnp.max(jnp.abs(r.A)), jnp.max(jnp.abs(r.B)))) < 2.0
+    assert ms.rescale(ch) is not None and all(  # within the band: untouched
+        np.asarray(a).tobytes() == np.asarray(b).tobytes() for a, b in zip(ms.rescale(ch), ch, strict=True)
+    )
+    want = jax.jvp(lambda d: end(r, d), (f32(np.zeros(3)),), (f32([0.3, 0.1, 0.0]),))
+    same = jax.jvp(lambda d: end(ms.rescale(grown(r, f32(2.0**40))), d), (f32(np.zeros(3)),), (f32([0.3, 0.1, 0.0]),))
+    assert all(np.asarray(a).tobytes() == np.asarray(b).tobytes() for a, b in zip(want, same, strict=True))
+    assert np.isfinite(np.asarray(want[1])).all()
+    huge = grown(ch, f32(2.0**46))  # the unscaled chain after ~20 bounces: in range, its products past float32's
+    raw = jax.jvp(lambda d: end(huge, d), (f32(np.zeros(3)),), (f32([0.3, 0.1, 0.0]),))
+    fixed = jax.jvp(lambda d: end(ms.rescale(huge), d), (f32(np.zeros(3)),), (f32([0.3, 0.1, 0.0]),))
+    assert not np.isfinite(np.asarray(raw)).all()
+    assert all(np.asarray(a).tobytes() == np.asarray(b).tobytes() for a, b in zip(fixed, want, strict=True))
