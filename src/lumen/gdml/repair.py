@@ -1,13 +1,14 @@
-"""The reference side of the GDML repairs: a Geant4-loadable copy of a GDML file, the named repairs as text edits.
+"""The reference side of the GDML repairs: a Geant4-loadable copy of a GDML file, the repairs as text edits.
 
-    text, lines = repair(src_text, ["denormal"])     # or: python refs/gdml_repair.py SRC DST REPAIR [REPAIR ...]
+    text, lines = repair(src_text)            # every repair; or: python -m lumen.gdml.repair SRC DST [REPAIR ...]
 
-A Geant4 reference input made from a GDML gets exactly the repairs lumen's reader applies when the detector's recipe
-opts into them (``Recipe.repairs``, ``lumen.gdml.reader.REPAIRS``; stock Geant4 10.7.4 and 11.2.2 refuse each defect,
-tests/data/gdml_repairs). Written apart from lumen's reader (the standard library only, no other lumen import) and
-checked against it: lumen reads SRC with repairs R and DST without repairs to the same detector file
-(tests/unit/test_gdml_repairs.py). Every byte outside the edited elements is kept (geometry untouched). It lives in the
-package so that ``lumen.validate.geometry`` can make its Geant4 input; ``refs/gdml_repair.py`` is its command line.
+A Geant4 reference input made from a GDML gets exactly the repairs lumen's reader applies, always, to the defects it
+finds (``lumen.gdml.reader.REPAIRS``; stock Geant4 10.7.4 and 11.2.2 refuse each defect, tests/data/gdml_repairs).
+Each repair edits only its own defect, so applying them all to a clean file changes nothing. Written apart from
+lumen's reader (the standard library only, no other lumen import) and checked against it: lumen reads SRC and DST to
+the same detector file (tests/unit/test_gdml_repairs.py). Every byte outside the edited elements is kept (geometry
+untouched). It lives in the package so that ``lumen.validate.geometry`` can make its Geant4 input;
+``python -m lumen.gdml.repair`` is its command line.
 
     denormal                each nonzero number literal below the smallest normal double (strtod's ERANGE), in an
                             attribute Geant4 evaluates or an <expression>, is written 0
@@ -151,8 +152,8 @@ def _facts(root):
     return kinds, coldim, on_surface
 
 
-def repair(text, repairs):
-    """Return (the repaired text, one line per edit)."""
+def repair(text, repairs=REPAIRS):
+    """Return (the repaired text, one line per edit); ``repairs``: the kinds to apply (default every one)."""
     bad = set(repairs) - set(REPAIRS)
     if bad:
         raise ValueError(f"unknown repairs {sorted(bad)}; known: {list(REPAIRS)}")
@@ -191,10 +192,10 @@ def repair(text, repairs):
 
 def main(argv):
     """Repair SRC into DST (see the module docstring)."""
-    if len(argv) < 3 or argv[0] == argv[1]:
+    if len(argv) < 2 or argv[0] == argv[1]:
         sys.exit(__doc__)
     with open(argv[0], encoding="utf-8") as f:
-        text, out = repair(f.read(), argv[2:])
+        text, out = repair(f.read(), argv[2:] or REPAIRS)
     with open(argv[1], "w", encoding="utf-8") as f:
         f.write(text)
     ET.parse(argv[1])  # still well-formed

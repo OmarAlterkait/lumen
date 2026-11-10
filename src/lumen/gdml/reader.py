@@ -3,7 +3,6 @@
 The file is untrusted input: no ``eval``; expressions go through a small recursive-descent parser with CLHEP units.
 
     doc = read(path)                            # GDMLDocument: defines, materials, solids, volumes, surfaces
-    doc = read(path, repairs={"denormal"})      # with the named repairs of exporter defects (REPAIRS)
 
 Values: lengths are in m, a plain literal in a decimal length unit converted exactly (``12.5`` mm is exactly 0.0125,
 rounded once) and anything else evaluated as Geant4 does and divided by 1000 once; angles in rad as Geant4 computes
@@ -15,10 +14,11 @@ every construct lumen does not support -- ``<loop>``, replicavol, divisionvol, p
 GDMLError.
 
 Exporter defects (``REPAIRS``) are constructs stock Geant4 (10.7.4 and 11.2.2, measured: tests/data/gdml_repairs)
-refuses, or loads but reads otherwise than the file says (a constant surface table: ``IGNORED_BY_GEANT4``). Each
-raises GDMLDefectError (``.kind``) unless the recipe opts into its repair (``Recipe.repairs``); an applied repair is a
-``repaired (<kind>): ...`` line of ``doc.report``. ``refs/gdml_repair.py`` applies the same repairs to the GDML a
-Geant4 reference loads, so both sides read the same file. A matrix's values are counted as
+refuses, or loads but reads otherwise than the file says (a constant surface table: ``IGNORED_BY_GEANT4``). Each one
+found is repaired, always, with a warning (``GDMLRepairWarning``: the object, the count, what Geant4 does with the
+file and what the repair does) and a ``repaired (<kind>): ...`` line of ``doc.report``; ``doc.repairs`` holds the kinds
+applied. ``python -m lumen.gdml.repair`` applies the same repairs to the GDML a Geant4 reference loads, so both sides
+read the same file. A matrix's values are counted as
 Geant4 counts them: a values attribute that ends in whitespace (or is empty) has one more value, 0 (G4GDMLReadDefine
 reads with ``while (!eof) stream >> token``). A conflicting re-definition is a GDMLError, as are an overflowing literal
 and a matrix with a value that does not evaluate (a NaN, an unknown name), used or not, as in Geant4.
@@ -36,6 +36,7 @@ import collections
 import math
 import re
 import sys
+import warnings
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -87,16 +88,16 @@ LITERAL_NUMBER = re.compile(r"(?<![\w.])(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?(?![
 _BIG_EXPONENT = re.compile(r"\d[eE][-+]?\d{3}")  # a literal out of range has one (or > 300 digits)
 
 
-class GDMLDefectError(GDMLError):
-    """An exporter defect Geant4 refuses or reads otherwise (``kind``: a key of REPAIRS); the recipe may repair it."""
+class GDMLRepairWarning(UserWarning):
+    """An exporter defect Geant4 refuses or reads otherwise (``kind``: a key of REPAIRS), repaired on import."""
 
-    def __init__(self, kind, where):
-        self.kind = kind
-        case, g4, fix = REPAIRS[kind]
-        verb = "loads it and ignores the value" if kind in IGNORED_BY_GEANT4 else "refuses it"
-        super().__init__(f"{where}: exporter defect {kind!r}, {case}. Stock Geant4 {verb} ({g4}). To read it, "
-                         f"opt into the repair (Recipe(repairs={{{kind!r}}}): {fix}) and give any Geant4 reference the "
-                         f"same repair: python refs/gdml_repair.py SRC DST {kind}")  # fmt: skip
+
+def repair_message(kind, where, done):
+    """Return the warning of one applied repair: the object and count, Geant4's behaviour, the repair, the reference."""
+    case, g4, _ = REPAIRS[kind]
+    verb = "loads the file and ignores the value" if kind in IGNORED_BY_GEANT4 else "refuses the file"
+    return (f"{where}: exporter defect {kind!r}, {case}: repaired, {done}. Stock Geant4 {verb} ({g4}); give a Geant4 "
+            f"reference the same file: python -m lumen.gdml.repair SRC DST")  # fmt: skip
 
 
 FUNCS = {
@@ -427,11 +428,9 @@ class OpticalSurface:
 class GDMLDocument:
     """A parsed GDML file. See the module docstring for units; ``report`` lists every normalisation."""
 
-    def __init__(self, path, repairs=()):
+    def __init__(self, path):
         self.path = str(path)
-        self.repairs = frozenset(repairs)
-        if self.repairs - set(REPAIRS):
-            raise ValueError(f"unknown GDML repairs {sorted(self.repairs - set(REPAIRS))}; known: {sorted(REPAIRS)}")
+        self.repairs = set()  # the exporter-defect kinds repaired (REPAIRS)
         self.ev = Evaluator()
         self.positions, self.rotations, self.scales = {}, {}, {}
         self.solids = collections.OrderedDict()
@@ -450,9 +449,9 @@ class GDMLDocument:
         self._defs = {}
 
     def defect(self, kind, where, done):
-        """Refuse an exporter defect (GDMLDefectError), or record its repair (``done``) when the recipe opts in."""
-        if kind not in self.repairs:
-            raise GDMLDefectError(kind, f"gdml {self.path}: {where}")
+        """Repair an exporter defect: a warning (``GDMLRepairWarning``) and a report line saying what was done."""
+        warnings.warn(repair_message(kind, f"gdml {self.path}: {where}", done), GDMLRepairWarning, stacklevel=3)
+        self.repairs.add(kind)
         self.report.append(f"repaired ({kind}): {where}: {done}")
 
     # ---- numbers
@@ -575,15 +574,13 @@ class GDMLDocument:
                 props.remove((name, ref))
 
     def _literals(self, root):
-        """Refuse (or, with the ``denormal`` repair, write 0) each out-of-range literal Geant4 evaluates."""
+        """Write 0 for each out-of-range (denormal) literal Geant4 evaluates (the ``denormal`` repair)."""
         where, n = [""], [0]
 
         def zero(m):
             bad = _out_of_range(m.group(0))
             if bad == "overflow":
                 raise GDMLError(f"gdml {self.path}: {where[0]}: {m.group(0)} overflows a double (Geant4 refuses it)")
-            if bad and "denormal" not in self.repairs:
-                raise GDMLDefectError("denormal", f"gdml {self.path}: {where[0]}: the literal {m.group(0)}")
             n[0] += bad is not None
             return "0" if bad else m.group(0)
 
@@ -596,11 +593,11 @@ class GDMLDocument:
             if tag(el) == "expression" and el.text:
                 el.text = LITERAL_NUMBER.sub(zero, el.text)
             if n[0] and tag(el) == "matrix":
-                self.report.append(f"repaired (denormal): {where[0]}: {n[0]} denormal value(s) read as 0")
+                self.defect("denormal", where[0], f"{n[0]} denormal value(s) read as 0")
             elif n[0]:
                 outside += n[0]
         if outside:
-            self.report.append(f"repaired (denormal): {outside} denormal literal(s) outside matrices read as 0")
+            self.defect("denormal", "the document", f"{outside} denormal literal(s) outside matrices read as 0")
 
     def _world(self, setups):
         named = [s for s in setups if s.get("name") == "Default"]
@@ -680,8 +677,6 @@ class GDMLDocument:
             vals = [self.ev.eval(t) for t in toks]
             self.ev.matrices[nm] = (cd, vals)
             self.matrix_text[nm] = toks
-        except GDMLDefectError:
-            raise
         except GDMLError as e:  # Geant4 evaluates each value as it reads the define (used or not) and refuses it
             raise GDMLError(f"gdml {self.path}: matrix {nm!r}: {e}") from None
 
@@ -921,6 +916,6 @@ class GDMLDocument:
                                         self.transform(c)))  # fmt: skip
 
 
-def read(path, repairs=()) -> GDMLDocument:
-    """Read a GDML file with the named exporter-defect repairs (REPAIRS); see the module docstring."""
-    return GDMLDocument(path, repairs).parse()
+def read(path) -> GDMLDocument:
+    """Read a GDML file, repairing its exporter defects (REPAIRS) with warnings; see the module docstring."""
+    return GDMLDocument(path).parse()

@@ -15,8 +15,8 @@ Fails closed (``ImportRefused``) where Geant4's reading is ambiguous or lumen's 
 - two skins on one logical volume;
 - a material without a composition (density and components, or Z and molar mass).
 
-Before these, the reader refuses the exporter defects Geant4 refuses (``reader.GDMLDefectError``) unless the recipe
-opts into their repairs (``Recipe.repairs``, ``reader.REPAIRS``).
+Before these, the reader repairs the exporter defects Geant4 refuses (``reader.REPAIRS``), each with a warning
+(``reader.GDMLRepairWarning``); the kinds repaired are in the provenance (``repairs``) and every repair in the report.
 """
 
 from __future__ import annotations
@@ -304,15 +304,15 @@ def _known(surfaces_, surf, name):
 
 
 # ----------------------------------------------------------------------------------------------------- the import
-def read_gdml(path, material_keys=None, repairs=()) -> schema.DetectorFile:
+def read_gdml(path, material_keys=None) -> schema.DetectorFile:
     """Return the detector file of a GDML file before any recipe decision (the detector volume is the world).
 
     ``material_keys``: the material property keys to read as optical properties (None: all); see ``materials``.
-    ``repairs``: the exporter-defect repairs to apply (``reader.REPAIRS``; recorded in the provenance and report).
+    The exporter defects found are repaired with warnings (``reader.REPAIRS``; recorded in the provenance and report).
     """
     import hashlib
 
-    doc = reader.read(path, repairs)
+    doc = reader.read(path)
     rep = list(doc.report)
     sol, meshes, r2 = solids(doc)
     rep += r2
@@ -339,5 +339,5 @@ def import_gdml(path, recipe, inputs: dict | None = None) -> ImportResult:
 
     ``inputs`` gives the extra files the recipe's decisions read, by name.
     """
-    df = read_gdml(path, getattr(recipe, "material_keys", None), getattr(recipe, "repairs", ()))
+    df = read_gdml(path, getattr(recipe, "material_keys", None))
     return recipe.apply(df, Path(path), inputs)

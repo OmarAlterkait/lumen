@@ -29,8 +29,8 @@ class Recipe:
 
     ``inputs`` names the extra files a decision reads (e.g. a channel map), given at conversion time;
     ``sensor_columns`` adds per-sensor columns to the id map and ``calibrations`` the data shipped with the file.
-    ``repairs`` names the exporter defects of the GDML to repair (each refused by Geant4, and by lumen without it);
-    any Geant4 reference input made from the same GDML gets the same repairs (``refs/gdml_repair.py``).
+    The GDML's exporter defects are repaired on import with warnings (``lumen.gdml.reader.REPAIRS``); a Geant4
+    reference input made from the same GDML gets the same repairs (``python -m lumen.gdml.repair``).
     """
 
     name: str
@@ -43,14 +43,6 @@ class Recipe:
     calibrations: Callable | None = None
     note: str = ""
     material_keys: frozenset | None = None  # the optical material keys (None: all); the others are kept inert
-    repairs: frozenset = frozenset()  # the GDML exporter-defect repairs opted into (lumen.gdml.reader.REPAIRS)
-
-    def __post_init__(self):  # noqa: D105 (the repairs as a frozenset, each a known name)
-        from lumen.gdml.reader import REPAIRS
-
-        object.__setattr__(self, "repairs", frozenset(self.repairs))
-        if self.repairs - set(REPAIRS):
-            raise ValueError(f"recipe {self.name!r}: unknown GDML repairs {sorted(self.repairs - set(REPAIRS))}")
 
     def apply(self, df: schema.DetectorFile, source: Path, inputs: dict | None = None):
         """Return the ImportResult of a detector file read from ``source`` under this recipe."""

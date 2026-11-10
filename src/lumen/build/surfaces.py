@@ -867,9 +867,15 @@ def compile(library: Library, tree, bindings: Bindings, lam_domain) -> Optics:
     The crossings resolved (``_resolve_all``), then the params packed by ``pack``: scalar rows stacked, spectral
     columns as (energy, value) tables padded to a common length with clamped tails.
     """
-    import jax
-
     optics = _resolve_all(library, tree, bindings, lam_domain)
     optics = dataclasses.replace(optics, kernel_laws=_spectral_laws(library, optics))
-    params = jax.tree_util.tree_map(np.asarray, pack(optics, named_params(optics, library)))
-    return dataclasses.replace(optics, params=params)
+    named = named_params(optics, library)
+    return dataclasses.replace(optics, params=_numpy(pack(optics, named), {"kernel": None, "media": named["media"]}))
+
+
+def _numpy(tree, order):
+    """Return a params tree as numpy arrays, its dicts in ``order``'s key order (the library's; a pytree map sorts)."""
+    if not isinstance(tree, Mapping):
+        return np.asarray(tree)
+    keys = list(order) + [k for k in tree if k not in order] if isinstance(order, Mapping) else list(tree)
+    return {k: _numpy(tree[k], order.get(k) if isinstance(order, Mapping) else None) for k in keys if k in tree}

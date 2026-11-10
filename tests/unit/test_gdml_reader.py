@@ -1,6 +1,6 @@
 """The GDML reader (lumen.gdml.reader): the expression evaluator, lengths in metres, fail-closed reading, and the
 exporter defects Geant4 refuses (denormal numbers, identical re-definitions, matrices not a multiple of coldim,
-non-finite matrix values): each refused unless its repair is named (tests/unit/test_gdml_repairs.py has one toy per
+non-finite matrix values): each repaired with a warning (tests/unit/test_gdml_repairs.py has one toy per
 case and Geant4's verdicts); a conflicting re-definition is an error. Ported from the baseline's
 tests/test_scene_gdml.py."""
 
@@ -131,9 +131,11 @@ DEFECTS = """<matrix name="den" coldim="2" values="1.5e-06 2.2305392e-316 3e-06 
 
 
 def test_repairs_exporter_defects(tmp_path):
-    with pytest.raises(reader.GDMLDefectError):
-        reader.read(_gdml(tmp_path, define=DEFECTS))
-    G = reader.read(_gdml(tmp_path, define=DEFECTS), repairs=reader.REPAIRS)
+    with pytest.warns(reader.GDMLRepairWarning) as seen:
+        G = reader.read(_gdml(tmp_path, define=DEFECTS))
+    assert {k for k in reader.REPAIRS if any(f"exporter defect {k!r}" in str(w.message) for w in seen)} == {
+        "denormal", "identical_redefinition", "matrix_tail", "non_finite"}  # fmt: skip
+    assert G.repairs == {"denormal", "identical_redefinition", "matrix_tail", "non_finite"}
     np.testing.assert_array_equal(G.matrix("den"), [[1.5e-6, 0.0], [3e-6, 0.25]])
     np.testing.assert_array_equal(G.matrix("dup"), [[1e-6, 1], [2e-6, 2]])
     np.testing.assert_array_equal(G.matrix("odd"), [[1e-6, 1], [2e-6, 2]])
