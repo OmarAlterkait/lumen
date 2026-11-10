@@ -281,10 +281,21 @@ whose class pair resolves to a pass is invisible. An unsupported surface fails c
 frontpainted transmission into a medium without RINDEX is absorbed where it lands: painted surfaces are PAINTED_T,
 with T a calibration key.
 
-**Import rules** (general, never recipe flags): `split_unions` by a leaf-count rule; absorb-at-entry for any volume
-whose absorption length is below the float32 tolerance. One-sided films: the importer derives a film's axis from its
-contact face, per placement in its own frame, and fails closed unless the contact set is exactly one complete flat
-face per placement. A film on both faces is rejected.
+**Import rules** (`build/import_rules.py`; general, never recipe flags, recorded with origin "import"):
+- `split_unions` by a leaf-count rule (16 leaves).
+- **Absorbed at entry, on meshes only.** A mesh volume's material whose ABSLENGTH is below the band floor
+  (`BAND_FLOOR`, 1e-9 m) at every knot is bound opaque: Geant4 refracts the photon in and absorbs it within a length
+  the navigator cannot resolve, and the navigator does not track inside a mesh. Elsewhere such a medium is tracked as
+  Geant4 tracks it. Applied to every volume, the rule would bind the PMT interiors' Air in SK and ANNIE, whose builds
+  then fail (measured), so it stays on meshes.
+- **One-sided WLS films, by the thinness band.** A box of a WLS material with no surface of its own is a film when its
+  smallest box dimension is below the band at its first placement: `BAND_ULPS` float32 ulps of that placement's largest coordinate plus
+  `BAND_FLOOR` (`rules.navigation.band`; 0.5 um at 0.5 m), the length below which two crossings are one. A thicker WLS
+  box is tracked as a volume. The importer derives the film's axis from its contact face, per placement in its own
+  frame, and fails closed unless the contact set is exactly one complete flat face of one backing per placement; a
+  film on both faces, partial coverage or a bare placement is rejected. Because the band grows with the distance from
+  the origin, a film's classification can depend on where it is placed: a 20 nm film is a film anywhere, a 1 mm
+  slab never is.
 
 ## 8. Photon state, step and estimator
 
@@ -316,7 +327,7 @@ sampling reference moves just inside (q = ε > 0, ε chosen so the floored outco
 that row's draws) and the live weight p/q is kept. Values are unchanged; nothing changes when no such parameter is
 in `wrt`. Edge rows are derived from `wrt` and the domains, never a user option.
 
-**Health:** `escaped` (left the detector volume), `abandoned` (stuck rule), `truncated` / `n_truncated` (alive at
+**Health:** `escaped` (no surface and no bulk event within the maximum step distance), `abandoned` (stuck rule), `truncated` / `n_truncated` (alive at
 `max_vertices`), `retired` (stopped past `t_end`), `stuck` (counts of pushes and abandonments), `lost` (a crossing no
 surface type joins; with the surface lookup only a navigation failure, and 0 is a test invariant). Light outside the time grid is the histograms'
 `late` / `early`.

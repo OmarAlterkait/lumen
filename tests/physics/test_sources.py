@@ -104,3 +104,15 @@ def test_the_points_rows_move_with_its_position_parameter():
     a, b = (jax.jvp(f, (F32(0.0),), (F32(1.0),)) for f in (moved, through))
     for u, v in zip(jax.tree_util.tree_leaves(a), jax.tree_util.tree_leaves(b), strict=True):
         assert np.asarray(u).tobytes() == np.asarray(v).tobytes()
+
+
+def test_simulate_reports_and_refuses_dropped_exact_emits(pmt_sphere, monkeypatch):
+    from lumen import api
+    from lumen import run as runner
+
+    light = lumen.simulate(pmt_sphere, point(Z0), samples=1 << 12, seed=3)
+    assert int(light.health["overflow"]) == 0
+    real = runner.run
+    monkeypatch.setattr(runner, "run", lambda *a, **k: real(*a, **k)._replace(overflow=jnp.int32(7)))
+    with pytest.raises(api.SumOverflow, match="7 emit"):
+        lumen.simulate(pmt_sphere, point(Z0), samples=1 << 12, seed=3)

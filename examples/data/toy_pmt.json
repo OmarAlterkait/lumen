@@ -1,0 +1,30 @@
+{
+ "schema": "lumen-pmt-values/1",
+ "model": "lumen:pmt",
+ "model_version": 1,
+ "name": "toy_pmt",
+ "version": 1,
+ "readout": "waveform",
+ "provenance": {
+  "source": "lumen documentation: illustrative values for the tutorial, not a real PMT",
+  "status": "unverified",
+  "warning": "illustrative values for the tutorial, not a real PMT"
+ },
+ "qe": {
+  "wavelength_nm": [300.0, 340.0, 380.0, 420.0, 460.0, 500.0, 540.0, 580.0, 600.0],
+  "values": [0.05, 0.20, 0.25, 0.24, 0.20, 0.14, 0.08, 0.04, 0.02]
+ },
+ "ce": null,
+ "efficiency": 1.0,
+ "t_offset_ns": 0.0,
+ "tts": {"form": "gaussian", "sigma_ns": 1.3},
+ "charge": {"form": "gauss_exp", "sigma_pe": 0.3, "fraction": 0.0, "tau_pe": 1.0},
+ "gain": 10.0,
+ "threshold": null,
+ "pulse": {"form": "bigauss", "t_peak_ns": 10.0, "sigma_rise_ns": 2.0, "sigma_fall_ns": 6.0},
+ "dark_rate_hz": 1000.0,
+ "frontend": {"sampling_ns": 2.0, "unit": "ADC", "baseline": 100.0, "noise": 1.0, "window_ns": 0.0,
+              "charge_noise_pe": 0.0, "charge_scale": 1.0, "charge_step_pe": 0.05, "charge_max_pe": 32.0},
+ "ranges": {"t_offset": [-10.0, 10.0], "tts/sigma": [0.5, 3.0], "pulse/t_peak": [5.0, 20.0],
+            "pulse/sigma_rise": [0.5, 4.0], "pulse/sigma_fall": [2.0, 12.0]}
+}

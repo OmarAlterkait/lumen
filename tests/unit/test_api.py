@@ -128,3 +128,20 @@ def test_params_set_and_scale_take_traced_values(converted):
     np.testing.assert_allclose(np.asarray(v), 2.0 * np.asarray(p0[key].value))
     with pytest.raises(ValueError, match="outside"):
         p0.scale(key, -1.0)
+
+
+def test_dropped_exact_emits_raise_when_concrete_and_stay_in_health_under_jit():
+    import jax
+    import jax.numpy as jnp
+
+    from lumen import api
+
+    api._check_overflow(jnp.int32(0))  # nothing dropped: silent
+    with pytest.raises(api.SumOverflow, match="3 emit"):
+        api._check_overflow(jnp.int32(3))
+
+    def under_jit(n):  # what simulate does under jit: the count cannot be read, it is returned
+        api._check_overflow(n)
+        return {"overflow": n}
+
+    assert int(jax.jit(under_jit)(jnp.int32(3))["overflow"]) == 3

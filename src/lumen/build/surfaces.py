@@ -784,7 +784,7 @@ def _report(head, class_names, class_pvs, pairs, coincident, tags):
     lines = [head, "classes:"]
     for c in range(len(class_names)):
         lines.append(f"  [{c}] {class_names[c]}  ({len(class_pvs[c])} PVs: {_names(class_pvs[c])})")
-    lines.append("crossed class pairs (pre -> post: kernel [row] origin; why; PV pairs):")
+    lines.append("crossed class pairs (pre -> post: surface type [row] origin; why; PV pairs):")
     for (a, b), p in pairs.items():
         ex = ", ".join(f"{x}->{y}" for x, y in p.examples)
         lines.append(f"  {a} -> {b}: {p.surface_type.name} [{p.row}] {p.origin or '-'}; {', '.join(p.reasons)}; "
@@ -841,7 +841,7 @@ def _resolve_all(library: Library, tree, bindings: Bindings, lam_domain) -> Opti
     sensor_pvs = sorted((n for n in tree.order if d.sensor[n] is not None),
                         key=lambda n: (d.sensor[n], by_name[n].copy is None, by_name[n].copy or 0, n))  # fmt: skip
     sensor_index = {n: i for i, n in enumerate(sensor_pvs)}
-    head = (f"optics: {C} classes, {len(pairs)} crossed class pairs, kinds {[k.name for k in surface_types]}, "
+    head = (f"optics: {C} classes, {len(pairs)} crossed class pairs, surface types {[k.name for k in surface_types]}, "
             f"{len(sensor_pvs)} sensors, lambda [{lo:g}, {hi:g}] nm")  # fmt: skip
     report = _report(head, class_names, class_pvs, pairs, coincident, (sensor_pvs, sensor_index, d.sensor))
     optics = Optics(C, class_names, tuple(sigs), class_of, class_pvs, surface_types, type_of, row_of, media_of,

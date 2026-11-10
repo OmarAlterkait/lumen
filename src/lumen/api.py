@@ -232,6 +232,24 @@ def _model(det, hit_angle: bool, moving=False, origins=None, edge=()):
     return _MODELS[k][1]
 
 
+class SumOverflow(RuntimeError):  # noqa: N818 -- named for what happened, like ClosedOverValues
+    """An exact (GPU) sum dropped emits it could not represent: the arrivals or their derivative are wrong."""
+
+
+def _check_overflow(n):
+    """Raise SumOverflow when the run's exact sums dropped emits (a value or a derivative beyond 2^63 / 2^32)."""
+    try:
+        n = int(n)
+    except (jax.errors.ConcretizationTypeError, jax.errors.TracerIntegerConversionError):  # under jit: in health
+        return
+    if n:
+        raise SumOverflow(
+            f"simulate: {n} emit(s) into the exact sums were dropped (a value or derivative of magnitude "
+            ">= 2^31 per photon); the arrivals or their derivatives are wrong. A derivative this large "
+            "comes from a quantity singular at the point (docs/explanation/known-limits.md)"
+        )
+
+
 def _moving(source, params, wrt) -> tuple:
     """Return (the moving-source method is on, the source's origins (m) for its clearance, None when traced)."""
     from lumen import sources
@@ -330,7 +348,7 @@ def simulate(det, source, params=None, *, samples: int, seed: int, replicas: int
     if hasattr(source, "emit"):
         src, skey = source, jax.random.fold_in(key, SOURCE_STREAM)
         source = lambda first, count: src.emit(params, skey, count, first, int(samples))  # noqa: E731
-    size, acc = min(int(chunk), int(samples)), None
+    size, acc, overflow = min(int(chunk), int(samples)), None, jnp.int32(0)
     for first, count in ro.photon_chunks(int(samples), size):
         rows = source(first, count) if callable(source) else \
             jax.tree_util.tree_map(lambda a, f=first, c=count: a[f:f + c], source)  # fmt: skip
@@ -340,12 +358,15 @@ def simulate(det, source, params=None, *, samples: int, seed: int, replicas: int
         t = runner.run(item.readout(r), model, ops, rows, key, replicas=int(replicas), first_id=first, backend=backend,
                        n_active=count)  # fmt: skip
         out = {k: jnp.asarray(v, jnp.float32) for k, v in t.outputs.items()}
+        overflow = overflow + jnp.asarray(t.overflow, jnp.int32)
         acc = out if acc is None else {k: acc[k] + v for k, v in out.items()}
     per = acc["arrival"].reshape(int(replicas), n)
     arrivals = per.sum(0)
     err = jnp.sqrt(replicas / max(replicas - 1, 1) * jnp.sum((per - per.mean(0)) ** 2, 0))
     mean_t = jnp.where(arrivals > 0.0, acc["arrival_t"] / jnp.where(arrivals > 0.0, arrivals, 1.0), jnp.nan)
     health = {k: acc[k] for k in ("lost", "abandoned", "escaped", "retired", "truncated", "n_truncated", "stuck")}
+    health["overflow"] = overflow
+    _check_overflow(overflow)
     prov = (("seed", int(seed)), ("samples", int(samples)), ("replicas", int(replicas)), ("chunk", size),
             ("backend", backend), ("detector", det.name), ("calibration", det.calibration),
             ("wrt", tuple(wrt)))  # fmt: skip

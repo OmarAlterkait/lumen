@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- example_tank: lumen's tutorial detector. A 1 m cube of water with 8 disc PMTs (radius 50 mm, 20 mm thick)
+     facing inwards: one at the centre of each face and two more on the bottom face. Light that leaves the water is
+     absorbed (the tank is lumen's detector volume). A photon that reaches a PMT face is absorbed there and counted
+     (the CathodeSurface border, REFLECTIVITY 0, EFFICIENCY 1); quantum efficiency is applied after tracking.
+     Written for the lumen documentation; Apache-2.0 like the rest of the repository. -->
+<gdml>
+<define>
+  <matrix name="WATER_RINDEX" coldim="2" values="1.5*eV 1.332 2.5*eV 1.336 3.5*eV 1.345 5.0*eV 1.366"/>
+  <matrix name="WATER_ABSLENGTH" coldim="2" values="1.5*eV 5.0*m 2.5*eV 40.0*m 3.0*eV 60.0*m 3.5*eV 30.0*m 5.0*eV 2.0*m"/>
+  <matrix name="CATHODE_REFLECTIVITY" coldim="2" values="1.5*eV 0.0 5.0*eV 0.0"/>
+  <matrix name="CATHODE_EFFICIENCY" coldim="2" values="1.5*eV 1.0 5.0*eV 1.0"/>
+</define>
+<materials>
+  <element name="Hydrogen" formula="H" Z="1"><atom value="1.008"/></element>
+  <element name="Oxygen" formula="O" Z="8"><atom value="15.999"/></element>
+  <element name="Nitrogen" formula="N" Z="7"><atom value="14.007"/></element>
+  <material name="Water" state="liquid">
+    <D value="1.0" unit="g/cm3"/>
+    <composite n="2" ref="Hydrogen"/><composite n="1" ref="Oxygen"/>
+    <property name="RINDEX" ref="WATER_RINDEX"/>
+    <property name="ABSLENGTH" ref="WATER_ABSLENGTH"/>
+  </material>
+  <material name="Air" state="gas">
+    <D value="0.0012" unit="g/cm3"/>
+    <fraction n="1.0" ref="Nitrogen"/>
+  </material>
+  <material name="Photocathode" state="solid">
+    <D value="2.2" unit="g/cm3"/>
+    <fraction n="1.0" ref="Oxygen"/>
+  </material>
+</materials>
+<solids>
+  <box name="WorldBox" x="2000" y="2000" z="2000" lunit="mm"/>
+  <box name="TankBox" x="1000" y="1000" z="1000" lunit="mm"/>
+  <tube name="PMTDisc" rmin="0" rmax="50" z="20" startphi="0" deltaphi="360" aunit="deg" lunit="mm"/>
+  <opticalsurface name="CathodeSurface" model="unified" finish="polished" type="dielectric_metal" value="0">
+    <property name="REFLECTIVITY" ref="CATHODE_REFLECTIVITY"/>
+    <property name="EFFICIENCY" ref="CATHODE_EFFICIENCY"/>
+  </opticalsurface>
+</solids>
+<structure>
+  <volume name="PMT">
+    <materialref ref="Photocathode"/>
+    <solidref ref="PMTDisc"/>
+  </volume>
+  <volume name="TankLV">
+    <materialref ref="Water"/>
+    <solidref ref="TankBox"/>
+    <physvol name="PMT_0" copynumber="0">
+      <volumeref ref="PMT"/>
+      <position name="PMT_0_pos" x="0" y="0" z="-480" unit="mm"/>
+    </physvol>
+    <physvol name="PMT_1" copynumber="1">
+      <volumeref ref="PMT"/>
+      <position name="PMT_1_pos" x="0" y="0" z="480" unit="mm"/>
+    </physvol>
+    <physvol name="PMT_2" copynumber="2">
+      <volumeref ref="PMT"/>
+      <position name="PMT_2_pos" x="-480" y="0" z="0" unit="mm"/>
+      <rotation name="PMT_2_rot" x="0" y="90" z="0" unit="deg"/>
+    </physvol>
+    <physvol name="PMT_3" copynumber="3">
+      <volumeref ref="PMT"/>
+      <position name="PMT_3_pos" x="480" y="0" z="0" unit="mm"/>
+      <rotation name="PMT_3_rot" x="0" y="90" z="0" unit="deg"/>
+    </physvol>
+    <physvol name="PMT_4" copynumber="4">
+      <volumeref ref="PMT"/>
+      <position name="PMT_4_pos" x="0" y="-480" z="0" unit="mm"/>
+      <rotation name="PMT_4_rot" x="90" y="0" z="0" unit="deg"/>
+    </physvol>
+    <physvol name="PMT_5" copynumber="5">
+      <volumeref ref="PMT"/>
+      <position name="PMT_5_pos" x="0" y="480" z="0" unit="mm"/>
+      <rotation name="PMT_5_rot" x="90" y="0" z="0" unit="deg"/>
+    </physvol>
+    <physvol name="PMT_6" copynumber="6">
+      <volumeref ref="PMT"/>
+      <position name="PMT_6_pos" x="-250" y="0" z="-480" unit="mm"/>
+    </physvol>
+    <physvol name="PMT_7" copynumber="7">
+      <volumeref ref="PMT"/>
+      <position name="PMT_7_pos" x="250" y="0" z="-480" unit="mm"/>
+    </physvol>
+  </volume>
+  <volume name="World">
+    <materialref ref="Air"/>
+    <solidref ref="WorldBox"/>
+    <physvol name="Tank">
+      <volumeref ref="TankLV"/>
+    </physvol>
+  </volume>
+  <bordersurface name="Cathode_PMT_0" surfaceproperty="CathodeSurface">
+    <physvolref ref="Tank"/>
+    <physvolref ref="PMT_0"/>
+  </bordersurface>
+  <bordersurface name="Cathode_PMT_1" surfaceproperty="CathodeSurface">
+    <physvolref ref="Tank"/>
+    <physvolref ref="PMT_1"/>
+  </bordersurface>
+  <bordersurface name="Cathode_PMT_2" surfaceproperty="CathodeSurface">
+    <physvolref ref="Tank"/>
+    <physvolref ref="PMT_2"/>
+  </bordersurface>
+  <bordersurface name="Cathode_PMT_3" surfaceproperty="CathodeSurface">
+    <physvolref ref="Tank"/>
+    <physvolref ref="PMT_3"/>
+  </bordersurface>
+  <bordersurface name="Cathode_PMT_4" surfaceproperty="CathodeSurface">
+    <physvolref ref="Tank"/>
+    <physvolref ref="PMT_4"/>
+  </bordersurface>
+  <bordersurface name="Cathode_PMT_5" surfaceproperty="CathodeSurface">
+    <physvolref ref="Tank"/>
+    <physvolref ref="PMT_5"/>
+  </bordersurface>
+  <bordersurface name="Cathode_PMT_6" surfaceproperty="CathodeSurface">
+    <physvolref ref="Tank"/>
+    <physvolref ref="PMT_6"/>
+  </bordersurface>
+  <bordersurface name="Cathode_PMT_7" surfaceproperty="CathodeSurface">
+    <physvolref ref="Tank"/>
+    <physvolref ref="PMT_7"/>
+  </bordersurface>
+</structure>
+<setup name="Default" version="1.0">
+  <world ref="World"/>
+</setup>
+</gdml>

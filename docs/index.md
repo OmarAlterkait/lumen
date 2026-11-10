@@ -2,12 +2,17 @@
 
 The documentation follows the Diátaxis layout:
 
-- `tutorials/`: learning by doing (to be written).
-- `how-to/`: recipes for a task (to be written).
-- `reference/`: the API (to be written).
-- `explanation/`: background and design. Start with the [glossary](explanation/glossary.md).
+- **Tutorial** (learning by doing): [the first hour](tutorial/first-hour.md), on the toy detector shipped in
+  `examples/`.
+- **How-to guides** (a task, start to finish): [your own detector](howto/your-own-detector.md), from a GDML file to
+  a calibration and a comparison with Geant4.
+- **Reference**: [errors](reference/errors.md), every error lumen raises with its fix; [vocabulary](reference/vocabulary.md),
+  the words lumen uses.
+- **Explanation** (background): what is a parameter and what is not ([parameters](explanation/parameters.md)),
+  measured limits ([known limits](explanation/known-limits.md)) and how the checks decide
+  ([validation](explanation/validation.md)). The [validation report](validation/report.md) is generated from the
+  checks' records by `lumen validate report`.
 - `dev/`: for people working on lumen itself.
 
-What is a parameter, and what is not, is in [parameters](explanation/parameters.md). Measured limits are listed in
-[known limits](explanation/known-limits.md); how the checks decide is in [validation](explanation/validation.md).
-The [validation report](validation/report.md) is generated from the checks' records by `lumen validate report`.
+Every code block of the tutorial and the how-to guide is taken from a script in `examples/` that runs as it stands:
+`examples/first_hour.py`, `examples/your_own_detector.py` and `examples/compare_with_geant4.py`.
