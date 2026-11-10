@@ -34,13 +34,13 @@ The design is in `docs/dev/design.md`. Terms marked *dev* stay in developer docu
 | tag | **sensor index** (`sensor`) | `det.sensors`, `Photon.sensor` |
 | `u` (uniforms) | **`rand`** (the step's random numbers) | `_core/rng.py` |
 | `u` (moving source) | the chain's two **free coordinates** u (the maths keeps the letter) | `transport/moving_source.py` |
-| kind, Kind, kidx, kernel (surface) | **surface type** (`surface_types`, `stype`; the packed key `"surface_types"`) | `surfaces/_legacy.py` |
+| kind, Kind, kidx, kernel (surface) | **surface type** (`surface_types`, `stype`; the packed key `"surface_types"`) | `surfaces/types.py` |
 | t (a distance), t_if, t_max (m) | **dist**, **max_distance** (m); in transport **t** is a time (ns). Inside `geometry/`, `t` is the ray parameter (m) | `transport/step.py` |
 | late (health) | **retired** (a photon stopped past `t_end`); **late / early** is light outside the time grid | `Light.health`, `Histograms` |
 | Vertex (the step bundle) | *dev*: **StepContext** (what one step knows before its event) | `transport/step.py` |
 | optical class | *dev*: the surface lookup's internal compression (PVs that share every crossing) | `build/surfaces.py` |
 | SurfaceKernel | *dev*: a surface type evaluated at a crossing (`TypeEval`: outcome probabilities, widths, amplitudes) | `transport/surface_event.py` |
-| Sheet | **survival cut** (Geant4's R/T cut ahead of the interface) | `surfaces/_legacy.py` |
+| Sheet | **survival cut** (Geant4's R/T cut ahead of the interface) | `surfaces/types.py` |
 | Rao-Blackwellised deposit | **expected detection** (the detected share is added at every surface hit, not sampled) | *dev* |
 | probes | **diagnostics** | `lumen.diagnostics` |
 | band | **float32 tolerance** | `rules/navigation.py` |

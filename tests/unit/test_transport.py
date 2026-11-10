@@ -12,7 +12,7 @@ import pytest
 from lumen import diagnostics
 from lumen._core.safe import safe_div
 from lumen.media import bulk, laws, phase
-from lumen.surfaces import _legacy as legacy
+from lumen.surfaces import types as legacy
 from lumen.surfaces.outcomes import ABSORB, DETECT, SPECULAR, TERMINAL
 from lumen.transport import estimator, item, state
 

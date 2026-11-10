@@ -13,7 +13,7 @@ from lumen.build import library as glue
 from lumen.build.surfaces import SensorEntry
 from lumen.format import schema
 from lumen.rules import optics as rules
-from lumen.surfaces import _legacy as legacy
+from lumen.surfaces import types as legacy
 
 LAM = (410.0, 430.0)
 E2 = [2.5, 3.5]  # eV: a flat table over the range
@@ -33,40 +33,50 @@ def test_geant4_reads_reflectivity_and_efficiency_as_written():
              RINDEX=prop("RINDEX", [1.92, 1.92], E2), KINDEX=prop("KINDEX", [1.69, 1.69], E2),
              THICKNESS=prop("THICKNESS", [2.6e-5, 2.6e-5], E2))  # fmt: skip
     e = rules.sensor_surface()(s, LAM)
-    assert e.kind is legacy.SENSOR and e.params["R"] == 0.0 and e.params["qe"] == 1.0 and e.params["f_spec"] == 1.0
+    assert (
+        e.surface_type is legacy.SENSOR and e.params["R"] == 0.0 and e.params["qe"] == 1.0 and e.params["f_spec"] == 1.0
+    )
 
 
 def test_geant4_complex_index_only_without_reflectivity():
     s = surf(REALRINDEX=prop("REALRINDEX", [1.92, 1.92], E2), IMAGINARYRINDEX=prop("IMAGINARYRINDEX", [1.69, 1.69], E2),
              EFFICIENCY=prop("EFFICIENCY", 0.8))  # fmt: skip
     e = rules.geant4_sensor(s, LAM)
-    assert e.kind is legacy.PHOTOCATHODE and (e.params["nr"], e.params["nk"], e.params["qe"]) == (1.92, 1.69, 0.8)
+    assert e.surface_type is legacy.PHOTOCATHODE and (e.params["nr"], e.params["nk"], e.params["qe"]) == (
+        1.92,
+        1.69,
+        0.8,
+    )
     s2 = surf(REFLECTIVITY=prop("REFLECTIVITY", 0.3), REALRINDEX=prop("REALRINDEX", 1.9),
               IMAGINARYRINDEX=prop("IMAGINARYRINDEX", 1.6))  # fmt: skip
-    assert rules.geant4_sensor(s2, LAM).kind is legacy.SENSOR  # REFLECTIVITY takes precedence (G4OpBoundaryProcess)
+    assert (
+        rules.geant4_sensor(s2, LAM).surface_type is legacy.SENSOR
+    )  # REFLECTIVITY takes precedence (G4OpBoundaryProcess)
 
 
 def test_geant4_finishes_and_types():
     g = rules.geant4_sensor(surf(finish="ground", value=0.5, EFFICIENCY=prop("EFFICIENCY", 1.0)), LAM)
-    assert g.kind is legacy.GLISUR_METAL_EFF
+    assert g.surface_type is legacy.GLISUR_METAL_EFF
     u = rules.geant4_sensor(surf(model="unified", finish="ground", value=0.2, REFLECTIVITY=prop("REFLECTIVITY", 0.5),
                            EFFICIENCY=prop("EFFICIENCY", 1.0)), LAM)  # fmt: skip
-    assert u.kind is legacy.DIELECTRIC_METAL and u.params["sigma_alpha"] == 0.2
+    assert u.surface_type is legacy.DIELECTRIC_METAL and u.params["sigma_alpha"] == 0.2
     rt = rules.geant4_sensor(surf(type_="dielectric_dielectric", REFLECTIVITY=prop("REFLECTIVITY", 0.1),
                             EFFICIENCY=prop("EFFICIENCY", 0.7)), LAM)  # fmt: skip
-    assert rt.kind is legacy.DIELECTRIC_RT_SENSOR and rt.params["eff"] == 0.7
+    assert rt.surface_type is legacy.DIELECTRIC_RT_SENSOR and rt.params["eff"] == 0.7
     enum = rules.geant4_sensor(surf(model="1", finish="0", type_="1", REFLECTIVITY=prop("REFLECTIVITY", 0.1)), LAM)
-    assert enum.kind is legacy.DIELECTRIC_RT_SENSOR  # Geant4's enum values: unified, polished, dielectric_dielectric
+    assert (
+        enum.surface_type is legacy.DIELECTRIC_RT_SENSOR
+    )  # Geant4's enum values: unified, polished, dielectric_dielectric
     # without tables Geant4 reads R 1 and T 0 (its defaults): the same type, absorbing nothing at those values
     bare = rules.geant4_sensor(surf(type_="dielectric_dielectric"), LAM)
-    assert bare.kind is legacy.DIELECTRIC_RT_SENSOR and (bare.params["R"], bare.params["T"]) == (1.0, 0.0)
+    assert bare.surface_type is legacy.DIELECTRIC_RT_SENSOR and (bare.params["R"], bare.params["T"]) == (1.0, 0.0)
 
 
 def test_complex_index_model_and_its_flatness_rule():
     s = surf(RINDEX=prop("RINDEX", [1.92, 1.92], E2), KINDEX=prop("KINDEX", [1.69, 1.69], E2),
              REFLECTIVITY=prop("REFLECTIVITY", 0.0), EFFICIENCY=prop("EFFICIENCY", 1.0))  # fmt: skip
     e = rules.sensor_surface("complex_index")(s, LAM)
-    assert e.kind is legacy.PHOTOCATHODE and (e.params["nr"], e.params["nk"]) == (1.92, 1.69)
+    assert e.surface_type is legacy.PHOTOCATHODE and (e.params["nr"], e.params["nk"]) == (1.92, 1.69)
     steep = surf(RINDEX=prop("RINDEX", [1.5, 2.5], E2), KINDEX=prop("KINDEX", [1.69, 1.69], E2))
     with pytest.raises(rules.OpticsRefused):  # one wavelength for a table that varies: refused
         rules.complex_index_sensor(steep, LAM)
@@ -81,7 +91,7 @@ def test_a_reader_passed_in_replaces_the_default_without_touching_the_core():
 
     cath = surf(EFFICIENCY=prop("EFFICIENCY", 1.0))
     e = rules.sensor(cath, LAM, model=thin_film)
-    assert e.kind is legacy.COUNTING and calls == [("cath", LAM)]
+    assert e.surface_type is legacy.COUNTING and calls == [("cath", LAM)]
     assert rules.sensor(cath, LAM, model=thin_film, eff=1.0).params["eff"] == 1.0
     assert rules.sensor_surface("lumen:geant4") is rules.sensor_surface("geant4") is rules.geant4_sensor
     with pytest.raises(rules.OpticsRefused):

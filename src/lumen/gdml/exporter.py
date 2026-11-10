@@ -253,10 +253,10 @@ def _calibrate(inp: _Input, calibration) -> tuple[schema.DetectorFile, tuple, di
 
     search = ([inp.root / "calibrations"] if inp.root else []) + list(_env.detector_path())
     if isinstance(calibration, cal.Calibration):
-        parents = cal.chain(calibration.parent, search) if calibration.parent != cal.NOMINAL else []
+        parents = cal.lineage(calibration.parent, search) if calibration.parent != cal.NOMINAL else []
         chain = [*parents, calibration]
     else:
-        chain = cal.chain(str(calibration), search)
+        chain = cal.lineage(str(calibration), search)
     values = cal.merged(chain)
     sensors = {k: v for k, v in values.items() if k.startswith(SENSOR_PREFIX)}
     return apply(inp.df, values), tuple(c.name for c in chain), sensors

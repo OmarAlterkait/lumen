@@ -83,7 +83,7 @@ src/lumen/
 │                              spec + pack, cache
 ├── geometry/                  bvh, navigator_build, csg, navigate, surface_id, clearance, tracked
 ├── media/                     laws, bulk, phase (Rayleigh, Mie), spectra
-├── surfaces/                  outcomes, fresnel, polar, lobes, facets, _legacy (the legacy surface types)
+├── surfaces/                  outcomes, fresnel, polar, lobes, facets, types (the legacy surface types)
 ├── transport/                 state, step, medium, surface_event, bulk_event, estimator, moving_source, item
 ├── run.py                     the tallymap runner: the only `import tallymap`
 ├── sources/                   point, cherenkov, scintillation, steps, arrays
@@ -363,7 +363,7 @@ User-facing text for these limits: `docs/explanation/known-limits.md`.
 
 ## 10. Surfaces
 
-0.1 ships the **legacy Geant4 surface types** (`surfaces/_legacy.py`) behind the surface lookup. The `geant4` optics
+0.1 ships the **legacy Geant4 surface types** (`surfaces/types.py`) behind the surface lookup. The `geant4` optics
 model maps each `opticalsurface` (type, model, finish) to one of them.
 
 | Surface type | Geant4 form it reads | Used by |

@@ -48,7 +48,7 @@ def setup(det, lam_edges=None, step=None, clearance=None) -> Setup:
     geom = tracked.from_parts(det.parts, cache=True)
     edges = tuple(float(v) for v in (lam_edges or det.file.wavelength_range))
     model = steps.Model(geom, det.parts.optics, step or steps.StepConfig(), clearance)
-    return Setup(det, model, item.HistogramShape(len(det.parts.optics.tag_pvs), edges))
+    return Setup(det, model, item.HistogramShape(len(det.parts.optics.sensor_pvs), edges))
 
 
 def packed(det, params=None) -> dict:

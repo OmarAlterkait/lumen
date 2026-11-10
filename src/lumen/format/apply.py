@@ -1,6 +1,6 @@
 """Parameter values applied to a detector file: the one place a value replaces one of the file's values.
 
-    df2 = lumen.format.apply(df, values)   # values by key: a lumen.Params, or calibrations.merged(chain)
+    df2 = lumen.format.apply(df, values)   # values by key: a lumen.Params, or calibrations.merged(parents)
 
 Pure: returns a new detector file. The keys are those of ``lumen.Params``: ``materials/<M>/<KEY>`` and
 ``surfaces/<S>/<KEY>`` replace a property (a ``Table`` replaces a table, a number a constant), ``surfaces/<S>/value``

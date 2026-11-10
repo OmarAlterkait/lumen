@@ -45,7 +45,7 @@ def setup(tmp_path_factory):
     tmp = tmp_path_factory.mktemp("norecompile")
     det = lumen.load(lumen.convert(write(tmp, _toy()), RECIPE, tmp / "toy.lumen"))
     model = steps.Model(tracked.from_parts(det.parts), det.parts.optics)
-    tally = item.HistogramShape(len(det.parts.optics.tag_pvs), (300.0, 600.0))
+    tally = item.HistogramShape(len(det.parts.optics.sensor_pvs), (300.0, 600.0))
     return det, model, item.photons(tally), tally
 
 

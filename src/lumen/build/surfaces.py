@@ -1,7 +1,7 @@
 """The surface lookup: Geant4's boundary rule over every crossing the navigator reports, as the tables the step reads.
 
     optics = compile(library, tree, bindings, lam_domain)
-    optics.kernel(pre, post)          # the Pair of the crossing pre -> post: surface type, row, why
+    optics.pair(pre, post)          # the Pair of the crossing pre -> post: surface type, row, why
 
 Three inputs, all plain Python (``lumen.build.library`` makes them from a detector file):
 
@@ -39,7 +39,7 @@ import numpy as np
 
 from lumen.media import bulk, laws
 from lumen.rules import boundary
-from lumen.surfaces import _legacy as legacy
+from lumen.surfaces import types as legacy
 from lumen.surfaces.outcomes import DETECT
 
 # the surface-type order of the packed tables; every other type sorts after these, by name
@@ -85,7 +85,7 @@ class SurfaceEntry:
     polished dielectric_dielectric surface declared there never acts.
     """
 
-    kind: legacy.SurfaceType
+    surface_type: legacy.SurfaceType
     params: Mapping
     ignored_between_same_material: bool = False
 
@@ -94,7 +94,7 @@ class SurfaceEntry:
 class SensorEntry:
     """A library sensor type: a surface type that can DETECT and its params."""
 
-    kind: legacy.SurfaceType
+    surface_type: legacy.SurfaceType
     params: Mapping
 
 
@@ -120,18 +120,18 @@ def check_library(lib: Library):
         if not isinstance(e, MediumEntry) or not isinstance(e.medium, bulk.Medium):
             raise DescriptionError(f"medium {name!r}: expected a MediumEntry(bulk.Medium, params)")
     for name, e in lib.surfaces.items():
-        if not isinstance(e, SurfaceEntry) or not isinstance(e.kind, legacy.SurfaceType):
+        if not isinstance(e, SurfaceEntry) or not isinstance(e.surface_type, legacy.SurfaceType):
             raise DescriptionError(f"surface {name!r}: expected a SurfaceEntry(SurfaceType, params)")
-        if DETECT in e.kind.outcomes:
-            raise DescriptionError(f"surface {name!r}: surface type {e.kind.name} detects; detection needs a sensor "
-                                   "binding (library.sensors), not a surface")  # fmt: skip
-        _check_params(f"surface {name!r}", e.kind, e.params)
+        if DETECT in e.surface_type.outcomes:
+            raise DescriptionError(f"surface {name!r}: surface type {e.surface_type.name} detects; detection needs a "
+                                   "sensor binding (library.sensors), not a surface")  # fmt: skip
+        _check_params(f"surface {name!r}", e.surface_type, e.params)
     for name, e in lib.sensors.items():
-        if not isinstance(e, SensorEntry) or not isinstance(e.kind, legacy.SurfaceType):
+        if not isinstance(e, SensorEntry) or not isinstance(e.surface_type, legacy.SurfaceType):
             raise DescriptionError(f"sensor {name!r}: expected a SensorEntry(SurfaceType, params)")
-        if DETECT not in e.kind.outcomes:
-            raise DescriptionError(f"sensor {name!r}: surface type {e.kind.name} cannot detect")
-        _check_params(f"sensor {name!r}", e.kind, e.params)
+        if DETECT not in e.surface_type.outcomes:
+            raise DescriptionError(f"sensor {name!r}: surface type {e.surface_type.name} cannot detect")
+        _check_params(f"sensor {name!r}", e.surface_type, e.params)
 
 
 # ------------------------------------------------------------------------------------------------------ the tree
@@ -350,7 +350,7 @@ class Pair:
     ``examples``: PV pairs; ``n_pv_pairs``: the number of adjacent PV pairs.
     """
 
-    kind: legacy.SurfaceType
+    surface_type: legacy.SurfaceType
     origin: str | None  # "surface:<name>" / "sensor:<name>" for types with params, None otherwise
     row: int
     reasons: tuple[str, ...]
@@ -375,16 +375,16 @@ class Optics:
     media_names: tuple[str, ...]  # library names, keys of params["media"]
     rows: Mapping[str, tuple[str | None, ...]]  # type name -> origin of each row
     pairs: Mapping[tuple[int, int], Pair]
-    tag_of: Mapping[str, int]  # sensor PV -> tag 0..N-1
-    tag_pvs: tuple[str, ...]
-    tag_sensors: tuple[str, ...]
+    sensor_index: Mapping[str, int]  # sensor PV -> tag 0..N-1
+    sensor_pvs: tuple[str, ...]
+    sensor_entries: tuple[str, ...]
     lam_domain: tuple[float, float]
     params: dict
     report: str
     deposit_pre: np.ndarray | None = None  # (C, C) bool: a DETECT deposit goes to the tag before; None: none do
     type_laws: Mapping = field(default_factory=dict)  # (type name, param) -> Law of a spectral param
 
-    def kernel(self, pre, post):
+    def pair(self, pre, post):
         """Return the Pair crossed from PV pre into PV post (None: never crossed, also inside one class)."""
         return self.pairs.get((self.class_of[pre], self.class_of[post]))
 
@@ -545,7 +545,7 @@ class _Regions:
         """Return a PV's tree material."""
         return self.tree.by_name[pv].material
 
-    def kernel_of(self, pre, post, rel):
+    def surface_of(self, pre, post, rel):
         """Return (type, origin, reason, side credited) of the crossing pre -> post (``boundary.crossing``)."""
         try:
             return boundary.crossing(self, pre, post, rel)
@@ -559,7 +559,7 @@ class _Regions:
             self.legs.setdefault((c[pre], c[post]), [set(), (pre, post)])[0].add(rel)
         if self.opaque[self.d.medium[pre]]:
             return
-        kind, origin, reason, side = self.kernel_of(pre, post, rel)
+        kind, origin, reason, side = self.surface_of(pre, post, rel)
         key = (c[pre], c[post])
         if key[0] == key[1]:
             if kind is not legacy.PASS:
@@ -671,7 +671,7 @@ class _Regions:
 # reports a crossing from the daughter's class straight into what lies beyond the mother, a class pair no adjacency
 # produces. Such pairs are derived at class level: p -> q via b, with p inside b and q beyond it (outward), or p
 # beyond b and q inside it (inward). Geant4 locates the photon directly in q: the crossing is ONE interface p -> q,
-# resolved like any other (kernel_of on the PV pair); b has no part in it -- for an EXACTLY coincident face. Except
+# resolved like any other (surface_of on the PV pair); b has no part in it -- for an EXACTLY coincident face. Except
 # where a leg is a PASS (b one medium with p, or with q, no surface between): b is then optically p (q), and the
 # crossing is the other leg's interface, its border and sensor included (Geant4 steps into any b thicker than its
 # 1e-12 m tolerance, and a float32 geometry merges a b thinner than its band). Nested coincident faces compose (to a
@@ -711,7 +711,7 @@ class _Coincident:
             kind, origin, reason, side = self._through_pass(p, b, q, fb, fq)
         else:
             try:
-                kind, origin, reason, side = r.kernel_of(pre_pv, post_pv, rel)
+                kind, origin, reason, side = r.surface_of(pre_pv, post_pv, rel)
             except OpticsError as err:
                 if (p, q) not in r.found:
                     self.unresolved[(p, q)] = f"via {r.class_names[b]}: {err}"
@@ -773,7 +773,7 @@ def _report(head, class_names, class_pvs, pairs, coincident, tags):
     lines.append("crossed class pairs (pre -> post: kernel [row] origin; why; PV pairs):")
     for (a, b), p in pairs.items():
         ex = ", ".join(f"{x}->{y}" for x, y in p.examples)
-        lines.append(f"  {a} -> {b}: {p.kind.name} [{p.row}] {p.origin or '-'}; {', '.join(p.reasons)}; "
+        lines.append(f"  {a} -> {b}: {p.surface_type.name} [{p.row}] {p.origin or '-'}; {', '.join(p.reasons)}; "
                      f"{p.n_pv_pairs} (e.g. {ex})")  # fmt: skip
     if coincident.via:
         lines.append(f"coincident faces (via a zero-thickness class): {len(coincident.via)} pairs; "
@@ -783,9 +783,9 @@ def _report(head, class_names, class_pvs, pairs, coincident, tags):
     for (a, b), why in sorted(coincident.unresolved.items()):
         lines.append(f"  unresolved coincident face {a} -> {b} ({why}): never crossed; if the geometry crosses it the "
                      "photon is reported lost")  # fmt: skip
-    sensor_pvs, tag_of, sensor_of = tags
+    sensor_pvs, sensor_index, sensor_of = tags
     for s in sorted({sensor_of[n] for n in sensor_pvs}):
-        t = [tag_of[n] for n in sensor_pvs if sensor_of[n] == s]
+        t = [sensor_index[n] for n in sensor_pvs if sensor_of[n] == s]
         lines.append(f"sensor {s}: {len(t)} instances, tags {t[0]}..{t[-1]}")
     return "\n".join(lines)
 
@@ -826,12 +826,12 @@ def _resolve_all(library: Library, tree, bindings: Bindings, lam_domain) -> Opti
     by_name = tree.by_name
     sensor_pvs = sorted((n for n in tree.order if d.sensor[n] is not None),
                         key=lambda n: (d.sensor[n], by_name[n].copy is None, by_name[n].copy or 0, n))  # fmt: skip
-    tag_of = {n: i for i, n in enumerate(sensor_pvs)}
+    sensor_index = {n: i for i, n in enumerate(sensor_pvs)}
     head = (f"optics: {C} classes, {len(pairs)} crossed class pairs, kinds {[k.name for k in surface_types]}, "
             f"{len(sensor_pvs)} sensors, lambda [{lo:g}, {hi:g}] nm")  # fmt: skip
-    report = _report(head, class_names, class_pvs, pairs, coincident, (sensor_pvs, tag_of, d.sensor))
+    report = _report(head, class_names, class_pvs, pairs, coincident, (sensor_pvs, sensor_index, d.sensor))
     optics = Optics(C, class_names, tuple(sigs), class_of, class_pvs, surface_types, type_of, row_of, media_of,
-                    tuple(library.media[n].medium for n in media_names), media_names, rows, pairs, tag_of,
+                    tuple(library.media[n].medium for n in media_names), media_names, rows, pairs, sensor_index,
                     tuple(sensor_pvs), tuple(d.sensor[n] for n in sensor_pvs), (lo, hi), {}, report,
                     deposit_pre if deposit_pre.any() else None)  # fmt: skip
     return optics

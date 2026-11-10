@@ -1,6 +1,6 @@
 """A surface event: the surface type's outcome probabilities at a crossing, and the continuing outcome drawn there.
 
-The surface type of the crossed pair (the legacy surface types, ``lumen.surfaces._legacy``; one ``lax.switch``
+The surface type of the crossed pair (the legacy surface types, ``lumen.surfaces.types``; one ``lax.switch``
 branch each, its parameters gathered by the pair's row) gives the ten outcomes' probabilities. The DETECT share is
 deposited in expectation by the step; one continuing outcome is drawn from the reference probabilities and weighted
 live / reference. Its direction: a deterministic map (straight, refraction, mirror, backscatter) with the Jones map of

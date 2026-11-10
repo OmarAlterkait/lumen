@@ -77,7 +77,7 @@ import numpy as np
 from lumen.build.surfaces import DescriptionError, MediumEntry, SensorEntry, SurfaceEntry
 from lumen.format import schema
 from lumen.media import bulk, laws, phase, spectra
-from lumen.surfaces import _legacy as legacy
+from lumen.surfaces import types as legacy
 from lumen.surfaces.outcomes import DETECT
 from lumen.units import HC
 
@@ -544,8 +544,8 @@ def geant4_sensor(s: schema.Surface, lam_domain) -> SensorEntry:
     eff = flat_fraction(s, "EFFICIENCY", 0.0)
     if type_ == "dielectric_dielectric":
         e = surface(s)
-        if e.kind is not legacy.DIELECTRIC_RT:
-            raise OpticsRefused(f"{what}: {e.kind.name} does not detect (Geant4: only a polished "
+        if e.surface_type is not legacy.DIELECTRIC_RT:
+            raise OpticsRefused(f"{what}: {e.surface_type.name} does not detect (Geant4: only a polished "
                                 "dielectric_dielectric reaches DoAbsorption)")  # fmt: skip
         return SensorEntry(legacy.DIELECTRIC_RT_SENSOR, dict(e.params, eff=eff))
     if type_ != "dielectric_metal":
@@ -598,11 +598,11 @@ def sensor(s: schema.Surface, lam_domain=None, model=None, eff: float | None = N
     replaces the reading's detection efficiency (a sensitive detector that counts every absorption, WCSim's, passes 1).
     """
     e = sensor_surface(model)(s, lam_domain)
-    if not isinstance(e, SensorEntry) or DETECT not in e.kind.outcomes:
+    if not isinstance(e, SensorEntry) or DETECT not in e.surface_type.outcomes:
         raise OpticsRefused(f"opticalsurface {s.name!r}: reader {model!r} returned no detecting SensorEntry")
     if eff is not None:
         k = "eff" if "eff" in e.params else "qe"
-        e = SensorEntry(e.kind, dict(e.params, **{k: float(eff)}))
+        e = SensorEntry(e.surface_type, dict(e.params, **{k: float(eff)}))
     return e
 
 
@@ -613,8 +613,8 @@ def rt_sensor(s: schema.Surface, eff: float | None = None) -> SensorEntry:
     sensitive detector that counts every absorption (WCSim's) passes 1.
     """
     e = sensor(s, eff=eff)
-    if e.kind is not legacy.DIELECTRIC_RT_SENSOR:
-        raise OpticsRefused(f"opticalsurface {s.name!r}: {e.kind.name}, not a polished dielectric_dielectric")
+    if e.surface_type is not legacy.DIELECTRIC_RT_SENSOR:
+        raise OpticsRefused(f"opticalsurface {s.name!r}: {e.surface_type.name}, not a polished dielectric_dielectric")
     return e
 
 
@@ -693,7 +693,7 @@ def wls_film(film: schema.Material, front: schema.Material, backing: schema.Surf
     """Return a WLS film of thickness ``d`` (m) on one face (normal ``axis``) of a surface, as one coated surface.
 
     The film material carries WLSABSLENGTH, WLSCOMPONENT and WLSTIMECONSTANT; ``backing`` is the surface behind it.
-    It is lowered to ``surfaces._legacy.coated`` over the backing's own surface: every number comes from the records,
+    It is lowered to ``surfaces.types.coated`` over the backing's own surface: every number comes from the records,
     nothing is averaged, every one is a live parameter (the film's absorption length table, thickness, yield and
     delay; the backing's tables). The yield eta is the film's WLSMEANNUMBERPHOTONS (Geant4 emits Poisson(eta)
     photons), 1 when absent as in Geant4.
@@ -717,10 +717,10 @@ def wls_film(film: schema.Material, front: schema.Material, backing: schema.Surf
         raise OpticsRefused(f"{what}: absorbs its own emission (d / L up to {worst:.1e})")
     b = surface(backing, transmits=False)
     types = {} if types is None else types
-    key = (film.name, b.kind.name)
+    key = (film.name, b.surface_type.name)
     if key not in types:
         spectrum = spectra.geant4_spectrum(film.name, wle.energy, wle.value)
-        types[key] = legacy.coated(f"coated:{film.name}:{b.kind.name}", b.kind, spectrum)
+        types[key] = legacy.coated(f"coated:{film.name}:{b.surface_type.name}", b.surface_type, spectrum)
     params = {"L": table(wla, "length"), "d": float(d), "eta": _film_yield(props, what), "tau": tau,
               "axis": np.asarray(axis, np.float64)}  # fmt: skip
     params.update({f"b:{k}": v for k, v in b.params.items()})

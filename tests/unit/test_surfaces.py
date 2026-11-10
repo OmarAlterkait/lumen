@@ -21,7 +21,7 @@ from lumen.build.surfaces import (
 )
 from lumen.build.tree import PV, Tree, TreeError
 from lumen.media import bulk, laws, spectra
-from lumen.surfaces import _legacy as legacy
+from lumen.surfaces import types as legacy
 
 LAM = (300.0, 600.0)
 IDX, LEN = laws.constant("index"), laws.constant("length")
@@ -86,8 +86,8 @@ def compile_(t, lib=None, mats=None, **kw):
 
 
 def kern(o, pre, post):
-    p = o.kernel(pre, post)
-    return None if p is None else (p.kind, p.origin, p.reasons)
+    p = o.pair(pre, post)
+    return None if p is None else (p.surface_type, p.origin, p.reasons)
 
 
 TANK = (
@@ -115,18 +115,18 @@ def test_lar_sensor_gets_its_own_class_and_the_active_volume_is_invisible():
     assert k is legacy.COUNTING and origin == "sensor:arapuca" and why == ("sensor",)
     assert kern(o, "TPC", "det2")[0] is legacy.COUNTING  # sibling entry: same class pair, same kernel
     assert kern(o, "det0", "Bulk")[0] is legacy.PASS
-    assert o.kernel("Bulk", "TPC") is None and o.kernel("World", "Bulk") is None  # one class: no boundary
-    assert kern(o, "Bulk", "Cryo")[0] is legacy.ABSORBER and o.kernel("Cryo", "Bulk") is None
+    assert o.pair("Bulk", "TPC") is None and o.pair("World", "Bulk") is None  # one class: no boundary
+    assert kern(o, "Bulk", "Cryo")[0] is legacy.ABSORBER and o.pair("Cryo", "Bulk") is None
     # nothing entering the LAr class absorbs or detects (the active volume is plain LAr)
     for (a, b), p in o.pairs.items():
         if b == c["TPC"]:
-            assert p.kind is legacy.PASS, (a, b, p.kind)
+            assert p.surface_type is legacy.PASS, (a, b, p.surface_type)
     assert o.type_of[c["Bulk"], c["det0"]] == o.surface_types.index(legacy.COUNTING)
     eff = o.params["surface_types"]["counting"]["eff"][o.row_of[c["Bulk"], c["det0"]]]
     assert abs(float(eff) - 0.03) < 1e-7
     # tags by copy number, 0..N-1
-    assert [o.tag_of[f"det{i}"] for i in range(4)] == [3, 2, 1, 0] and o.tag_pvs[0] == "det3"
-    assert o.tag_sensors == ("arapuca",) * 4
+    assert [o.sensor_index[f"det{i}"] for i in range(4)] == [3, 2, 1, 0] and o.sensor_pvs[0] == "det3"
+    assert o.sensor_entries == ("arapuca",) * 4
     assert o.row_of.dtype == np.int32 and o.type_of.dtype == np.int32 and o.medium_of.dtype == np.int32
     assert np.all(np.diag(o.row_of) == -1) and np.all(np.diag(o.type_of) == -1)
 
@@ -173,7 +173,7 @@ def test_value_only_changes_leave_partition_and_tables_identical():
     a = compile_(t, **kw)
     lib = library(n_water=1.40, R=0.7, R2=0.2, eff=0.5, qe=0.3)
     b = compile_(t, lib=lib, **kw)
-    for f in ("class_names", "signatures", "class_of", "class_pvs", "media_names", "rows", "tag_of", "report"):
+    for f in ("class_names", "signatures", "class_of", "class_pvs", "media_names", "rows", "sensor_index", "report"):
         assert getattr(a, f) == getattr(b, f), f
     assert a.surface_types == b.surface_types and a.media == b.media
     for f in ("type_of", "row_of", "medium_of"):
@@ -345,7 +345,7 @@ def test_no_rindex_absorbs_and_opaque_media_are_never_left():
     )
     o = compile_(t)
     assert kern(o, "World", "Can") == (legacy.ABSORBER, None, ("default: NoRINDEX",))
-    assert o.kernel("Can", "World") is None
+    assert o.pair("Can", "World") is None
     o = compile_(t, borders={("World", "Can"): "polish_on"})
     assert kern(o, "World", "Can") == (legacy.ABSORBER, None, ("border: NoRINDEX",))
     o = compile_(t, skins={"CanLV": "refl"})
@@ -367,15 +367,15 @@ def test_a_frontpainted_transmission_into_an_opaque_medium_is_absorbed_where_it_
     paint = SurfaceEntry(legacy.PAINTED_T, {"R": 0.4, "T": 0.25, "f_spec": 1.0})
     lib = dataclasses.replace(lib, surfaces={**lib.surfaces, "paint": paint})
     o = compile_(t, lib=lib, skins={"CanLV": "paint", "BoxLV": "paint"})
-    into = o.kernel("World", "Can")
-    assert into.kind is legacy.into_opaque(legacy.PAINTED_T) and into.origin == "surface:paint"
-    assert "absorbed" in into.reasons[0] and set(into.kind.params) == {"R", "T", "f_spec"}
-    assert o.kernel("World", "Box").kind is legacy.PAINTED_T  # into a medium with RINDEX it transmits
+    into = o.pair("World", "Can")
+    assert into.surface_type is legacy.into_opaque(legacy.PAINTED_T) and into.origin == "surface:paint"
+    assert "absorbed" in into.reasons[0] and set(into.surface_type.params) == {"R", "T", "f_spec"}
+    assert o.pair("World", "Box").surface_type is legacy.PAINTED_T  # into a medium with RINDEX it transmits
     p = {k: jnp.float32(v) for k, v in paint.params.items()}
-    pr, base = into.kind.probs(p, {}), legacy.PAINTED_T.probs(p, {})
+    pr, base = into.surface_type.probs(p, {}), legacy.PAINTED_T.probs(p, {})
     assert float(pr[STRAIGHT]) == 0.0 and float(pr[ABSORB]) == pytest.approx(float(base[ABSORB] + base[STRAIGHT]))
-    assert float(jnp.sum(pr)) == pytest.approx(1.0) and STRAIGHT not in into.kind.outcomes
-    assert legacy.into_opaque(legacy.PAINTED_T) is into.kind  # one object per base: one row block
+    assert float(jnp.sum(pr)) == pytest.approx(1.0) and STRAIGHT not in into.surface_type.outcomes
+    assert legacy.into_opaque(legacy.PAINTED_T) is into.surface_type  # one object per base: one row block
 
 
 def test_surface_ignored_between_the_same_material():
@@ -489,7 +489,7 @@ def test_sensor_count_and_binding_errors():
     t = tree(("World", "WorldLV", "Water", None), *((f"pmt{i}", "PmtLV", "Acrylic", "World") for i in range(3)))
     ok = dict(disjoint_placements=("PmtLV",))
     o = compile_(t, sensors=(SensorBinding("pmt", 3, lv="PmtLV"),), **ok)
-    assert sorted(o.tag_of.values()) == [0, 1, 2]
+    assert sorted(o.sensor_index.values()) == [0, 1, 2]
     with pytest.raises(DescriptionError, match="expected 4 instances, found 3"):
         compile_(t, sensors=(SensorBinding("pmt", 4, lv="PmtLV"),), **ok)
     with pytest.raises(DescriptionError, match="two sensors"):
@@ -550,8 +550,8 @@ def _same(a, b):
         "class_pvs",
         "media_names",
         "rows",
-        "tag_of",
-        "tag_pvs",
+        "sensor_index",
+        "sensor_pvs",
         "report",
     ):
         assert getattr(a, f) == getattr(b, f), f
@@ -586,7 +586,7 @@ def test_report_explains_every_pair():
     for word in ("border", "skin(post)", "skin(pre)", "sensor", "default", "NoRINDEX", "pmt: 5 instances"):
         assert word in r, word
     assert all(o.class_names[c] in r for c in range(o.n_classes))
-    assert o.tag_of == {f"pmt{i}": t for t, i in enumerate(sorted(range(5), key=lambda i: ((7 * i) % 5, i)))}
+    assert o.sensor_index == {f"pmt{i}": t for t, i in enumerate(sorted(range(5), key=lambda i: ((7 * i) % 5, i)))}
 
 
 def test_coated_skin_on_an_opaque_backing_compiles():
@@ -607,7 +607,7 @@ def test_coated_skin_on_an_opaque_backing_compiles():
     lib = dataclasses.replace(lib, surfaces={**lib.surfaces, "film": SurfaceEntry(film, p)})
     t = tree(("World", "WorldLV", "Water", None), ("Foil", "FoilLV", "Steel", "World"))
     o = compile_(t, lib, skins={"FoilLV": "film"})
-    assert o.kernel("World", "Foil").kind is film
+    assert o.pair("World", "Foil").surface_type is film
     lib2 = dataclasses.replace(lib, surfaces={**lib.surfaces, "pass": SurfaceEntry(legacy.PASS, {})})
     with pytest.raises(regions.OpticsError, match="opaque medium"):
         compile_(t, lib2, skins={"FoilLV": "pass"})
@@ -633,4 +633,4 @@ def test_a_coincident_crossing_past_a_pass_pair_takes_the_border():
     k, origin, reasons = kern(o, "Glass", "Inner")
     assert k.name == "photocathode" and origin == "sensor:pmt", (k, origin, reasons)
     assert any(r.startswith("pass via") for r in reasons), reasons
-    assert o.tag_of["Inner"] == 0 and not (o.deposit_pre is not None and o.deposit_pre[c["Glass"], c["Inner"]])
+    assert o.sensor_index["Inner"] == 0 and not (o.deposit_pre is not None and o.deposit_pre[c["Glass"], c["Inner"]])

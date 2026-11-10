@@ -11,7 +11,7 @@ from lumen.build.tree import PV, Tree
 from lumen.detectors import larsoft_optics as lar
 from lumen.format import schema
 from lumen.media import bulk, laws, phase
-from lumen.surfaces import _legacy as legacy
+from lumen.surfaces import types as legacy
 from lumen.units import HC
 
 STEEL = "STEEL_STAINLESS_Fe7Cr2Ni"
@@ -87,5 +87,5 @@ def test_lar_sensor_in_lar_is_its_own_class_and_the_active_volume_is_invisible()
     )
     o = regions.compile(library, Tree(pvs), b, (120.0, 140.0))
     c = o.class_of
-    assert c["TPC"] == c["Cryo"] != c["det0"] and o.kernel("Cryo", "TPC") is None
-    assert o.kernel("Cryo", "det0").kind is legacy.COUNTING and o.tag_of["det0"] == 0
+    assert c["TPC"] == c["Cryo"] != c["det0"] and o.pair("Cryo", "TPC") is None
+    assert o.pair("Cryo", "det0").surface_type is legacy.COUNTING and o.sensor_index["det0"] == 0

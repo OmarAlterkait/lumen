@@ -134,7 +134,7 @@ def _vector(v) -> bool:
     return isinstance(v, (list, tuple, np.ndarray)) and len(v) == 3 and all(_number(x) for x in v)
 
 
-KINDS = {
+VALUE_TYPES = {
     "a name": lambda v: isinstance(v, str),
     "a number": _number,
     "true or false": lambda v: isinstance(v, bool),
@@ -154,7 +154,7 @@ def check_settings(what: str, settings: dict, known: dict) -> None:
     for k, v in settings.items():
         if k not in known:
             raise ValueError(f"{what}: unknown setting {k!r} (known: {sorted(known)})")
-        if not KINDS[known[k]](v):
+        if not VALUE_TYPES[known[k]](v):
             raise ValueError(f"{what}: setting {k!r} must be {known[k]}, got {v!r}")
 
 

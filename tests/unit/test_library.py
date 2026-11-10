@@ -12,7 +12,7 @@ from lumen.build import library as glue
 from lumen.build import surfaces as regions
 from lumen.format import schema
 from lumen.format.sensorsets import SensorGroup, SensorSet
-from lumen.surfaces import _legacy as legacy
+from lumen.surfaces import types as legacy
 
 LAM = (300.0, 600.0)
 
@@ -64,16 +64,23 @@ def test_every_encoding_on_the_toy(toy):
     film = lib.surfaces[f"film:{PLUS}"]
     # the film's side and thickness (geometry), the backing's f_spec (groundfrontpainted) and the yield (no
     # WLSMEANNUMBERPHOTONS: G4OpWLS reads no mean) are never read as parameters (OUT): one type per side
-    assert film.kind.name == "coated:Shifter:painted{axis=(1,0,0),b:f_spec=0,d=1e-06,eta=1}"
-    assert lib.surfaces[f"film:{MINUS}"].kind.name == "coated:Shifter:painted{axis=(-1,0,0),b:f_spec=0,d=1e-06,eta=1}"
+    assert film.surface_type.name == "coated:Shifter:painted{axis=(1,0,0),b:f_spec=0,d=1e-06,eta=1}"
+    assert (
+        lib.surfaces[f"film:{MINUS}"].surface_type.name
+        == "coated:Shifter:painted{axis=(-1,0,0),b:f_spec=0,d=1e-06,eta=1}"
+    )
     assert "axis" not in film.params and "d" not in film.params and "L" in film.params
     assert (
-        b.borders == {("w/blk1/Blk", "w/other/X"): "paint"} and lib.surfaces["paint"].kind.name == "painted_t{f_spec=0}"
+        b.borders == {("w/blk1/Blk", "w/other/X"): "paint"}
+        and lib.surfaces["paint"].surface_type.name == "painted_t{f_spec=0}"
     )
     assert lib.sensors["sen"].params == {"eff": 0.5} and b.sensors == (regions.SensorBinding("sen", 1, lv="Sen"),)
     o = regions.compile(lib, t, b, LAM)
     assert o.class_of["w/sh/S"] == o.class_of["w/W"]  # the index-matched film volume is the liquid
-    assert o.kernel("w/W", "w/f1/Foil").kind is film.kind and o.kernel("w/W", "<outside>").kind is legacy.GLISUR_METAL
+    assert (
+        o.pair("w/W", "w/f1/Foil").surface_type is film.surface_type
+        and o.pair("w/W", "<outside>").surface_type is legacy.GLISUR_METAL
+    )
     # the sources, for every parameter leaf of the library
     named = regions.named_params(o, lib)
     assert src[("media", "Liq", "index", "value")] == glue.Source("materials/Liq/RINDEX", "value")
@@ -96,7 +103,10 @@ def test_a_recipe_skin_replaces_the_gdml_skin(toy):
     df = decided(toy)
     df = dataclasses.replace(df, skins=df.skins + (schema.Skin("mirror", "glispol", "Blk", "recipe"),))
     _, lib, b, _ = glue.library_and_bindings(df, tree(*TREE), INSTANCES, COUNTING)
-    assert b.skins["Blk"] == "glispol" and lib.surfaces["glispol"].kind.name.split("{")[0] == legacy.SPECULAR_METAL.name
+    assert (
+        b.skins["Blk"] == "glispol"
+        and lib.surfaces["glispol"].surface_type.name.split("{")[0] == legacy.SPECULAR_METAL.name
+    )
 
 
 def test_border_sensors(toy):
@@ -107,7 +117,7 @@ def test_border_sensors(toy):
     _, lib, b, src = glue.library_and_bindings(df, tree(*TREE), INSTANCES, sset)
     e = lib.sensors["tube:pdieR"]
     # Geant4 reads T (its default 0 when the surface gives none): a parameter, not folded (structure decides)
-    assert e.kind.name == "dielectric_rt_sensor" and e.params["eff"] == 1.0 and e.params["T"] == 0.0
+    assert e.surface_type.name == "dielectric_rt_sensor" and e.params["eff"] == 1.0 and e.params["T"] == 0.0
     assert src[("sensors", "tube:pdieR", "T")] == glue.Source(None, "default", "Geant4's default")
     assert b.borders == {("w/blk1/Blk", "w/other/X"): "tube:pdieR"}
     assert regions.SensorBinding("tube:pdieR", 1, lv="X", entry="border") in b.sensors

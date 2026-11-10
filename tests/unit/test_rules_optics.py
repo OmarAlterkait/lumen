@@ -19,7 +19,7 @@ from lumen.build import surfaces as regions
 from lumen.format import schema
 from lumen.media import bulk, laws, spectra
 from lumen.rules import optics as rules
-from lumen.surfaces import _legacy as legacy
+from lumen.surfaces import types as legacy
 from lumen.surfaces.outcomes import ABSORB, BACKSCATTER, DETECT, DIFFUSE, GLOSSY, SPECULAR, STRAIGHT
 from lumen.units import HC
 
@@ -49,7 +49,7 @@ def test_reading_units_and_keys(df):
 def test_enum_valued_surface_attributes(df):
     """a GDML export writes Geant4's enum values: unified, groundfrontpainted, dielectric_dielectric"""
     assert rules.surface_names(df.surfaces["enum"]) == ("unified", "groundfrontpainted", "dielectric_dielectric")
-    assert rules.surface(df.surfaces["enum"]).kind is legacy.PAINTED_T  # T at Geant4's default 0
+    assert rules.surface(df.surfaces["enum"]).surface_type is legacy.PAINTED_T  # T at Geant4's default 0
 
 
 def test_scintillation_reading_conventions(df):
@@ -216,7 +216,7 @@ REFUSED = {"lut": "model", "dich": "model", "back": "finish", "gdie": "ground di
 def test_surfaces_supported_and_refused(df):
     s = df.surfaces
     for name, kind in SUPPORTED.items():
-        assert rules.surface(s[name]).kind is kind, name
+        assert rules.surface(s[name]).surface_type is kind, name
     assert rules.surface(s["die"]).ignored_between_same_material
     assert not rules.surface(s["paint"]).ignored_between_same_material
     assert rules.surface(s["glis"]).params["polish"] == 0.5 and rules.surface(s["paint"]).params["f_spec"] == 0.0
@@ -224,7 +224,7 @@ def test_surfaces_supported_and_refused(df):
     rt = rules.surface(s["pdieR"])  # absorption before Fresnel (WCSim's PMT cathode surface)
     assert rt.ignored_between_same_material and rt.params["T"] == 0.0 and set(rt.params) == {"R", "T"}
     sen = rules.rt_sensor(s["pdieR"], eff=1.0)
-    assert sen.kind is legacy.DIELECTRIC_RT_SENSOR and sen.params["eff"] == 1.0
+    assert sen.surface_type is legacy.DIELECTRIC_RT_SENSOR and sen.params["eff"] == 1.0
     assert rules.rt_sensor(s["pdieR"]).params["eff"] == 0.0  # the surface's EFFICIENCY (none here)
     with pytest.raises(rules.OpticsRefused, match="not a polished dielectric_dielectric"):
         rules.rt_sensor(dataclasses.replace(s["eff"], name="effm"))
@@ -306,14 +306,14 @@ def test_coverage_lists_tables_short_of_the_range(df):
 def test_wls_film_reads_its_numbers_and_checks(df):
     m, s = df.materials, df.surfaces
     e = rules.wls_film(m["Shifter"], m["Liq"], s["paint"], 1e-6, (0.0, 0.0, 1.0))
-    assert e.kind.stack and e.kind.name == "coated:Shifter:painted" and e.params["eta"] == 1.0
+    assert e.surface_type.stack and e.surface_type.name == "coated:Shifter:painted" and e.params["eta"] == 1.0
     assert e.params["d"] == 1e-6 and e.params["tau"] == 0.0 and e.params["b:f_spec"] == 0.0
     assert np.array_equal(e.params["b:R"][1]["value"], s["paint"].properties["REFLECTIVITY"].value)
     assert np.array_equal(e.params["L"][1]["value"], m["Shifter"].properties["WLSABSLENGTH"].value)
     types = {}
     a = rules.wls_film(m["Shifter"], m["Liq"], s["paint"], 1e-6, (1.0, 0.0, 0.0), types)
     b = rules.wls_film(m["Shifter"], m["Liq"], s["paint"], 1e-6, (-1.0, 0.0, 0.0), types)
-    assert a.kind is b.kind and len(types) == 1
+    assert a.surface_type is b.surface_type and len(types) == 1
     with pytest.raises(rules.OpticsRefused, match="index-matched"):
         rules.wls_film(m["Shifter"], m["Steel"], s["paint"], 1e-6, (0, 0, 1))
     with pytest.raises(rules.OpticsRefused, match="absorbs its own emission"):

@@ -75,9 +75,9 @@ def sensor_defaults(sensor_set, parts=None) -> dict:
 
 def group_tags(group, parts) -> list[int]:
     """Return the sensor tags (the photon loop's sensor indices) of a sensor group, ascending."""
-    return [i for i, pv in enumerate(parts.optics.tag_pvs) if group.selects(parts.tree.by_name[pv].lv)]
+    return [i for i, pv in enumerate(parts.optics.sensor_pvs) if group.selects(parts.tree.by_name[pv].lv)]
 
 
 def parameters(df, sensor_set, parts, calibrations=()):
-    """Return the Params of a built detector: its file's values, the sensor defaults, then the calibration chain."""
+    """Return the Params of a built detector: its file's values, the sensor defaults, then the calibrations."""
     return spec.resolve(spec.param_spec_and_values(df, sensor_defaults(sensor_set, parts)), calibrations)

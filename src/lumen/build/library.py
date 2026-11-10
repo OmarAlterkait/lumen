@@ -55,7 +55,7 @@ from lumen.build.tree import OUTSIDE_MATERIAL, OUTSIDE_PV, PV, Tree
 from lumen.format import schema
 from lumen.media import bulk, phase
 from lumen.rules import optics as rules
-from lumen.surfaces import _legacy as legacy
+from lumen.surfaces import types as legacy
 
 AXIS_DECIMALS = 6  # a film axis is rounded to this many decimals to name its side
 OUTSIDE_MEDIUM = "outside"
@@ -304,7 +304,7 @@ def fold_fixed(library, sources):
         consts = {k: v for k, v in e.params.items() if not isinstance(v, tuple) and _fixed(sources, section, name, k)}
         if not consts:
             return e
-        kind, rest = legacy.fixed(e.kind, consts), {k: v for k, v in e.params.items() if k not in consts}
+        kind, rest = legacy.fixed(e.surface_type, consts), {k: v for k, v in e.params.items() if k not in consts}
         if section == "sensors":
             return regions.SensorEntry(kind, rest)
         return regions.SurfaceEntry(kind, rest, e.ignored_between_same_material)

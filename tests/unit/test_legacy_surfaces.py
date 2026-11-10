@@ -10,8 +10,8 @@ import numpy as np
 import pytest
 
 from lumen.media import phase, spectra
-from lumen.surfaces import _legacy as legacy
 from lumen.surfaces import fresnel
+from lumen.surfaces import types as legacy
 from lumen.surfaces.outcomes import (
     ABSORB,
     BACKSCATTER,

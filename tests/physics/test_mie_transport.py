@@ -156,7 +156,7 @@ def simulate(det, params, rows, *, reference=None, cfg=None, replicas=REPLICAS, 
     if (id(det), cfg) not in MODELS:
         MODELS[(id(det), cfg)] = steps.Model(tracked.from_parts(det.parts), det.parts.optics, cfg)
     model = MODELS[(id(det), cfg)]
-    tally = item.HistogramShape(len(det.parts.optics.tag_pvs), (300.0, 600.0))
+    tally = item.HistogramShape(len(det.parts.optics.sensor_pvs), (300.0, 600.0))
     spec = SPECS.setdefault(tally, item.photons(tally))
     ops = steps.operands(model, params, reference, steps.Controls(10.0, float("inf"), 0.0), item.grid(tally))
     key = jax.random.PRNGKey(seed)
@@ -340,7 +340,7 @@ def test_ring_toy_against_geant4(detectors, case, geant4):
     assert man[name]["hits"] == int(counts.sum())
     det = detectors(case, 36)
     o = simulate(det, det.pack(), emission(N_RING, seed=5, iso=False))
-    ring = np.array([int(pv.rsplit("pvRing", 1)[1].split("/")[0]) for pv in det.parts.optics.tag_pvs])
+    ring = np.array([int(pv.rsplit("pvRing", 1)[1].split("/")[0]) for pv in det.parts.optics.sensor_pvs])
     q = np.zeros((REPLICAS, 36))
     tw = np.zeros((REPLICAS, 36))
     q[:, ring] = np.asarray(o["Q"], np.float64).reshape(REPLICAS, -1)

@@ -342,7 +342,7 @@ class _Context:
     d: sc.Definition
     mirrored: bool
     dropped: dict
-    held: set
+    fillers: set
 
 
 class _Lowering:
@@ -552,7 +552,7 @@ class _Lowering:
         return frozenset(h[0] for h in hs if h[4]), hit, len(hs)
 
     def lowering(self, v, mirrored, record=True):
-        """Return ``(dropped, order, held)`` of a volume's placements.
+        """Return ``(dropped, order, fillers)`` of a volume's placements.
 
         Per local placement the holes dropped, the placement order (subtracted volumes before their siblings) and the
         siblings that fill a hole (never dissolved).
@@ -567,7 +567,7 @@ class _Lowering:
             if cs and np.linalg.det(pose[j][0]) > 0:
                 by.setdefault(cs, []).append(j)
         by = {cs: (js, cKDTree(np.array([pose[j][1] for j in js]))) for cs, js in by.items()}
-        drop, first, held = {}, {}, set()
+        drop, first, fillers = {}, {}, set()
         for i in pls:
             child = self.df.placements[v.daughters[i]].volume
             cs = self.vol(child).solid
@@ -576,7 +576,7 @@ class _Lowering:
             d, hit, n_holes = self._sibling_holes(v, i, pose, by)
             if d:
                 drop[i], first[i] = d, min(hit.values())
-                held.update(hit.values())  # siblings that fill a hole: never dissolved
+                fillers.update(hit.values())  # siblings that fill a hole: never dissolved
                 if record:
                     self.lowered.append((v.name, child, len(d), n_holes))
                     self.hole_fillers.update(self.df.placements[v.daughters[j]].volume for j in hit.values())
@@ -585,7 +585,7 @@ class _Lowering:
             if first[i] < i:
                 order.remove(i)
                 order.insert(order.index(first[i]), i)
-        return drop, order, held
+        return drop, order, fillers
 
     # ---- definitions
     def _member(self, v, lv, mirrored, drop):
@@ -618,8 +618,8 @@ class _Lowering:
             m = self._member(v, lv, mirrored, drop)
             if m is not None:
                 d.members.append(m)
-        dropped, order, held = self.lowering(v, mirrored)
-        ctx = _Context(lv, d, mirrored, dropped, held)
+        dropped, order, fillers = self.lowering(v, mirrored)
+        ctx = _Context(lv, d, mirrored, dropped, fillers)
         for i in order:
             p = v.daughters[i]
             self.emit(ctx, p, *self.pose(p), i)
@@ -642,7 +642,7 @@ class _Lowering:
 
     def emit(self, ctx, p, lin, t, i=None, group="", gm=None):  # noqa: PLR0913 -- the placement and its pose
         """Place placement p, or, when it is a navigation envelope, its daughters in its place (recursively)."""
-        free = i is None or (i not in ctx.dropped and i not in ctx.held)
+        free = i is None or (i not in ctx.dropped and i not in ctx.fillers)
         if free and not ctx.mirrored and np.linalg.det(lin) > 0 and self.dissolvable(ctx.lv, p, gm):
             pl = self.df.placements[p]
             c = self.vol(pl.volume)

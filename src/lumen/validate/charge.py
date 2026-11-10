@@ -150,7 +150,7 @@ def compare_band(r, b, n, p, ctx):
 def loop_order(det, values) -> np.ndarray:
     """Return per-sensor values given in sensor-id order (the id map) in the photon loop's sensor order."""
     where = {p: i for i, p in enumerate(det.sensors["ids"])}
-    return np.asarray(values)[[where[p] for p in det.parts.optics.tag_pvs]]
+    return np.asarray(values)[[where[p] for p in det.parts.optics.sensor_pvs]]
 
 
 def _detection(spec, det, energy):

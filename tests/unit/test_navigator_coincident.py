@@ -16,7 +16,7 @@ from lumen.build import solids
 from lumen.build import surfaces as regions
 from lumen.build.tree import OUTSIDE_PV
 from lumen.geometry import tracked
-from lumen.surfaces import _legacy as legacy
+from lumen.surfaces import types as legacy
 
 GLASS = "glass_0/glass"
 

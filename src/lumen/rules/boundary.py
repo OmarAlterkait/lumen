@@ -37,7 +37,7 @@ into any b thicker than its 1e-12 m tolerance; a float32 geometry merges a b thi
 
 from __future__ import annotations
 
-from lumen.surfaces import _legacy as legacy
+from lumen.surfaces import types as legacy
 from lumen.surfaces.outcomes import FAR_SIDE
 
 
@@ -62,7 +62,7 @@ def _surface(v, pre, post, rel):
         e = v.library.surfaces[surf]
         if e.ignored_between_same_material and v.material(pre) == v.material(post):
             return legacy.PASS, None, f"{reason} {surf}: same-material"
-        return e.kind, f"surface:{surf}", reason
+        return e.surface_type, f"surface:{surf}", reason
     if v.medium[pre] == v.medium[post]:
         return legacy.PASS, None, "default"
     if not v.opaque[v.medium[post]]:
@@ -74,10 +74,10 @@ def crossing(v, pre, post, rel):
     """Return (type, origin, reason, side credited) of the crossing pre -> post (``rel``: post relative to pre)."""
     lib = v.library
     if v.enters_sensor(pre, post):
-        kind, origin, reason = lib.sensors[v.sensor[post]].kind, f"sensor:{v.sensor[post]}", "sensor"
+        kind, origin, reason = lib.sensors[v.sensor[post]].surface_type, f"sensor:{v.sensor[post]}", "sensor"
     elif v.borders.get((pre, post)) in lib.sensors:  # an exit sensor: pre is a sensor PV
         s = v.borders[(pre, post)]
-        return lib.sensors[s].kind, f"sensor:{s}", f"border sensor {s} (credited to pre)", "pre"
+        return lib.sensors[s].surface_type, f"sensor:{s}", f"border sensor {s} (credited to pre)", "pre"
     else:
         kind, origin, reason = _surface(v, pre, post, rel)
     if v.opaque[v.medium[post]] and not kind.stack and any(FAR_SIDE[o] for o in kind.outcomes):

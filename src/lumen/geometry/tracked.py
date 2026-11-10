@@ -19,7 +19,7 @@ import numpy as np
 
 from lumen.build import tree as volume_tree
 from lumen.geometry import navigate
-from lumen.surfaces import _legacy as legacy
+from lumen.surfaces import types as legacy
 
 
 class GeometryError(ValueError):
@@ -38,7 +38,7 @@ def pass_pairs(optics):
     n = optics.n_classes
     med, ko = np.asarray(optics.medium_of), np.asarray(optics.type_of)
     passk = {i for i, k in enumerate(optics.surface_types) if k is legacy.PASS}
-    tagged = {int(optics.class_of[pv]) for pv in optics.tag_pvs}
+    tagged = {int(optics.class_of[pv]) for pv in optics.sensor_pvs}
     opq = np.array([m.opaque for m in optics.media], bool)
     ok = ~opq[med.astype(int)] & ~np.isin(np.arange(n), list(tagged))
     return (
@@ -137,10 +137,10 @@ def from_scene(scene, optics, nav=None, cache=False):
     nav = nav.with_classes(vol_cls, mesh_cls, out_cls)
     _check_coincident(nav, optics, vols)
     sensor = np.full(nav.n + 1 + nav.n_mesh, -1, np.int32)
-    tag_of = dict(optics.tag_of)
+    sensor_index = dict(optics.sensor_index)
     for i, p in enumerate(vols):
-        if p in tag_of:
-            sensor[i] = tag_of[p]
+        if p in sensor_index:
+            sensor[i] = sensor_index[p]
     return TrackedGeometry(nav, optics.n_classes, sensor, pass_pairs(optics))
 
 

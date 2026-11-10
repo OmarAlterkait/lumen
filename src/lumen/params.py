@@ -6,7 +6,7 @@ for the opticalsurface's sigma_alpha or polish) and ``sensors/<group>/<field>``.
 gradient method.
 
 Precedence, later wins: (1) the detector file's own values; (2) each sensor group's model defaults; (3) the
-calibration's parent chain, oldest first; (4) the calibration itself. ``explain(key)`` says which layer each value
+calibration's parents, oldest first; (4) the calibration itself. ``explain(key)`` says which layer each value
 came from.
 """
 

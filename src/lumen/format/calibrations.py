@@ -105,7 +105,7 @@ def find(name: str, search) -> Path:
     raise FileNotFoundError(f"no calibration {name!r} in {[str(d) for d in search]}")
 
 
-def chain(name: str, search) -> list[Calibration]:
+def lineage(name: str, search) -> list[Calibration]:
     """Return the calibration ``name`` and its parents, oldest first (``nominal`` is the detector file itself)."""
     out, seen = [], set()
     while name != NOMINAL:
@@ -118,6 +118,6 @@ def chain(name: str, search) -> list[Calibration]:
     return out[::-1]
 
 
-def merged(chain) -> dict:
-    """Return the values of a calibration chain (oldest first), the later calibration winning."""
-    return {k: v for c in chain for k, v in c.values.items()}
+def merged(parents) -> dict:
+    """Return the values of a calibration and its parents (oldest first), the later calibration winning."""
+    return {k: v for c in parents for k, v in c.values.items()}

@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from lumen import plugins
-from lumen.surfaces._legacy import SurfaceType
+from lumen.surfaces.types import SurfaceType
 from lumen.validate import charge, gradients, records, references, report, stats
 
 

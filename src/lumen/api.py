@@ -8,7 +8,7 @@
 
 Loading reads the detector file, cuts out the detector volume, lowers the geometry to its scene, builds the
 volume tree, the surfaces and media, and resolves the parameters (the detector file's values, the sensor models'
-defaults, then the calibration chain). No recipe code runs at load.
+defaults, then the calibration and its parents). No recipe code runs at load.
 """
 
 from __future__ import annotations
@@ -130,9 +130,9 @@ def load(name_or_path, *, sensors: str = "default", calibration: str = cal.NOMIN
     sset = sensorsets.read(path, sensors)
     columns = json.loads((path / "sensors" / f"{sensors}.ids.json").read_text())
     search = [path / "calibrations", *_env.detector_path()]
-    chain = cal.chain(calibration, search) if calibration != cal.NOMINAL else []
+    parents = cal.lineage(calibration, search) if calibration != cal.NOMINAL else []
     parts = build.build(df, sset)
-    params = build.parameters(df, sset, parts, chain)
+    params = build.parameters(df, sset, parts, parents)
     return Detector(df.name, path, df, sset, parts, columns, calibration, params)
 
 
@@ -242,7 +242,7 @@ def simulate(det, source, params=None, *, samples: int, seed: int, replicas: int
     group, sensor_model = _sensor_group(det)
     gate = tuple(float(x) for x in (gate or (group.readout or {}).get("gate", (0.0, 0.0))))
     grid = ro.make_grid(sensor_model, gate)
-    n = len(det.parts.optics.tag_pvs)
+    n = len(det.parts.optics.sensor_pvs)
     if build.group_tags(group, det.parts) != list(range(n)):
         raise ValueError(f"simulate: sensor group {group.name!r} must contain every sensor of the detector")
     r = item.HistogramLayout(n, grid, int(replicas))

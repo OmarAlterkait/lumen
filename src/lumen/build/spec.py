@@ -129,7 +129,7 @@ def param_spec_and_values(df: fmt.DetectorFile, sensor_defaults: dict | None = N
 
 
 def resolve(params: Params, calibrations) -> Params:
-    """Return params with a calibration chain applied, oldest first (``lumen.format.calibrations.chain``)."""
+    """Return params with calibrations applied, oldest first (``lumen.format.calibrations.lineage``)."""
     for c in calibrations:
         unknown = [k for k in c.values if k not in params]
         if unknown:

@@ -45,7 +45,7 @@ def loop(tmp_path_factory):
     tmp = tmp_path_factory.mktemp("loopkernel")
     det = lumen.load(lumen.convert(write(tmp, _toy()), RECIPE, tmp / "toy.lumen"))
     model = steps.Model(tracked.from_parts(det.parts), det.parts.optics)
-    tally = item.HistogramShape(len(det.parts.optics.tag_pvs), (300.0, 600.0))
+    tally = item.HistogramShape(len(det.parts.optics.sensor_pvs), (300.0, 600.0))
     ops = steps.operands(model, det.pack(), None, steps.Controls(), item.grid(tally))
     return item.photons(tally), model, ops, jax.random.key_data(jax.random.PRNGKey(0))
 

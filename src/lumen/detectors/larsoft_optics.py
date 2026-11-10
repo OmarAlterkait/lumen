@@ -30,7 +30,7 @@ import numpy as np
 from lumen.format import schema
 from lumen.gdml.units import exact
 from lumen.media import bulk, laws, phase, spectra
-from lumen.surfaces import _legacy as legacy
+from lumen.surfaces import types as legacy
 from lumen.units import HC
 
 DATA = Path(__file__).parent / "data" / "lartpc_optics_public.json"
