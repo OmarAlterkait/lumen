@@ -1,7 +1,7 @@
 """Spectral laws: every optical quantity that depends on wavelength.
 
-A ``Law`` is static (hashable by identity; its kind, parameter names and output kind) and is evaluated as
-``law(p, lam)`` with ``p`` a dict of arrays and ``lam`` in nm. Output kinds and their valid ranges, checked by
+A ``Law`` is static (hashable by identity; its form, parameter names and output quantity) and is evaluated as
+``law(p, lam)`` with ``p`` a dict of arrays and ``lam`` in nm. Output quantities and their valid ranges, checked by
 ``validate`` over the detector's wavelength range:
 
 =========  ===============  ===================================================
@@ -34,7 +34,7 @@ RANGES = {
     "density": (0.0, np.inf),
     "scale": (0.0, np.inf),
 }
-STRICT_LOW = {"length", "scale"}  # output kinds whose lower bound is excluded
+STRICT_LOW = {"length", "scale"}  # output quantities whose lower bound is excluded
 VALIDATE_POINTS = 2001  # wavelengths at which validate evaluates a law
 
 
@@ -44,8 +44,8 @@ class Law:
 
     Attributes
     ----------
-    kind, out : str
-        The form of the law ("tabulated", "cauchy", ...) and its output kind (a key of ``RANGES``).
+    form, out : str
+        The form of the law ("tabulated", "cauchy", ...) and its output quantity (a key of ``RANGES``).
     params : tuple of str
         The names of the parameters ``fn(p, lam)`` reads from ``p``.
     fn : callable
@@ -56,7 +56,7 @@ class Law:
         The laws this one is built from.
     """
 
-    kind: str
+    form: str
     out: str
     params: tuple[str, ...]
     fn: Callable
@@ -68,8 +68,8 @@ class Law:
         return self.fn(p, lam)
 
     def __repr__(self):
-        """Show the law's form and output kind."""
-        return f"Law({self.kind}, out={self.out})"
+        """Show the law's form and output quantity."""
+        return f"Law({self.form}, out={self.out})"
 
 
 class LawError(ValueError):

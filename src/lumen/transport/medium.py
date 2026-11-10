@@ -102,7 +102,7 @@ def _draw(ch, params, d, pol, rand, shared):
     return w_c, lp, lpr, lambda wo: logpdf(sg(p), sg(d), sg(er), sg(ei), wo)
 
 
-def channel_draw(model, ops, mi, c, d, pol, lam, u):  # noqa: PLR0913 -- the event's inputs
+def channel_draw(model, ops, mi, c, d, pol, lam, rand):  # noqa: PLR0913 -- the event's inputs
     """Return the BulkDraw of channel c of medium mi for direction d, state pol = (er, ei) and wavelength lam."""
     tables, moving, rows = model.tables, model.step.moving_source, model.step.edge_rows
     shared = ops.reference is None
@@ -119,7 +119,7 @@ def channel_draw(model, ops, mi, c, d, pol, lam, u):  # noqa: PLR0913 -- the eve
                 ref = estimator.lobe_reference(q, ch.lobe, (med.name, ch.name), rows)
                 floored = ref is not q
                 pr = jax.tree_util.tree_map(sg, ref)
-                w_c, lp, lpr, lp_out = _draw(ch, (p, pr), d, pol, u["lobe"], shared and not floored)
+                w_c, lp, lpr, lp_out = _draw(ch, (p, pr), d, pol, rand["lobe"], shared and not floored)
                 st = _state_after(ch, *pol, w_c)
                 sens = ()
                 if moving:
@@ -128,7 +128,7 @@ def channel_draw(model, ops, mi, c, d, pol, lam, u):  # noqa: PLR0913 -- the eve
                 if ch.reemit is None:
                     return BulkDraw(w_c, lp, lpr, lam, F32(0.0), F32(1.0), *st, sens)
                 v = pm[med.name][ch.name]
-                lam2, delay = reemit_draw(ch.reemit, v["tau"], u["reemit"], arrays_of)
+                lam2, delay = reemit_draw(ch.reemit, v["tau"], rand["reemit"], arrays_of)
                 return BulkDraw(w_c, lp, lpr, lam2, delay, jnp.asarray(v["yield"], F32), *st, sens)
 
             branches.append(f)

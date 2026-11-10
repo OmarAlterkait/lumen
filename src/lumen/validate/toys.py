@@ -26,7 +26,7 @@ from lumen.validate import photons, records, references, stats
 PHOTONS = 1 << 21
 REPLICAS = 16
 BAND = 5.0  # nm: the band about the toys' wavelength
-CONTROLS = steps.Controls(t_max=10.0, roulette=0.0)  # the overlap check's settings: 10 m reach, no roulette
+CONTROLS = steps.Controls(max_distance=10.0, roulette=0.0)  # the overlap check's settings: 10 m reach, no roulette
 GUARD = 2000  # vertices per photon (the toys' photons cross a handful of faces)
 
 

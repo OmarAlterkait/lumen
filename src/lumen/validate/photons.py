@@ -3,7 +3,7 @@
     s = photons.setup(det, lam_edges)                         # the model on the detector's navigator
     rows = lumen.sources.Point((0.0, 0.0, 0.0), n_photons=1e6, lam=400.0).emit(None, key, 1 << 20)
     ops = photons.operands(s, det.pack(params))               # every value an operand: one compile per detector
-    tally = lumen.run.run(spec, s.model, ops, rows, raw_key, replicas=8)
+    tally = lumen.run.run(loop, s.model, ops, rows, raw_key, replicas=8)
 
 Sources follow the references' convention: isotropic, monochromatic, unpolarised photons at t = 0, weight 1 each
 (``lumen.sources.Point``; ``isotropic`` and ``pencil`` build its rows).
@@ -31,7 +31,7 @@ class Setup:
 
     det: object
     model: object
-    tally: item.TallyShape
+    tally: item.HistogramShape
 
     @property
     def n_sensors(self) -> int:
@@ -48,7 +48,7 @@ def setup(det, lam_edges=None, step=None, clearance=None) -> Setup:
     geom = tracked.from_parts(det.parts, cache=True)
     edges = tuple(float(v) for v in (lam_edges or det.file.wavelength_range))
     model = steps.Model(geom, det.parts.optics, step or steps.StepConfig(), clearance)
-    return Setup(det, model, item.TallyShape(len(det.parts.optics.tag_pvs), edges))
+    return Setup(det, model, item.HistogramShape(len(det.parts.optics.tag_pvs), edges))
 
 
 def packed(det, params=None) -> dict:
@@ -85,7 +85,7 @@ def sensor_centres(s: Setup) -> np.ndarray:
     """Return each sensor's placement centre (S, 3) in m: the translation of its navigator volume."""
     geom = s.model.geometry
     nav = geom.nav
-    tov = np.asarray(geom.tag_of_vol)[: nav.n]
+    tov = np.asarray(geom.sensor_of_vol)[: nav.n]
     centres = np.zeros((s.n_sensors, 3))
     t = np.asarray(nav.host["t"], np.float64)
     for v in np.flatnonzero(tov >= 0):

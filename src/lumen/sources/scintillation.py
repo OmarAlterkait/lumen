@@ -20,7 +20,7 @@ import jax.numpy as jnp
 
 from lumen._core.safe import safe_sqrt
 from lumen.sources._base import F32, POSITION, TIME, Source, photon_uniforms, proposal, wavelength
-from lumen.transport.estimator import magic
+from lumen.transport.estimator import reweight
 from lumen.transport.state import Emission
 
 KEYS = {"11": ("SCINTILLATIONCOMPONENT1", "SCINTILLATIONCOMPONENT2", "SCINTILLATIONTIMECONSTANT1",
@@ -36,20 +36,20 @@ def visible_energy(edep, length, birks):
     return jnp.where((length > 0.0) & (edep > 0.0), edep / q, jnp.maximum(edep, 0.0))
 
 
-def flash(u, x0, x1, t0, t1, n_ph, light, props, samples):  # noqa: PLR0913 -- the photon's pieces
-    """Return one photon (x, d, t, lam, w) at uniforms u (lam, dir (2), comp, time, and pos when x1 is given)."""
+def flash(rand, x0, x1, t0, t1, n_ph, light, props, samples):  # noqa: PLR0913 -- the photon's pieces
+    """Return one photon (x, d, t, lam, w) at uniforms rand (lam, dir (2), comp, time, and pos when x1 is given)."""
     f, taus, live = light
-    fast = u[3] < sg(f)
-    (lf, wf), (ls, ws) = wavelength(props[0], live[0], u[0]), wavelength(props[1], live[1], u[0])
+    fast = rand[3] < sg(f)
+    (lf, wf), (ls, ws) = wavelength(props[0], live[0], rand[0]), wavelength(props[1], live[1], rand[0])
     lam, wt = sg(jnp.where(fast, lf, ls)), jnp.where(fast, wf, ws)
-    z, phi = 1.0 - 2.0 * u[1], 2.0 * math.pi * u[2]
+    z, phi = 1.0 - 2.0 * rand[1], 2.0 * math.pi * rand[2]
     r = safe_sqrt(1.0 - z * z)
     d = jnp.stack([r * jnp.cos(phi), r * jnp.sin(phi), z])
     tau = jnp.where(fast, taus[0], taus[1])
-    w = n_ph / samples * jnp.where(fast, magic(f, f), magic(1.0 - f, 1.0 - f)) * wt
+    w = n_ph / samples * jnp.where(fast, reweight(f, f), reweight(1.0 - f, 1.0 - f)) * wt
     if x1 is None:
-        return x0, d, t0 - tau * jnp.log(u[4]), lam, w
-    return x0 + u[5] * (x1 - x0), d, t0 + u[5] * (t1 - t0) - tau * jnp.log(u[4]), lam, w
+        return x0, d, t0 - tau * jnp.log(rand[4]), lam, w
+    return x0 + rand[5] * (x1 - x0), d, t0 + rand[5] * (t1 - t0) - tau * jnp.log(rand[4]), lam, w
 
 
 @dataclasses.dataclass(frozen=True)
@@ -99,7 +99,7 @@ class _Scintillation(Source):
             n_ph = y * visible_energy(v["energy"], jnp.linalg.norm(x1 - x0), v["birks"])
         else:
             x0, x1, t0, t1, n_ph = v["x"], None, v["time"], None, y * v["energy"]
-        x, d, t, lam, w = jax.vmap(lambda u: flash(u, x0, x1, t0, t1, n_ph, light, self.proposals, samples))(
+        x, d, t, lam, w = jax.vmap(lambda rand: flash(rand, x0, x1, t0, t1, n_ph, light, self.proposals, samples))(
             photon_uniforms(key, 6 if self.SEGMENT else 5, n, first_id))  # fmt: skip
         return Emission(x, d, t, lam, w, jnp.zeros((n, 2, 3), F32), jnp.ones(n, bool))
 

@@ -116,8 +116,8 @@ def uniforms(key, k: int, n: int | None = None, first_id=0):
     b = (p & 0xFFFF)[:, None] * jnp.uint32(k) + jnp.arange(k, dtype=jnp.uint32)
     hi, lo = (a + (b >> 16)) >> 16, ((a + (b >> 16)) << 16) | (b & 0xFFFF)
     b1, b2 = threefry2x32_p.bind(jnp.broadcast_to(key[0], hi.shape), jnp.broadcast_to(key[1], hi.shape), hi, lo)
-    u = (((b1 ^ b2) >> (32 - rng.UNIFORM_BITS)).astype(F32) + 0.5) * F32(2.0**-rng.UNIFORM_BITS)
-    return u[0] if n is None else u
+    rand = (((b1 ^ b2) >> (32 - rng.UNIFORM_BITS)).astype(F32) + 0.5) * F32(2.0**-rng.UNIFORM_BITS)
+    return rand[0] if n is None else rand
 
 
 def photon_uniforms(key, k: int, n: int, first_id=0):
@@ -126,9 +126,9 @@ def photon_uniforms(key, k: int, n: int, first_id=0):
     return jax.vmap(lambda i: uniforms(rng.vertex_key(rng.photon_key(key, i), 0), k))(ids)
 
 
-def gaussian(u):
+def gaussian(rand):
     """Return standard normals from ``uniforms``: ``jax.random.normal``'s float32 map of the same bits."""
-    f = u - F32(2.0**-24)  # the bits' float in [0, 1), exact
+    f = rand - F32(2.0**-24)  # the bits' float in [0, 1), exact
     v = jnp.maximum(NORMAL_LO, f * (np.float32(1.0) - NORMAL_LO) + NORMAL_LO)
     return np.float32(np.sqrt(2.0)) * jax.lax.erf_inv(v)
 
@@ -147,9 +147,9 @@ def proposal(name, table):
     return spectra.geant4_spectrum(name, e, v), tuple(e.tolist()), tuple(v.tolist())  # static: hashable
 
 
-def wavelength(prop, live, u):
-    """Return (lam (nm), weight p(lam; live) / p(lam; nominal)) at uniform u, the weight exactly 1 at the nominal."""
-    lam = sg(prop[0].sample(u))
+def wavelength(prop, live, rand):
+    """Return (lam (nm), weight p(lam; live) / p(lam; nominal)) at uniform rand, the weight exactly 1 at the nominal."""
+    lam = sg(prop[0].sample(rand))
     p = _g4_density(live.energy, live.value, HC / lam)
     e0, v0 = jnp.asarray(prop[1], F32), jnp.asarray(prop[2], F32)
     same = jnp.all(sg(live.value) == v0) & jnp.all(sg(live.energy) == e0)

@@ -69,5 +69,5 @@ def test_a_float32_thin_same_medium_shell_keeps_its_cathode():
                                    atol=1e-4)  # fmt: skip
         # the pair the navigator reports (glass -> cavity: the 1 um shell is merged into the crossing) resolves to
         # the cathode: the compiler takes a coincident crossing past a pass pair to the border
-        kinds[shell] = {o.kinds[int(k)] for k in o.kind_of[r["cls_before"], r["cls_after"]]}
+        kinds[shell] = {o.surface_types[int(k)] for k in o.type_of[r["cls_before"], r["cls_after"]]}
     assert kinds[True] == kinds[False] == {legacy.PHOTOCATHODE}, kinds

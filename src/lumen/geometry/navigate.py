@@ -366,7 +366,7 @@ class Navigator:
         # probe there says (Geant4: within kCarTolerance the direction decides)
         lf_on = jnp.where(kn_i, sd[1], I32(-2))
         r = self.E.first_change(k, ol, dl, ctx.t_lo, bnd, want=~is_own, init=(kn_i, is_own),
-                                skip=(lf_on, sd[2], sd[4], t_hi), hold=(lf_on, sd[4], t_on))  # fmt: skip
+                                skip=(lf_on, sd[2], sd[4], t_hi), on_face=(lf_on, sd[4], t_on))  # fmt: skip
         return r, kn_i
 
     def _unit_visit(self, ctx, i, b, is_own):

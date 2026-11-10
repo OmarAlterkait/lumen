@@ -66,7 +66,7 @@ class SurfaceType:
     ``probs(p, ctx)`` gives the (10,) outcome probabilities for the parameters named ``params``, and only the
     ``outcomes`` listed can be non-zero. ``lobe_params(p, ctx)`` gives the lobes' parameters (``sigma_alpha`` for the
     GLOSSY lobe). ``reemit`` is the spectrum of the REEMIT outcome (``lumen.media.spectra``) or None, and
-    ``reemit_lobe`` its direction lobe (None: Lambertian about the normal). ``glossy`` names the chain lobe of the
+    ``reemit_lobe`` its direction lobe (None: Lambertian about the normal). ``glossy`` names the facet-path lobe of the
     GLOSSY outcome: "unified" (Geant4's unified model) or "glisur". ``stack`` marks a layered surface (``coated``),
     whose ``lobe_params`` also gives ``film`` and ``coated``. ``amps(p, ctx)`` gives the complex amplitudes
     (r_s, r_p, t_s, t_p) of SPECULAR and REFRACT; None is a perfect mirror.
@@ -329,7 +329,7 @@ def _unified_metal(p, ctx):
     return outcome_vector(specular=r * ss, glossy=r * sl, backscatter=r * bs, diffuse=r * lam, absorb=a)
 
 
-# dielectric_metal, glisur, finish ground, polish < 1: R into the GLISUR facet chain (radius 1 - polish)
+# dielectric_metal, glisur, finish ground, polish < 1: R into the GLISUR facet path (radius 1 - polish)
 GLISUR_METAL = SurfaceType(
     "glisur_metal", ("R", "polish"), (GLOSSY, ABSORB), _glisur_metal, _glisur_width, glossy="glisur"
 )

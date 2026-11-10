@@ -1,8 +1,8 @@
 """The navigator with the surface lookup's classes: the geometry the step queries.
 
-The step's photon carries its volume and the surface it sits on; the surface lookup (``lumen.build.surfaces``)
-gives each placed volume a class, each sensor volume a tag, and the class pairs a photon crosses without a vertex (pass
-pairs). This module joins the two: the class of every navigator volume by its placed-volume name, and the query in
+The step's photon carries its volume and the surface it sits on; the surface lookup (``lumen.build.surfaces``) gives
+each placed volume a class, each sensor volume its sensor index, and the class pairs a photon crosses without a vertex
+(pass pairs). This module joins the two: the class of every navigator volume by its placed-volume name, and the query in
 the form the step reads.
 
     geom = from_parts(parts)                   # parts: lumen.build.build.build(...); or from_scene(scene, optics)
@@ -36,8 +36,8 @@ def pass_pairs(optics):
     elsewhere: a detector's inner water and the water envelopes inside it). The navigator steps over them.
     """
     n = optics.n_classes
-    med, ko = np.asarray(optics.medium_of), np.asarray(optics.kind_of)
-    passk = {i for i, k in enumerate(optics.kinds) if k is legacy.PASS}
+    med, ko = np.asarray(optics.medium_of), np.asarray(optics.type_of)
+    passk = {i for i, k in enumerate(optics.surface_types) if k is legacy.PASS}
     tagged = {int(optics.class_of[pv]) for pv in optics.tag_pvs}
     opq = np.array([m.opaque for m in optics.media], bool)
     ok = ~opq[med.astype(int)] & ~np.isin(np.arange(n), list(tagged))
@@ -52,14 +52,14 @@ def piece_alias(pv):
 
 
 class TrackedGeometry:
-    """The navigator with a class per volume, a tag per volume (-1 none) and the pass pairs."""
+    """The navigator with a class per volume, a sensor index per volume (-1 none) and the pass pairs."""
 
     tracks_volume = True
 
-    def __init__(self, nav, n_classes, tag_of_vol, pass_tab=None):
+    def __init__(self, nav, n_classes, sensor_of_vol, pass_tab=None):
         self.nav = nav
         self.n_classes = int(n_classes)
-        self.tag_of_vol = np.asarray(tag_of_vol, np.int32)  # (n volumes + 1 + n meshes,)
+        self.sensor_of_vol = np.asarray(sensor_of_vol, np.int32)  # (n volumes + 1 + n meshes,)
         self.pass_tab = None if pass_tab is None or not np.any(pass_tab) else np.asarray(pass_tab, bool)
 
     def __hash__(self):
@@ -70,23 +70,24 @@ class TrackedGeometry:
         """Return the next visible crossing in the step's form (dict; ``gp`` and ``cls`` are not read).
 
         ``vol`` < 0: not known (a source's photon), located here, once; ``last``: the srf the photon sits on;
-        ``sn``: the normal of the event that left it. ``tag``: the optics tag of the volume entered (-1 none);
+        ``sn``: the normal of the event that left it. ``sensor``: the sensor index of the volume entered (-1 none);
         ``item``: the srf met; ``win``: the winner (item, leaf, face, zero) for ``surface``.
         """
         nav = self.nav
         vol = jnp.asarray(vol, jnp.int32)
         v0 = nav.locate(x, start=vol)  # the descent only where vol is not known
         r = nav.query(x, d, v0, last=jnp.where(vol < 0, -1, last), t_max=t_max, pass_tab=self.pass_tab, sn=sn)
-        tags = jnp.asarray(self.tag_of_vol)
-        return dict(t=r["t"], hit=r["hit"], cls_after=r["cls_after"], tag=jnp.where(r["hit"], tags[r["vol_after"]], -1),
-                    normal=r["normal"], cls_before=r["cls_before"], cls_start=r["cls_start"], t_pass0=r["t_pass0"],
+        sensors = jnp.asarray(self.sensor_of_vol)
+        return dict(t=r["t"], hit=r["hit"], cls_after=r["cls_after"],
+                    sensor=jnp.where(r["hit"], sensors[r["vol_after"]], -1), normal=r["normal"],
+                    cls_before=r["cls_before"], cls_start=r["cls_start"], t_pass0=r["t_pass0"],
                     t_pass1=r["t_pass1"], vol_after=r["vol_after"], vol_before=r["vol_before"], vol_start=v0,
                     vol_reflect=r["vol_reflect"], item=r["srf"], cont=r["cont"],
                     win=jnp.stack([r["item"], r["leaf"], r["face"], r["zero"].astype(jnp.int32)]))  # fmt: skip
 
     def bind(self, ops):
         """Return this geometry with its navigator reading the operands ``ops`` (``Navigator.operands``)."""
-        return TrackedGeometry(self.nav.bind(ops), self.n_classes, self.tag_of_vol, self.pass_tab)
+        return TrackedGeometry(self.nav.bind(ops), self.n_classes, self.sensor_of_vol, self.pass_tab)
 
     def surface(self, gp, q, x, d):
         """Return (t, normal) of the surface query q met, live in the ray (x, d) (``navigate.surface_at``)."""
@@ -121,7 +122,7 @@ def _check_coincident(nav, optics, vols):
     The navigator fills their region with the lowest index; leaving it the photon crosses into the highest, then out
     of that one by Geant4's zero-length step: the pair needs an interface (an opaque first one is never left).
     """
-    ko = np.asarray(optics.kind_of)
+    ko = np.asarray(optics.type_of)
     for grp in nav.coincident:
         ca, cb = optics.class_of[vols[grp[0]]], optics.class_of[vols[grp[-1]]]
         if ca != cb and (ko[ca] >= 0).any() and int(ko[ca, cb]) < 0:
@@ -135,12 +136,12 @@ def from_scene(scene, optics, nav=None, cache=False):
     vol_cls, mesh_cls, out_cls, vols = classes(nav, scene, optics)
     nav = nav.with_classes(vol_cls, mesh_cls, out_cls)
     _check_coincident(nav, optics, vols)
-    tag = np.full(nav.n + 1 + nav.n_mesh, -1, np.int32)
+    sensor = np.full(nav.n + 1 + nav.n_mesh, -1, np.int32)
     tag_of = dict(optics.tag_of)
     for i, p in enumerate(vols):
         if p in tag_of:
-            tag[i] = tag_of[p]
-    return TrackedGeometry(nav, optics.n_classes, tag, pass_pairs(optics))
+            sensor[i] = tag_of[p]
+    return TrackedGeometry(nav, optics.n_classes, sensor, pass_pairs(optics))
 
 
 def from_parts(parts, cache=False):

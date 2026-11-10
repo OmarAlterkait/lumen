@@ -1,10 +1,10 @@
 """The photon state: 13 core fields and the optional parts a run asks for, built in one place from an emission row.
 
 - core: x, d (m), t (ns), lam (nm), w, alive, vertex, er, ei (the Jones vector), vol, srf, sn, nz; always;
-- cls, tag: the surface lookup's class of the volume (its internal compression, ``lumen.build.surfaces``) and its
+- cls, sensor: the surface lookup's class of the volume (its internal compression, ``lumen.build.surfaces``) and its
   sensor index;
-- ``Stack``: layer, svol, scls, stag, when a layered (coated) surface exists;
-- ``MovingSource``: free and the chain (``lumen.transport.moving_source``), when wrt holds a moving-path parameter;
+- ``Stack``: layer, svol, scls, ssensor, when a layered (coated) surface exists;
+- ``MovingSource``: drawn and the chain (``lumen.transport.moving_source``), when wrt holds a moving-path parameter;
 - ``z``: the edge-row factor (``lumen.transport.estimator.edge_floor``), when wrt holds a parameter at a domain edge.
 
 ``vertex`` counts the photon's steps and is its random-number counter. ``vol`` is the placed volume the photon is in,
@@ -43,7 +43,7 @@ class Emission(NamedTuple):
 
 
 class Stack(NamedTuple):
-    """Inside a layered surface: the layer, and the volume, class and tag beyond the remembered surface.
+    """Inside a layered surface: the layer, and the volume, class and sensor index beyond the remembered surface.
 
     layer 0: not in one; 1: about to cross the film outward; 2: at the backing.
     """
@@ -51,13 +51,13 @@ class Stack(NamedTuple):
     layer: jax.Array
     svol: jax.Array
     scls: jax.Array
-    stag: jax.Array
+    ssensor: jax.Array
 
 
 class MovingSource(NamedTuple):
-    """The moving-source part: ``free`` (the direction has free coordinates the method can move) and the chain."""
+    """The moving-source part: ``drawn`` (the direction was drawn from a density, so it can move) and the chain."""
 
-    free: jax.Array
+    drawn: jax.Array
     chain: moving_source.Chain
 
 
@@ -78,7 +78,7 @@ class Photon(NamedTuple):
     sn: jax.Array
     nz: jax.Array
     cls: jax.Array
-    tag: jax.Array
+    sensor: jax.Array
     stack: Stack | None = None
     moving: MovingSource | None = None
     z: jax.Array | None = None
@@ -88,14 +88,14 @@ class Next(NamedTuple):
     """What an event (a bulk event or a surface outcome) hands on: the state after it, before the roulette.
 
     ``ok``: the photon continues; ``dtime``: the time elapsed (segment and delay); ``sn``: the normal remembered;
-    ``outcome``: the surface outcome (-1 a bulk event); ``chain``, ``free``: the moving-source part (None without).
+    ``outcome``: the surface outcome (-1 a bulk event); ``chain``, ``drawn``: the moving-source part (None without).
     """
 
     x: jax.Array
     d: jax.Array
     w: jax.Array
     cls: jax.Array
-    tag: jax.Array
+    sensor: jax.Array
     ok: jax.Array
     lam: jax.Array
     dtime: jax.Array
@@ -105,24 +105,24 @@ class Next(NamedTuple):
     er: jax.Array
     ei: jax.Array
     chain: moving_source.Chain | None
-    free: jax.Array | None
+    drawn: jax.Array | None
 
 
 def start(row: Emission, vol, cls, *, stacked=False, moving=False, edge=False) -> Photon:
     """Return the Photon of an emission row in volume ``vol`` (-1: located at its first step) and class ``cls``.
 
     The optional parts exist only when asked for: ``stacked`` (a layered surface exists), ``moving`` (the
-    moving-source method), ``edge`` (edge rows are on). The sensor tag starts unknown (-1).
+    moving-source method), ``edge`` (edge rows are on). The sensor index starts unknown (-1).
     """
     x, d = jnp.asarray(row.x, F32), jnp.asarray(row.d, F32)
     pol = jnp.asarray(row.polarisation, F32)
     m1 = jnp.asarray(-1, I32)
     stack = Stack(jnp.asarray(0, I32), m1, m1, m1) if stacked else None
-    free = jnp.asarray(row.drawn_direction, bool)
+    drawn = jnp.asarray(row.drawn_direction, bool)
     mv = None
     if moving:
-        chain = jax.lax.cond(free, lambda: moving_source.free_start(x, d), lambda: moving_source.none_start(x, d))
-        mv = MovingSource(free, chain)
+        chain = jax.lax.cond(drawn, lambda: moving_source.drawn_start(x, d), lambda: moving_source.undrawn_start(x, d))
+        mv = MovingSource(drawn, chain)
     return Photon(x, d, jnp.asarray(row.t, F32), jnp.asarray(row.lam, F32), jnp.asarray(row.w, F32),
                   jnp.asarray(True), jnp.asarray(0, I32), pol[0], pol[1], jnp.asarray(vol, I32), m1,
                   jnp.zeros(3, F32), jnp.asarray(0, I32), jnp.asarray(cls, I32), m1, stack, mv,

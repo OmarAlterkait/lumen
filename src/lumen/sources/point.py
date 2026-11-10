@@ -61,8 +61,8 @@ class Point(Source):
         if prop is None:
             lam = rows(v["lam"], n, first_id, 0)
         else:
-            u = uniforms(jax.random.fold_in(key, LAM_STREAM), 1, n, first_id)[:, 0]
-            lam, f = jax.vmap(lambda u_: draw_wavelength(prop, v["spectrum"], u_))(u)
+            rand = uniforms(jax.random.fold_in(key, LAM_STREAM), 1, n, first_id)[:, 0]
+            lam, f = jax.vmap(lambda r_: draw_wavelength(prop, v["spectrum"], r_))(rand)
             w = w * f
         return Emission(rows(v["x"], n, first_id, 1), d, rows(v["time"], n, first_id, 0), lam,
                         jnp.broadcast_to(w, (n,)), jnp.zeros((n, 2, 3), F32), jnp.full(n, not beam))  # fmt: skip

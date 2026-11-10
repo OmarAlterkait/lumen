@@ -245,7 +245,7 @@ def simulate(det, source, params=None, *, samples: int, seed: int, replicas: int
     n = len(det.parts.optics.tag_pvs)
     if build.group_tags(group, det.parts) != list(range(n)):
         raise ValueError(f"simulate: sensor group {group.name!r} must contain every sensor of the detector")
-    r = item.Readout(n, grid, int(replicas))
+    r = item.HistogramLayout(n, grid, int(replicas))
     ro.check_memory(grid, n, int(replicas), 0, _budget())
     params = det.params() if params is None else params
     moving, origins = _moving(source, params, wrt) if hasattr(source, "emit") else (False, None)

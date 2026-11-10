@@ -1,10 +1,10 @@
 """Reweighting: the only place where random choices meet parameters.
 
 Every random choice is drawn from probabilities at the reference values (stop-gradient) and weighted by live /
-reference. In value the weight is 1 when live equals reference; its derivative is the score of the choice (the "magic
-box"), so the photon weight carries every upstream score and a deposit's derivative is the sum of pathwise and score
-terms. Drawn directions and distances are held fixed in the world frame; their densities are re-evaluated live. A
-surface outcome is drawn from the reference probabilities of the continuing outcomes alone, normalised.
+reference. In value the weight is 1 when live equals reference; its derivative is the score of the choice, so the photon
+weight carries every upstream score and a deposit's derivative is the sum of pathwise and score terms. Drawn directions
+and distances are kept fixed in the world frame; their densities are re-evaluated live. A surface outcome is drawn from
+the reference probabilities of the continuing outcomes alone, normalised.
 
 **The edge floor** (the edge rule, OUT or WITHIN): a ``wrt`` parameter whose value sits at an edge of its domain (the
 surface type's ``domain``: a fraction at 0 or 1, a film's yield or thickness at 0) turns its rows on (``edge_rows``:
@@ -32,12 +32,12 @@ sg = jax.lax.stop_gradient
 EDGE_BUDGET = 0.01  # the fixed share of an edge row's draws given to its floored outcomes
 
 
-def magic(live, ref):
+def reweight(live, ref):
     """Return live / sg(ref): value live / ref (1 when equal), derivative d live / ref; 0 where ref = 0."""
     return safe_div(live, sg(ref))
 
 
-def magic_log(lp_live, lp_ref):
+def reweight_log(lp_live, lp_ref):
     """Return exp(lp_live - sg(lp_ref)) for log densities."""
     return jnp.exp(lp_live - sg(lp_ref))
 
@@ -58,7 +58,7 @@ def choose(q, rand):
 
 def domain(tables, kind, name):
     """Return the (lo, hi) domain of surface type ``kind``'s parameter ``name`` (its ``domain``), or None."""
-    kd = next((k for k in tables.kinds if k.name == kind), None)
+    kd = next((k for k in tables.surface_types if k.name == kind), None)
     return None if kd is None else kd.domain(name)
 
 
@@ -103,7 +103,7 @@ def edge_rows(tables, params, wrt):
 
 def _row_table(tables, rows):
     """Return the static (n_types, n_rows) bool table of the surface edge rows."""
-    names = [k.name for k in tables.kinds]
+    names = [k.name for k in tables.surface_types]
     rows = [row for row in rows if len(row) == 2]  # the surface rows (a lobe's are (medium, channel, name))
     a = np.zeros((max(len(names), 1), max([r for _, r in rows] + [0]) + 1), bool)
     for kn, r in rows:
@@ -113,19 +113,19 @@ def _row_table(tables, rows):
     return a
 
 
-def edge_floor(pr_r, kidx, row, tables, rows):
+def edge_floor(pr_r, stype, row, tables, rows):
     """Return (the reference probabilities the outcome is drawn from, which outcomes were floored (K,) bool).
 
     At an edge row every continuing outcome of the type's support with reference probability 0 is proposed at eps
     (module docstring); elsewhere the reference is unchanged.
     """
     E = jnp.asarray(_row_table(tables, rows))
-    sup = np.zeros((max(len(tables.kinds), 1), N_OUTCOMES), bool)
-    for i, kd in enumerate(tables.kinds):
+    sup = np.zeros((max(len(tables.surface_types), 1), N_OUTCOMES), bool)
+    for i, kd in enumerate(tables.surface_types):
         for o in kd.outcomes:
             sup[i, o] = not TERMINAL[o]
-    k = jnp.maximum(kidx, 0)
-    at = (kidx >= 0) & (row >= 0) & (row < E.shape[1]) & E[k, jnp.clip(row, 0, E.shape[1] - 1)]
+    k = jnp.maximum(stype, 0)
+    at = (stype >= 0) & (row >= 0) & (row < E.shape[1]) & E[k, jnp.clip(row, 0, E.shape[1] - 1)]
     p = sg(pr_r)
     cont = ~jnp.asarray(TERMINAL)
     fl = at & jnp.asarray(sup)[k] & (p <= 0.0)

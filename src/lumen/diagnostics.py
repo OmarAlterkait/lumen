@@ -1,6 +1,6 @@
 """Diagnostics: probes with their own per-photon memory, run alongside the photon loop; never photon state.
 
-    run(spec, model, ops, rows, key, ..., diagnostics=(Trace(steps=24, n_photons=N),))
+    run(loop, model, ops, rows, key, ..., diagnostics=(Trace(steps=24, n_photons=N),))
 
 A diagnostic declares ``outputs()`` {name: (cells, exact)}, ``init(ph)`` its memory for one photon and
 ``update(mem, ph, ph2, dep, pid)`` -> (memory, [(output, cell, value)]) after each step.

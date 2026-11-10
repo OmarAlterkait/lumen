@@ -132,7 +132,7 @@ def test_an_overlap_toy_through_the_step_matches_geant4(toy, name):
     s = toy("overlap", name)
     k, n = 16, 1 << 18
     rows = photons.pencil((-0.8, 0.0, 0.0), (1.0, 0.0, 0.0), g4["wavelength_nm"], n)
-    out = simulate(s, photons.packed(s.det), rows, replicas=k, controls=steps.Controls(t_max=10.0, roulette=0.0))
+    out = simulate(s, photons.packed(s.det), rows, replicas=k, controls=steps.Controls(max_distance=10.0, roulette=0.0))
     q = np.asarray(out["Q"], np.float64).reshape(k, -1).sum(1)
     tw = np.asarray(out["Tw"], np.float64).reshape(k, -1).sum(1)
     f = q / (n / k)

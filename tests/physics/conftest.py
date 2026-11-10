@@ -2,7 +2,7 @@
 
 ``toy(name, *args)`` returns the toy's ``lumen.validate.photons.Setup`` (its detector converted from the GDML of
 ``toys.py`` into the session's directory, the navigator from the build cache), one Model per toy and step config, so
-a test changing values never compiles the loop again (``toys.simulate`` keeps one ItemSpec per histogram shape).
+a test changing values never compiles the loop again (``toys.simulate`` keeps one PhotonLoop per histogram shape).
 """
 
 import hashlib

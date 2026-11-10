@@ -43,7 +43,7 @@ def test_medium_from_records_is_the_shipped_medium():
     a, pa = lar.lar_medium()
     rec = schema.Material("LAr", "liquid", schema.Composition(1.39), properties=lar.lar_tables())
     b, pb = lar.lar_medium_from(rec, "lar")
-    assert a.name == b.name == "lar" and a.index.kind == b.index.kind == "g4_rindex"
+    assert a.name == b.name == "lar" and a.index.form == b.index.form == "g4_rindex"
     assert [c.name for c in b.channels] == ["rayleigh"] and b.channels[0].lobe is phase.RAYLEIGH
     for k in ("index", "absorption"):
         for q in ("energy", "value"):

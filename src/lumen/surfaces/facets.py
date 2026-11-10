@@ -1,8 +1,8 @@
-"""Geant4's facet chains, the GLOSSY outcome's lobes: the unified model's and GLISUR's.
+"""Geant4's facet paths, the GLOSSY outcome's lobes: the unified model's and GLISUR's.
 
-A chain lobe is Geant4's DielectricMetal reflection off a rough surface: a facet normal drawn for the current
+A facet-path lobe is Geant4's DielectricMetal reflection off a rough surface: a facet normal drawn for the current
 direction, a mirror reflection about it, repeated while the direction points into the surface. Its marginal density has
-no closed form; its path density (the product of one facet reflection's density along the chain) has, so the step
+no closed form; its path density (the product of one facet reflection's density along the path) has, so the step
 weights the whole path (``Lobe.path``, ``Lobe.path_logpdf``).
 
 - **unified** (GetFacetNormal, unified): tilt alpha ~ N(0, sigma_alpha), kept if ``u f_max <= sin(alpha)`` and alpha
@@ -15,7 +15,7 @@ weights the whole path (``Lobe.path``, ``Lobe.path_logpdf``).
   V . M <= 0. Per solid angle of m = M / |M|: p_m = 2 q (3 c^2 + q^2) / (3 Z), c = m . n, q^2 = c^2 - (1 - r^2), Z the
   cut ball's volume. Bounded, vanishing at the cone's edge: no boundary term. The width is carried as "sigma_alpha".
 
-Sampling: rejection, at most FACET_TRIES draws per facet and CHAIN_K_MAX facets per chain (weight 0 after).
+Sampling: rejection, at most FACET_TRIES draws per facet and FACETS_MAX facets per path (weight 0 after).
 
 Notes
 -----
@@ -36,7 +36,7 @@ from lumen.surfaces.lobes import Lobe
 
 sg = jax.lax.stop_gradient
 HALF_PI = 0.5 * math.pi
-CHAIN_K_MAX = 10  # facets per chain: a chain still pointing into the surface after these has weight 0
+FACETS_MAX = 10  # facets per path: a path still pointing into the surface after these has weight 0
 FACET_TRIES = 64  # facet draws per facet: after these (probability < 1e-12) the last draw is kept
 LOG_TINY = math.log(1e-30)  # a log density off the support
 UP = (0.0, 0.0, 1.0)  # the local normal
@@ -299,9 +299,9 @@ def reflect_local(Vl, m):
     return 2.0 * jnp.sum(Vl * m) * m - Vl
 
 
-def _chain_of(facet):
-    def chain(p, wi, n, rand):
-        """Return (W (CHAIN_K_MAX, 3) the directions after each facet, zero padded; k the facets used), detached."""
+def _path_of(facet):
+    def path(p, wi, n, rand):
+        """Return (W (FACETS_MAX, 3) the directions after each facet, zero padded; k the facets used), detached."""
         width, wi, n = sg(p["sigma_alpha"]), sg(wi), sg(n)
         key = seed_key(rand)
         V0 = frames.to_local(-wi, n)
@@ -311,16 +311,16 @@ def _chain_of(facet):
             L = reflect_local(V, facet(width, V, jax.random.fold_in(key, k)))
             return k + 1, -L, W.at[k].set(L), L[2] >= 0.0
 
-        init = (jnp.int32(0), V0, jnp.zeros((CHAIN_K_MAX, 3), V0.dtype), jnp.bool_(False))
-        k, _, W, _ = jax.lax.while_loop(lambda st: (~st[3]) & (st[0] < CHAIN_K_MAX), body, init)
+        init = (jnp.int32(0), V0, jnp.zeros((FACETS_MAX, 3), V0.dtype), jnp.bool_(False))
+        k, _, W, _ = jax.lax.while_loop(lambda st: (~st[3]) & (st[0] < FACETS_MAX), body, init)
         return frames.to_world(W, n), k
 
-    return chain
+    return path
 
 
-def _chain_logpdf_of(facet_lp):
+def _path_logpdf_of(facet_lp):
     def path_logpdf(p, wi, n, W, k):
-        """Return the log path density of a held chain: the sum of facet_lp along its k facets (live in p, wi, n).
+        """Return the log path density of a given path: the sum of facet_lp along its k facets (live in p, wi, n).
 
         A scan over the rows, an unused one evaluated at (wi, its mirror) and masked: one facet's code under
         multi-tangent forward mode, unrolled for XLA.
@@ -340,21 +340,21 @@ def _chain_logpdf_of(facet_lp):
     return path_logpdf
 
 
-def _chain_lobe(name, facet, facet_lp):
-    chain = _chain_of(facet)
+def _facet_path_lobe(name, facet, facet_lp):
+    path = _path_of(facet)
 
     def end(p, wi, n, rand):
-        W, k = chain(p, wi, n, rand)
+        W, k = path(p, wi, n, rand)
         return W[k - 1]
 
     return Lobe(name, delta=False, surface=True, n_rand=3, params=("sigma_alpha",), sample=end, logpdf=None,
                 weight=lambda p, wi, n, wo: (jnp.sum(wo * n, -1) >= 0.0).astype(wo.dtype),
-                axis=lambda p, wi, n: frames.reflect(wi, n), path=chain,
-                path_logpdf=_chain_logpdf_of(facet_lp))  # fmt: skip
+                axis=lambda p, wi, n: frames.reflect(wi, n), path=path,
+                path_logpdf=_path_logpdf_of(facet_lp))  # fmt: skip
 
 
 # Geant4's unified lobe (width sigma_alpha, valid in [0.005, 0.5]) and GLISUR's (width r = 1 - polish, carried under
 # the name "sigma_alpha"); chosen by the surface type's ``glossy`` name
-UNIFIED = _chain_lobe("unified", unified_facet, unified_facet_logpdf)
-GLISUR = _chain_lobe("glisur", glisur_facet, glisur_facet_logpdf)
-CHAINS = {"unified": UNIFIED, "glisur": GLISUR}
+UNIFIED = _facet_path_lobe("unified", unified_facet, unified_facet_logpdf)
+GLISUR = _facet_path_lobe("glisur", glisur_facet, glisur_facet_logpdf)
+FACET_LOBES = {"unified": UNIFIED, "glisur": GLISUR}

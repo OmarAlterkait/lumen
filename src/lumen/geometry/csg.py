@@ -60,7 +60,7 @@ class _Scan(NamedTuple):
     want: object
     init: object
     skip: object
-    hold: object
+    on_face: object
 
 
 class Csg:
@@ -292,18 +292,18 @@ class Csg:
         x = [x[a] for a in range(3)]
         return self._program(kind, lambda lf: self._inside_leaf(self._leaf(kind, lf), x).astype(I32))
 
-    def _mem_at(self, kind, o, d, t, hold=None):
+    def _mem_at(self, kind, o, d, t, on_face=None):
         """Return the solid's membership just after o + t d (the leaves' intervals).
 
-        ``hold``: (leaf, inside, t_end) -- that leaf's membership is ``inside`` before t_end (the face the photon sits
-        on, within its tolerance: first_change).
+        ``on_face``: (leaf, inside, t_end) -- that leaf's membership is ``inside`` before t_end (the face the photon
+        sits on, within its tolerance: first_change).
         """
 
         def member_of(l):  # noqa: E741 -- a kind-local leaf
             iv = self._iv_in(self._leaf(kind, l), o, d, t, t)
             m = ((iv[0] <= t) & (t < iv[1])) | ((iv[4] <= t) & (t < iv[5]))
-            if hold is not None:
-                m = jnp.where((l == hold[0]) & (t < hold[2]), hold[1], m)
+            if on_face is not None:
+                m = jnp.where((l == on_face[0]) & (t < on_face[2]), on_face[1], m)
             return m.astype(I32)
 
         return self._program(kind, member_of)
@@ -349,9 +349,9 @@ class Csg:
         has = first | (e < INF)
         tp = jnp.where(first, t0, e + s.band(e))
         hd = None
-        if s.hold is not None:  # the held leaf's other kind of endpoint ends the hold
-            hend = jnp.where(~first & has & (lb == s.hold[0]) & (ek != s.hold[1]), jnp.minimum(hend, e), hend)
-            hd = (s.hold[0], s.hold[1], hend)
+        if s.on_face is not None:  # the overridden leaf's other kind of endpoint ends the override
+            hend = jnp.where(~first & has & (lb == s.on_face[0]) & (ek != s.on_face[1]), jnp.minimum(hend, e), hend)
+            hd = (s.on_face[0], s.on_face[1], hend)
         aft = self._membership(s, first, has, tp, now, hd)
         now0 = jnp.where(first, aft, now0)
         chg = ~first & has & (aft != now)
@@ -363,14 +363,14 @@ class Csg:
         t_nx = jnp.where(first, t0, jnp.where(vis, e, jnp.where(has, tp, F32(INF))))
         return (t_nx, vis, now, jnp.where(vis, lb, lb_h), jnp.where(vis, fc, fc_h), now0, it + 1, fs, hend)
 
-    def first_change(self, kind, o, d, t0, t1, tau=None, want=None, init=None, skip=None, hold=None):  # noqa: PLR0913 -- the scan's options
+    def first_change(self, kind, o, d, t0, t1, tau=None, want=None, init=None, skip=None, on_face=None):  # noqa: PLR0913 -- the scan's options
         """Return the first change of the solid's membership in (t0, t1].
 
         Returns dict(hit, t, inside (after it), leaf (kind-local), face, inside0 (just after t0), first (the first
         change of any kind: hit, t, inside, leaf, face)). ``want``: None any change; True the first entry, False the
         first exit (the other kind is passed). ``init``: (known, inside) -- where known, the membership at t0 is given,
         not probed (the side a photon is on). ``skip``: (leaf, face, entry, t_hi) -- that face's endpoints of that kind
-        before t_hi are no crossing (the face the photon sits on). ``hold``: (leaf, inside, t_end) -- that leaf's
+        before t_hi are no crossing (the face the photon sits on). ``on_face``: (leaf, inside, t_end) -- that leaf's
         membership is ``inside`` for every probe before t_end and before its next endpoint of the other kind (Geant4's
         surface rule: within the tolerance the side is the state, never a float32 probe of it). Endpoints within the
         band of the nearest one are one crossing.
@@ -385,13 +385,13 @@ class Csg:
         def band(t):
             return rules.band(xa, t) if tau is None else tau
 
-        s = _Scan(kind, o, d, t1, nl, band, want, init, skip, hold)
+        s = _Scan(kind, o, d, t1, nl, band, want, init, skip, on_face)
 
         def cond(c):
             return (~c[1]) & (c[0] < INF) & (c[6] < MAX_SCAN_PER_LEAF * nl + MAX_SCAN_EXTRA)
 
         fs0 = (jnp.bool_(False), F32(INF), jnp.bool_(False), I32(-1), I32(-1))
-        h0 = F32(-INF) if hold is None else jnp.asarray(hold[2], F32)
+        h0 = F32(-INF) if on_face is None else jnp.asarray(on_face[2], F32)
         c0 = (t0, jnp.bool_(False), jnp.bool_(False), I32(-1), I32(-1), jnp.bool_(False), I32(0), fs0, h0)
         t_end, hit, aft, lb, fc, now0, _, fs, _ = lax.while_loop(cond, lambda c: self._change(s, t0, c), c0)
         return dict(hit=hit, t=jnp.where(hit, t_end, t1), inside=jnp.where(hit, aft, now0), leaf=lb, face=fc,

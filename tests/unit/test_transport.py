@@ -45,7 +45,7 @@ def _tables():
     """Two rows of one painted type (R 0 and 0.5) and a water with Mie: the estimator reads the types and media."""
     water = bulk.Medium("w", laws.constant("index"), None, (bulk.mie(laws.constant("length")),))
     kp = {"painted": {"R": np.array([0.0, 0.5], np.float32), "f_spec": np.array([1.0, 1.0], np.float32)}}
-    return types.SimpleNamespace(kinds=(legacy.PAINTED,), media=(water,)), kp
+    return types.SimpleNamespace(surface_types=(legacy.PAINTED,), media=(water,)), kp
 
 
 def test_edge_rows_come_from_wrt_and_the_domains():
@@ -93,14 +93,14 @@ def test_the_photon_has_only_the_parts_asked_for():
     row = jax.tree_util.tree_map(lambda a: a[0], _row())
     ph = state.start(row, 5, 2)
     assert (ph.stack, ph.moving, ph.z) == (None, None, None)
-    assert int(ph.vol) == 5 and int(ph.cls) == 2 and int(ph.tag) == -1 and bool(ph.alive)
+    assert int(ph.vol) == 5 and int(ph.cls) == 2 and int(ph.sensor) == -1 and bool(ph.alive)
     full = state.start(row, -1, 0, stacked=True, moving=True, edge=True)
-    assert int(full.stack.layer) == 0 and float(full.z) == 1.0 and bool(full.moving.free)
+    assert int(full.stack.layer) == 0 and float(full.z) == 1.0 and bool(full.moving.drawn)
     assert np.asarray(full.moving.chain.B).shape == (3, 2)
 
 
 def test_the_default_item_tallies_by_sensor_and_band():
-    spec = item.photons(item.TallyShape(3, (300.0, 400.0, 500.0)))
+    spec = item.photons(item.HistogramShape(3, (300.0, 400.0, 500.0)))
     out = spec.outputs(2)
     assert out["Q"] == (12, True) and out["stuck"] == (2, False)
 
@@ -115,7 +115,7 @@ def test_the_default_item_tallies_by_sensor_and_band():
     assert [a[1:] for a in adds if a[0] == "stuck"] == [(0, 1.0), (-1, 1.0)]  # pushed, not abandoned
     assert {
         k: c
-        for k, c, _ in spec.emits(dep(2, 650.0), jnp.int32(0), item.grid(item.TallyShape(3, (300.0, 400.0, 500.0))))
+        for k, c, _ in spec.emits(dep(2, 650.0), jnp.int32(0), item.grid(item.HistogramShape(3, (300.0, 400.0, 500.0))))
     }["Q"] == -1  # outside the bands
     assert {k: c for k, c, _ in spec.emits(dep(-1, 450.0), jnp.int32(0), None)}["Q"] == -1  # no sensor
 
@@ -141,7 +141,7 @@ def test_the_runner_passes_tallymap_its_schedule(monkeypatch):
         raise RuntimeError("stop")
 
     monkeypatch.setattr(run.tm, "vmap", vmap)
-    spec = item.photons(item.TallyShape(1, (300.0, 500.0)))
+    spec = item.photons(item.HistogramShape(1, (300.0, 500.0)))
     with pytest.raises(RuntimeError, match="stop"):
         run.run(spec, None, None, _row(2), jnp.zeros(2, jnp.uint32), backend="cpu")
     assert seen["_schedule"] == run.SCHEDULE == "step" and seen["backend"] == run.TALLYMAP_BACKEND["cpu"]
@@ -159,7 +159,7 @@ def test_auto_is_the_cpu_backend_without_a_gpu(monkeypatch):
 
     monkeypatch.setattr(run.tm, "vmap", vmap)
     monkeypatch.setattr(run.jax, "default_backend", lambda: "cpu")
-    spec = item.photons(item.TallyShape(1, (300.0, 500.0)))
+    spec = item.photons(item.HistogramShape(1, (300.0, 500.0)))
     with pytest.raises(RuntimeError, match="stop"):
         run.run(spec, None, None, _row(2), jnp.zeros(2, jnp.uint32), backend="auto")
     assert seen["backend"] == run.TALLYMAP_BACKEND["cpu"]

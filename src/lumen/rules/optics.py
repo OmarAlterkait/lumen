@@ -24,7 +24,7 @@ WLSTIMECONSTANT without a declared time profile, and a Mie constant Geant4 would
 
 Surfaces (G4OpBoundaryProcess::PostStepDoIt, DielectricMetal, DoReflection; no table: R = 1, T = 0, efficiency 0):
 
-    dielectric_metal, glisur, ground, polish < 1        GLISUR_METAL: R facet chain (r = 1 - polish)
+    dielectric_metal, glisur, ground, polish < 1        GLISUR_METAL: R facet path (r = 1 - polish)
     dielectric_metal, glisur (other finish, polish 1)   SPECULAR_METAL: R mirror
     dielectric_metal, unified, polished                 SPECULAR_METAL
     dielectric_metal, unified, ground                   UNIFIED_METAL: spike / lobe / back / Lambert, Geant4's cuts
@@ -52,7 +52,7 @@ of that form). Not the sensor model (``lumen.plugins.sensor_models``): that is w
         the surface as stock Geant4 (G4OpBoundaryProcess, 10.7 / 11) reads it. dielectric_metal: REFLECTIVITY R
         (absent: the complex index REALRINDEX + i IMAGINARYRINDEX, CalculateReflectivity, a PHOTOCATHODE; neither:
         R = 1), the absorbed 1 - R detected with EFFICIENCY (default 0); the reflection by model and finish: polished
-        (glisur or unified) a mirror (SENSOR, f_spec 1), glisur ground the facet chain (GLISUR_METAL_EFF), unified
+        (glisur or unified) a mirror (SENSOR, f_spec 1), glisur ground the facet path (GLISUR_METAL_EFF), unified
         ground spike / lobe / back / Lambert (DIELECTRIC_METAL). dielectric_dielectric, polished (R / T at Geant4's
         defaults if absent): DIELECTRIC_RT_SENSOR, eff = EFFICIENCY. Keys no stock process reads on a surface (RINDEX,
         KINDEX, THICKNESS on a dielectric_metal) are ignored, as Geant4 ignores them.
@@ -82,7 +82,7 @@ from lumen.surfaces.outcomes import DETECT
 from lumen.units import HC
 
 # the facet lobes' admissible widths (the surface types name them)
-GLISUR_R_MIN = 0.01  # the smallest 1 - polish of a GLISUR facet chain
+GLISUR_R_MIN = 0.01  # the smallest 1 - polish of a GLISUR facet path
 SIGMA_MIN, SIGMA_MAX = 0.005, 0.5  # rad: the unified facet lobe's sigma_alpha range
 
 C_MM_PER_NS = 299.792458  # Geant4's c_light, mm / ns (GROUPVEL is in mm / ns)

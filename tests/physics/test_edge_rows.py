@@ -59,7 +59,7 @@ M = 1 << 20
 def _plate(s, x_param=None, x=0.0, edge=False, seed=900):
     """Return (Q, Tw) per replica of the pencil onto the plate, or their jvp in ``x_param`` at x (edge rows on)."""
     p0 = photons.packed(s.det)
-    kind = next(k.name for k in s.det.parts.optics.kinds if "p_lobe" in k.params)
+    kind = next(k.name for k in s.det.parts.optics.surface_types if "p_lobe" in k.params)
     rows = photons.pencil([-0.6, 0.0, 0.3], [0.6, 0.0, -0.8], 400.0, M)
 
     def q(y):
@@ -79,7 +79,7 @@ def test_a_unified_constant_at_zero_gives_its_exact_derivative(toy, param):
     # one reflection: Q is linear in the constant, so dQ/dp = Q(p = 1) - Q(p = 0) exactly (each its own photons)
     s0, s1 = toy("lobe_plate", 0.2), toy("lobe_plate", 0.2, **{KEYS[param]: 1.0})
     q0, q1 = _plate(s0, seed=901), _plate(s1, seed=901)
-    kind = next(k.name for k in s0.det.parts.optics.kinds if "p_lobe" in k.params)
+    kind = next(k.name for k in s0.det.parts.optics.surface_types if "p_lobe" in k.params)
     edge = estimator.edge_rows(s0.det.parts.optics, photons.packed(s0.det), [("kernel", kind, param, 0)])
     assert edge == ((kind, 0),), edge
     ad = _plate(toy("lobe_plate", 0.2, step=steps.StepConfig(edge_rows=edge)), param, edge=True)

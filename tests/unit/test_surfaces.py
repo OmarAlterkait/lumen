@@ -121,14 +121,14 @@ def test_lar_sensor_gets_its_own_class_and_the_active_volume_is_invisible():
     for (a, b), p in o.pairs.items():
         if b == c["TPC"]:
             assert p.kind is legacy.PASS, (a, b, p.kind)
-    assert o.kind_of[c["Bulk"], c["det0"]] == o.kinds.index(legacy.COUNTING)
+    assert o.type_of[c["Bulk"], c["det0"]] == o.surface_types.index(legacy.COUNTING)
     eff = o.params["kernel"]["counting"]["eff"][o.row_of[c["Bulk"], c["det0"]]]
     assert abs(float(eff) - 0.03) < 1e-7
     # tags by copy number, 0..N-1
     assert [o.tag_of[f"det{i}"] for i in range(4)] == [3, 2, 1, 0] and o.tag_pvs[0] == "det3"
     assert o.tag_sensors == ("arapuca",) * 4
-    assert o.row_of.dtype == np.int32 and o.kind_of.dtype == np.int32 and o.medium_of.dtype == np.int32
-    assert np.all(np.diag(o.row_of) == -1) and np.all(np.diag(o.kind_of) == -1)
+    assert o.row_of.dtype == np.int32 and o.type_of.dtype == np.int32 and o.medium_of.dtype == np.int32
+    assert np.all(np.diag(o.row_of) == -1) and np.all(np.diag(o.type_of) == -1)
 
 
 def test_touching_sensors_of_one_class_need_a_disjoint_declaration():
@@ -175,8 +175,8 @@ def test_value_only_changes_leave_partition_and_tables_identical():
     b = compile_(t, lib=lib, **kw)
     for f in ("class_names", "signatures", "class_of", "class_pvs", "media_names", "rows", "tag_of", "report"):
         assert getattr(a, f) == getattr(b, f), f
-    assert a.kinds == b.kinds and a.media == b.media
-    for f in ("kind_of", "row_of", "medium_of"):
+    assert a.surface_types == b.surface_types and a.media == b.media
+    for f in ("type_of", "row_of", "medium_of"):
         assert np.array_equal(getattr(a, f), getattr(b, f)), f
     ra, rb = a.params["kernel"]["reflector"]["R"], b.params["kernel"]["reflector"]["R"]
     assert ra.shape == rb.shape == (2,) and not np.allclose(ra, rb)
@@ -555,8 +555,8 @@ def _same(a, b):
         "report",
     ):
         assert getattr(a, f) == getattr(b, f), f
-    assert a.kinds == b.kinds and a.media == b.media
-    for f in ("kind_of", "row_of", "medium_of"):
+    assert a.surface_types == b.surface_types and a.media == b.media
+    for f in ("type_of", "row_of", "medium_of"):
         assert np.array_equal(getattr(a, f), getattr(b, f)), f
     for k in a.params["kernel"]:
         for p in a.params["kernel"][k]:

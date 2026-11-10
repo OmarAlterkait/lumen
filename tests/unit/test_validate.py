@@ -90,7 +90,7 @@ def test_coincident_sensors_count_as_one():
 
 class _Optics:
     rows = {"painted": ["surface:A", "surface:B"]}
-    kinds = (SurfaceType("painted", ("R", "sigma_alpha"), (), lambda p, ctx: None),)  # its parameters' domains
+    surface_types = (SurfaceType("painted", ("R", "sigma_alpha"), (), lambda p, ctx: None),)  # its parameters' domains
 
 
 def test_the_gradient_families_and_their_values():

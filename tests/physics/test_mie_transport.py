@@ -144,8 +144,8 @@ class SingleScatter:
         return mem, [("direct", direct, dep.q), ("f1", cell, dep.q), ("f1sq", cell, dep.q * dep.q)]
 
 
-MODELS = {}  # one Model per detector and step config, one ItemSpec per shape: new ones would recompile
-SPECS = {}  # one ItemSpec per shape: a new one would be a new static argument of the loop
+MODELS = {}  # one Model per detector and step config, one PhotonLoop per shape: new ones would recompile
+SPECS = {}  # one PhotonLoop per shape: a new one would be a new static argument of the loop
 
 
 SINGLE = SingleScatter()
@@ -156,7 +156,7 @@ def simulate(det, params, rows, *, reference=None, cfg=None, replicas=REPLICAS, 
     if (id(det), cfg) not in MODELS:
         MODELS[(id(det), cfg)] = steps.Model(tracked.from_parts(det.parts), det.parts.optics, cfg)
     model = MODELS[(id(det), cfg)]
-    tally = item.TallyShape(len(det.parts.optics.tag_pvs), (300.0, 600.0))
+    tally = item.HistogramShape(len(det.parts.optics.tag_pvs), (300.0, 600.0))
     spec = SPECS.setdefault(tally, item.photons(tally))
     ops = steps.operands(model, params, reference, steps.Controls(10.0, float("inf"), 0.0), item.grid(tally))
     key = jax.random.PRNGKey(seed)

@@ -44,9 +44,9 @@ class StepConfig:
 
 
 class Controls(NamedTuple):
-    """The step's values: ``t_max`` (m) a query's reach, ``t_end`` (ns) the time limit, ``roulette`` its weight."""
+    """The step's values: ``max_distance`` (m) a query's reach, ``t_end`` (ns) the time limit, ``roulette``."""
 
-    t_max: Any = 1e3
+    max_distance: Any = 1e3
     t_end: Any = float("inf")
     roulette: Any = 1e-4
 
@@ -68,12 +68,14 @@ class Model:
     @property
     def stacked(self):
         """Whether a layered surface exists (the photon then carries ``Stack``)."""
-        return any(kd.stack for kd in self.tables.kinds)
+        return any(kd.stack for kd in self.tables.surface_types)
 
     @property
     def spectra(self):
         """The re-emission spectra of the media and surface types, in a fixed order (their tables are operands)."""
-        found = [c.reemit for m in self.tables.media for c in m.channels] + [k.reemit for k in self.tables.kinds]
+        found = [c.reemit for m in self.tables.media for c in m.channels] + [
+            k.reemit for k in self.tables.surface_types
+        ]
         return tuple({id(s): s for s in found if s is not None}.values())
 
 
@@ -128,15 +130,16 @@ class Deposit(NamedTuple):
     hit: jax.Array = 0.0
 
 
-class _End(NamedTuple):
-    """The segment's end as the outcome sees it, held by the moving-source method or as drawn.
+class PinnedEnd(NamedTuple):
+    """The segment's end as the outcome sees it, pinned by the moving-source method or as drawn.
 
-    ``f`` weight factor; ``t`` distance (m); ``wi``, ``er``, ``ei`` direction and Jones vector; ``dt`` time shift (ns);
-    ``pr`` outcome probabilities; ``reach`` exp(-mu t); ``att`` exp(-mu_abs t); ``n`` normal; ``jets`` (moving source).
+    ``f`` weight factor; ``dist`` distance (m); ``wi``, ``er``, ``ei`` direction and Jones vector; ``dt`` time shift
+    (ns); ``pr`` outcome probabilities; ``reach`` exp(-mu dist); ``att`` exp(-mu_abs dist); ``n`` normal; ``jets``
+    (moving source).
     """
 
     f: Any
-    t: Any
+    dist: Any
     wi: Any
     er: Any
     ei: Any
@@ -148,7 +151,7 @@ class _End(NamedTuple):
     jets: Any = None
 
 
-class _Free(NamedTuple):
+class FreePathEnd(NamedTuple):
     """The free path's end: weight factor, length s (m), direction, Jones vector, time shift dt (ns), position x (m)."""
 
     f: Any
@@ -160,50 +163,51 @@ class _Free(NamedTuple):
     x: Any
 
 
-class Vertex(NamedTuple):
+class StepContext(NamedTuple):
     """What one step knows before its event.
 
     Medium: ``mu_abs``, ``mu`` (scattering), ``mu_c`` (per channel), ``*_r`` at the reference (1/m), ``v_g`` (m/ns),
-    ``mi`` the medium. ``s`` the free path (m). Crossing: ``q`` (the navigator's dict), ``t_if`` its distance (m),
-    ``reach_live`` / ``reach_ref`` = exp(-mu t_if), ``att_if`` = exp(-mu_abs t_if). Surface: ``kidx`` the surface
-    type, ``row``, ``cont`` (a continue event), ``te`` (live TypeEval), ``sigma_r``, ``pr_q`` (drawn from), ``fl``
-    (floored), ``qo`` (the proposal), ``o`` the drawn outcome (-1 none), ``os_`` it clamped, ``drawn`` (o >= 0);
-    ``ctx`` the crossing as the surface type reads it (lam, wi, n, n1, n2, er, ei: the state, filled for an
-    unpolarised photon). ``u``: the step's uniforms. ``end``, ``free``, ``chain``: the moving-source parts.
+    ``medium_idx`` the medium. ``s`` the free path (m). Crossing: ``q`` (the navigator's dict), ``dist`` its distance
+    (m), ``reach_live`` / ``reach_ref`` = exp(-mu dist), ``att_if`` = exp(-mu_abs dist). Surface: ``stype`` the surface
+    type, ``row``, ``cont`` (a continue event), ``live_eval`` (live TypeEval), ``sigma_r``, ``p_draw`` (drawn from),
+    ``floored`` (the floored outcomes), ``p_proposal`` (the proposal), ``o`` the drawn outcome (-1 none), ``os_`` it
+    clamped, ``drawn`` (o >= 0); ``ctx`` the crossing as the surface type reads it (lam, wi, n, n1, n2, er, ei: the
+    state, filled for an unpolarised photon). ``rand``: the step's uniforms. ``end``, ``free``, ``chain``: the
+    moving-source parts.
     """
 
-    u: dict
+    rand: dict
     mu_abs: Any
     mu_c: Any
     mu_c_r: Any
     mu: Any
     mu_r: Any
     v_g: Any
-    mi: Any
+    medium_idx: Any
     s: Any
     q: dict
-    t_if: Any
-    t_att: Any
+    dist: Any
+    dist_att: Any
     zero_ev: Any
     reach_live: Any
     reach_ref: Any
     att_if: Any
-    kidx: Any
+    stype: Any
     row: Any
     cont: Any
-    te: Any
+    live_eval: Any
     sigma_r: Any
-    pr_q: Any
-    fl: Any
-    qo: Any
+    p_draw: Any
+    floored: Any
+    p_proposal: Any
     o: Any
     os_: Any
     drawn: Any
     ctx: dict
     chain: Any
     scatter: Any
-    end: _End | None = None
-    free: _Free | None = None
+    end: PinnedEnd | None = None
+    free: FreePathEnd | None = None
 
 
 def _recover(ph):
@@ -220,25 +224,26 @@ def _recover(ph):
 def _query(model, ops, ph, cls0):
     """Return the next visible crossing (the navigator's dict); inside a layered surface, the remembered one."""
     geom, moving = geometry(model, ops), model.step.moving_source
-    t_q = ops.controls.t_max
+    max_dist = ops.controls.max_distance
 
     def looked(_):
-        r = geom.query(None, ph.x, ph.d, ph.cls, t_q, vol=ph.vol, last=ph.srf, sn=ph.sn)
-        keys = ("t", "hit", "normal", "cls_after", "tag", "cls_before", "cls_start", "t_pass0", "t_pass1", "vol_after",
-                "vol_before", "vol_start", "vol_reflect", "item", "cont") + (("win",) if moving else ())  # fmt: skip
+        r = geom.query(None, ph.x, ph.d, ph.cls, max_dist, vol=ph.vol, last=ph.srf, sn=ph.sn)
+        keys = ("t", "hit", "normal", "cls_after", "sensor", "cls_before", "cls_start", "t_pass0", "t_pass1",
+                "vol_after", "vol_before", "vol_start", "vol_reflect", "item", "cont")  # fmt: skip
+        keys += ("win",) if moving else ()
         return {k: r[k] for k in keys}
 
     if not model.stacked:
         return looked(None)
     st, inf = ph.stack, F32(jnp.inf)
 
-    def held(_):
-        return dict(t=jnp.zeros_like(ph.t), hit=jnp.bool_(True), normal=ph.sn, cls_after=st.scls, tag=st.stag,
+    def remembered(_):
+        return dict(t=jnp.zeros_like(ph.t), hit=jnp.bool_(True), normal=ph.sn, cls_after=st.scls, sensor=st.ssensor,
                     cls_before=cls0, cls_start=cls0, t_pass0=inf, t_pass1=inf, vol_after=st.svol, vol_before=ph.vol,
                     vol_start=ph.vol, vol_reflect=ph.vol, item=ph.srf, cont=jnp.bool_(False),
                     **(dict(win=jnp.asarray([-1, -1, 0, 1], I32)) if moving else {}))  # fmt: skip
 
-    return jax.lax.cond(st.layer > 0, held, looked, None)
+    return jax.lax.cond(st.layer > 0, remembered, looked, None)
 
 
 def _straight_if(cont, probs):
@@ -250,29 +255,33 @@ def _surface(model, ops, q, ctx, shared):
     """Return (type, row, continue event, live TypeEval, reference probabilities, reference width) at the crossing."""
     tables = model.tables
     cb, c_k = q["cls_before"], q["cls_after"]
-    kidx = jnp.asarray(tables.kind_of)[cb, c_k]
+    stype = jnp.asarray(tables.type_of)[cb, c_k]
     row = jnp.asarray(tables.row_of)[cb, c_k]
     # a continue event (the query ran out of rounds on invisible crossings, or StepTooSmall): a straight pass, no
     # surface type, no deposit, never lost; any type's row stands in, overridden
     cont = q["cont"] & q["hit"]
-    kidx, row = jnp.where(cont, jnp.maximum(kidx, 0), kidx), jnp.where(cont, jnp.maximum(row, 0), row)
-    te = se.type_probs(tables, ops.params["kernel"], kidx, row, ctx)
-    te = te._replace(probs=_straight_if(cont, te.probs), film=te.film & ~cont, coated=te.coated & ~cont)
+    stype, row = jnp.where(cont, jnp.maximum(stype, 0), stype), jnp.where(cont, jnp.maximum(row, 0), row)
+    live_eval = se.type_probs(tables, ops.params["kernel"], stype, row, ctx)
+    live_eval = live_eval._replace(
+        probs=_straight_if(cont, live_eval.probs), film=live_eval.film & ~cont, coated=live_eval.coated & ~cont
+    )
     if shared:
-        pr_r, sigma_r = sg(te.probs), sg(te.sigma_alpha)
+        pr_r, sigma_r = sg(live_eval.probs), sg(live_eval.sigma_alpha)
     else:
         ctx_r = dict(ctx, n1=sg(ctx["n1"]), n2=sg(ctx["n2"]), er=sg(ctx["er"]), ei=sg(ctx["ei"]))
-        kr = se.type_probs(tables, ops.reference["kernel"], kidx, row, ctx_r)
+        kr = se.type_probs(tables, ops.reference["kernel"], stype, row, ctx_r)
         pr_r, sigma_r = sg(kr.probs), sg(kr.sigma_alpha)
-    return kidx, row, cont, te, _straight_if(cont, pr_r), sigma_r
+    return stype, row, cont, live_eval, _straight_if(cont, pr_r), sigma_r
 
 
-def _held_end(model, ops, ph, vx):
-    """Return the _End of the segment: held by the moving-source method (its jets), or as drawn."""
-    q, o, ctx = vx.q, vx.os_, vx.ctx
+def _pinned_end(model, ops, ph, sc):
+    """Return the PinnedEnd of the segment: pinned by the moving-source method (its jets), or as drawn."""
+    q, o, ctx = sc.q, sc.os_, sc.ctx
     if not model.step.moving_source:
-        return _End(1.0, vx.t_if, ph.d, ctx["er"], ctx["ei"], 0.0, vx.te.probs, vx.reach_live, vx.att_if, q["normal"])
-    geom, chain, n1, n2 = geometry(model, ops), vx.chain, ctx["n1"], ctx["n2"]
+        return PinnedEnd(
+            1.0, sc.dist, ph.d, ctx["er"], ctx["ei"], 0.0, sc.live_eval.probs, sc.reach_live, sc.att_if, q["normal"]
+        )
+    geom, chain, n1, n2 = geometry(model, ops), sc.chain, ctx["n1"], ctx["n2"]
 
     def seg(x_, d_):
         def lk(_):
@@ -283,127 +292,128 @@ def _held_end(model, ops, ph, vx):
         return dict(y=x_ + t_ * d_, t=t_, n=n_, d=unit(se.outcomes.direction(o, d_, n_, n1 / n2)))
 
     G, G1, G2 = ms.jet(seg, ph.x, ph.d, chain)
-    held = ph.moving.free & q["hit"] & ph.alive & ((ph.stack.layer == 0) if model.stacked else True)
-    du, f = ms.surface_end(chain, G["y"], q["normal"], [g["y"] for g in G1], [g["y"] for g in G2], held)
-    t_c = ms.moved(vx.t_att, jnp.where(vx.zero_ev, 0.0, ms.col(G1, "t")), du)
+    pinned = ph.moving.drawn & q["hit"] & ph.alive & ((ph.stack.layer == 0) if model.stacked else True)
+    du, f = ms.surface_end(chain, G["y"], q["normal"], [g["y"] for g in G1], [g["y"] for g in G2], pinned)
+    t_c = ms.moved(sc.dist_att, jnp.where(sc.zero_ev, 0.0, ms.col(G1, "t")), du)
     wi_c = ms.moved(ph.d, chain.B, du)
     er_c, ei_c = ms.moved(ctx["er"], chain.Er, du), ms.moved(ctx["ei"], chain.Ei, du)
-    n_c = ms.moved(G["n"], ms.col(G1, "n"), du)  # the surface's normal at the HELD end
-    pr_c = se.type_probs(model.tables, ops.params["kernel"], vx.kidx, vx.row,
+    n_c = ms.moved(G["n"], ms.col(G1, "n"), du)  # the surface's normal at the PINNED end
+    pr_c = se.type_probs(model.tables, ops.params["kernel"], sc.stype, sc.row,
                          dict(ctx, wi=wi_c, n=n_c, er=er_c, ei=ei_c)).probs  # fmt: skip
-    m, ma = vx.mu, vx.mu_abs
-    return _End(f, t_c, wi_c, er_c, ei_c, jnp.sum(sg(chain.ht) * du), _straight_if(vx.cont, pr_c), jnp.exp(-m * t_c),
-                jnp.exp(-ma * t_c), n_c, (G, G1, G2))  # fmt: skip
+    m, ma = sc.mu, sc.mu_abs
+    return PinnedEnd(f, t_c, wi_c, er_c, ei_c, jnp.sum(sg(chain.ht) * du), _straight_if(sc.cont, pr_c),
+                     jnp.exp(-m * t_c), jnp.exp(-ma * t_c), n_c, (G, G1, G2))  # fmt: skip
 
 
-def _free_end(model, ops, ph, vx):
-    """Return the _Free of the free path: held in the volume by the moving-source method, or as drawn."""
-    er0, ei0 = vx.ctx["er"], vx.ctx["ei"]
+def _free_end(model, ops, ph, sc):
+    """Return the FreePathEnd of the free path: pinned in the volume by the moving-source method, or as drawn."""
+    er0, ei0 = sc.ctx["er"], sc.ctx["ei"]
     if not model.step.moving_source:
-        return _Free(1.0, vx.s, ph.d, er0, ei0, 0.0, ph.x + vx.s * ph.d)
+        return FreePathEnd(1.0, sc.s, ph.d, er0, ei0, 0.0, ph.x + sc.s * ph.d)
     field = None if model.clearance is None else (lambda x: model.clearance(ops.tables["clearance"], x))
-    return _Free(*ms.free_path_end(vx.chain, (ph.x, ph.d), vx.s, field, (er0, ei0), ph.moving.free & ph.alive))
+    return FreePathEnd(*ms.free_path_end(sc.chain, (ph.x, ph.d), sc.s, field, (er0, ei0), ph.moving.drawn & ph.alive))
 
 
-def _vertex(model, ops, ph, key):
-    """Return (photon after the stuck rule, pushed, the band at x, the Vertex) of one step, before its event."""
+def _step_context(model, ops, ph, key):
+    """Return (photon after the stuck rule, pushed, the band at x, the StepContext) of one step, before its event."""
     tables, cfg = model.tables, model.step
     moving, shared = cfg.moving_source, ops.reference is None
     ph, pushed, b0 = _recover(ph)
     vkey = rng.vertex_key(key, ph.vertex)
-    u = rng.draw(vkey, LAYOUT)
+    rand = rng.draw(vkey, LAYOUT)
     er0, ei0 = polar.fill(ph.d, ph.er, ph.ei, jax.random.uniform(jax.random.fold_in(vkey, POLARISATION_STREAM)))
     cls0 = jnp.where(ph.cls < 0, -1 - ph.cls, ph.cls)  # < 0: not known past invisible crossings (located)
-    mi = jnp.asarray(tables.medium_of)[cls0]
+    medium_idx = jnp.asarray(tables.medium_of)[cls0]
     pm, pmr = ops.params["media"], (ops.params if shared else ops.reference)["media"]
-    n1, ng, mu_abs, mu_c = medium.medium_at(tables, pm, ph.lam, mi)
-    mu_c_r = sg(mu_c) if shared else sg(medium.medium_at(tables, pmr, ph.lam, mi)[3])
+    n1, ng, mu_abs, mu_c = medium.medium_at(tables, pm, ph.lam, medium_idx)
+    mu_c_r = sg(mu_c) if shared else sg(medium.medium_at(tables, pmr, ph.lam, medium_idx)[3])
     mu, mu_r = jnp.sum(mu_c), jnp.sum(mu_c_r)
-    s = sg(-jnp.log(u["path"][0]) / jnp.maximum(mu_r, 1e-30))  # the free path at the reference event rate
+    s = sg(-jnp.log(rand["path"][0]) / jnp.maximum(mu_r, 1e-30))  # the free path at the reference event rate
     q = _query(model, ops, ph, cls0)
-    t_if = q["t"]
+    dist = q["t"]
     chain = ms.fresh_state(ph.moving.chain, ph.d, er0, ei0, polar.unpolarised(ph.er, ph.ei)) if moving else None
     # a zero-length event (the band snapped it to t = 0) in a medium opaque on the band's scale (mu b0 > 1): the value
     # took the sliver as length 0, so its attenuation and time carry no derivative
     zero_ev = ((q["win"][3] > 0) & q["hit"] & ((mu + mu_abs) * b0 > 1.0)) if moving else jnp.bool_(False)
-    t_att = jnp.where(zero_ev, sg(t_if), t_if) if moving else t_if
-    reach_live, reach_ref, att_if = jnp.exp(-mu * t_att), jnp.exp(-mu_r * sg(t_if)), jnp.exp(-mu_abs * t_att)
+    dist_att = jnp.where(zero_ev, sg(dist), dist) if moving else dist
+    reach_live, reach_ref, att_if = jnp.exp(-mu * dist_att), jnp.exp(-mu_r * sg(dist)), jnp.exp(-mu_abs * dist_att)
     n2 = medium.index_at(tables, pm, ph.lam, jnp.asarray(tables.medium_of)[q["cls_after"]])
     ctx = dict(lam=ph.lam, wi=ph.d, n=q["normal"], n1=n1, n2=n2, er=er0, ei=ei0)
     if model.stacked:
         ctx["layer"] = ph.stack.layer
-    kidx, row, cont, te, pr_r, sigma_r = _surface(model, ops, q, ctx, shared)
-    pr_q, fl = estimator.edge_floor(pr_r, kidx, row, tables, cfg.edge_rows) if cfg.edge_rows else (pr_r, None)
-    qo = estimator.proposal(jnp.where(jnp.asarray(TERMINAL), 0.0, pr_q))
-    o = estimator.choose(qo, u["outcome"][0])
-    scatter = (mu_r > 0.0) & (s < sg(t_if)) & ph.alive
-    vx = Vertex(u=u, mu_abs=mu_abs, mu_c=mu_c, mu_c_r=mu_c_r, mu=mu, mu_r=mu_r, v_g=C_VACUUM / ng, mi=mi, s=s, q=q,
-                t_if=t_if, t_att=t_att, zero_ev=zero_ev, reach_live=reach_live, reach_ref=reach_ref, att_if=att_if,
-                kidx=kidx, row=row, cont=cont, te=te, sigma_r=sigma_r, pr_q=pr_q, fl=fl, qo=qo, o=o,
-                os_=jnp.maximum(o, 0), drawn=o >= 0, ctx=ctx, chain=chain, scatter=scatter)  # fmt: skip
-    vx = vx._replace(end=_held_end(model, ops, ph, vx))
-    return ph, pushed, b0, vx._replace(free=_free_end(model, ops, ph, vx))
+    stype, row, cont, live_eval, pr_r, sigma_r = _surface(model, ops, q, ctx, shared)
+    p_draw, floored = estimator.edge_floor(pr_r, stype, row, tables, cfg.edge_rows) if cfg.edge_rows else (pr_r, None)
+    p_proposal = estimator.proposal(jnp.where(jnp.asarray(TERMINAL), 0.0, p_draw))
+    o = estimator.choose(p_proposal, rand["outcome"][0])
+    scatter = (mu_r > 0.0) & (s < sg(dist)) & ph.alive
+    sc = StepContext(rand=rand, mu_abs=mu_abs, mu_c=mu_c, mu_c_r=mu_c_r, mu=mu, mu_r=mu_r, v_g=C_VACUUM / ng,
+                     medium_idx=medium_idx, s=s, q=q, dist=dist, dist_att=dist_att, zero_ev=zero_ev,
+                     reach_live=reach_live, reach_ref=reach_ref, att_if=att_if, stype=stype, row=row, cont=cont,
+                     live_eval=live_eval, sigma_r=sigma_r, p_draw=p_draw, floored=floored, p_proposal=p_proposal, o=o,
+                     os_=jnp.maximum(o, 0), drawn=o >= 0, ctx=ctx, chain=chain, scatter=scatter)  # fmt: skip
+    sc = sc._replace(end=_pinned_end(model, ops, ph, sc))
+    return ph, pushed, b0, sc._replace(free=_free_end(model, ops, ph, sc))
 
 
-def _surface_event(model, ops, ph, vx):
+def _surface_event(model, ops, ph, sc):
     """Return the Next of the continuing outcome drawn at the crossing (one ``lax.switch`` over the ten)."""
-    tables, cfg, q, E = model.tables, model.step, vx.q, vx.end
-    o, os_, moving, ctx = vx.o, vx.os_, cfg.moving_source, vx.ctx
+    tables, cfg, q, E = model.tables, model.step, sc.q, sc.end
+    o, os_, moving, ctx = sc.o, sc.os_, cfg.moving_source, sc.ctx
     delta_o = jnp.asarray(DELTA)[os_]
-    w_if = se.outcome_weight(ph.w, vx, delta_o, bool(cfg.edge_rows))
+    w_if = se.outcome_weight(ph.w, sc, delta_o, bool(cfg.edge_rows))
     nrm = q["normal"]
     width = {"tables": ops.tables["unified"]}
-    lb = se._Lobes(E.wi, E.n, E.er, E.ei, {"sigma_alpha": vx.te.sigma_alpha, **width},
-                   {"sigma_alpha": vx.sigma_r, **width}, vx.u["lobe"], ops.reference is None, moving)  # fmt: skip
-    cross = (ph.d, nrm, ctx["n1"] / ctx["n2"], (ctx["er"], ctx["ei"], vx.te.amps8))
-    d_new, w_lobe, er_n, ei_n, *sens = se.outcome_direction(tables, vx.kidx, os_, cross, lb)
+    lb = se._Lobes(E.wi, E.n, E.er, E.ei, {"sigma_alpha": sc.live_eval.sigma_alpha, **width},
+                   {"sigma_alpha": sc.sigma_r, **width}, sc.rand["lobe"], ops.reference is None, moving)  # fmt: skip
+    cross = (ph.d, nrm, ctx["n1"] / ctx["n2"], (ctx["er"], ctx["ei"], sc.live_eval.amps8))
+    d_new, w_lobe, er_n, ei_n, *sens = se.outcome_direction(tables, sc.stype, os_, cross, lb)
     arrays_of = medium.spectrum_arrays(model, ops)
-    lam2, dt = se.reemission(tables, vx.kidx, os_, (ph.lam, vx.te.tau), vx.u["reemit"], arrays_of)
+    lam2, dt = se.reemission(tables, sc.stype, os_, (ph.lam, sc.live_eval.tau), sc.rand["reemit"], arrays_of)
     d_new = unit(d_new)  # no norm drift over many bounces
-    far = jnp.asarray(FAR_SIDE)[os_] & vx.drawn
-    ok = q["hit"] & vx.drawn & (vx.kidx >= 0)
-    x_hit = ph.x + vx.t_if * ph.d
+    far = jnp.asarray(FAR_SIDE)[os_] & sc.drawn
+    ok = q["hit"] & sc.drawn & (sc.stype >= 0)
+    x_hit = ph.x + sc.dist * ph.d
     layer = jnp.int32(0)
     if model.stacked:
-        layer, far = se.layer_after(tables, vx.kidx, ok, (vx.te.film, vx.te.coated), (d_new, nrm), far)
-    sn, chain, free, dtime = q["normal"], None, None, vx.t_if / vx.v_g + dt
+        layer, far = se.layer_after(tables, sc.stype, ok, (sc.live_eval.film, sc.live_eval.coated), (d_new, nrm), far)
+    sn, chain, drawn, dtime = q["normal"], None, None, sc.dist / sc.v_g + dt
     if moving:
-        x_hit = jnp.where(delta_o, x_hit, sg(x_hit))  # a drawn outcome starts at the held end
-        x_hit, d_new, w_lobe, er_n, ei_n, dtime, chain, free = _moved_outcome(
-            model, ops, ph, vx, (x_hit, d_new, w_lobe, er_n, ei_n, dt, ok, layer, delta_o), sens
+        x_hit = jnp.where(delta_o, x_hit, sg(x_hit))  # a drawn outcome starts at the pinned end
+        x_hit, d_new, w_lobe, er_n, ei_n, dtime, chain, drawn = _moved_outcome(
+            model, ops, ph, sc, (x_hit, d_new, w_lobe, er_n, ei_n, dt, ok, layer, delta_o), sens
         )
         sn = jnp.where(delta_o, nrm, E.n)
     # a reflection at a relocation stays in the volume relocated into (vol_reflect), and so in its class
     stay = far | (q["vol_reflect"] != q["vol_before"])
     return state.Next(x_hit, d_new, w_if * w_lobe, jnp.where(stay, q["cls_after"], q["cls_before"]),
-                      jnp.where(stay, q["tag"], ph.tag), ok, lam2, dtime, layer, sn.astype(F32), o.astype(I32), er_n,
-                      ei_n, chain, free)  # fmt: skip
+                      jnp.where(stay, q["sensor"], ph.sensor), ok, lam2, dtime, layer, sn.astype(F32), o.astype(I32),
+                      er_n, ei_n, chain, drawn)  # fmt: skip
 
 
-def _moved_outcome(model, ops, ph, vx, out, sens):
+def _moved_outcome(model, ops, ph, sc, out, sens):
     """Return the outcome's state with the moving-source chain.
 
     Propagated through a deterministic outcome (and re-anchored), or started afresh at a drawn one.
     """
     x_hit, d_new, w_lobe, er_n, ei_n, dt, ok, layer, delta_o = out
-    E, (G, G1, G2) = vx.end, vx.end.jets
-    rule_ctx = (model.tables, ops.params["kernel"], vx.kidx, vx.row, vx.ctx, (vx.mu + vx.mu_abs, vx.v_g, vx.zero_ev))
-    ch_d = se.propagate(vx.chain, (G, G1, G2), vx.os_, rule_ctx)
-    ch_f = ms.free_start(x_hit, d_new, sens[0], E=(sens[1], sens[2]))
-    free = jnp.where(delta_o, ph.moving.free, True)
-    dtime = jnp.where(delta_o, vx.t_att / vx.v_g, E.dt + E.t / vx.v_g) + dt
-    # the gauge of u re-anchored where the chain continues (value 0): the vertex just met held, every chain-carried
+    E, (G, G1, G2) = sc.end, sc.end.jets
+    rule_ctx = (model.tables, ops.params["kernel"], sc.stype, sc.row, sc.ctx, (sc.mu + sc.mu_abs, sc.v_g, sc.zero_ev))
+    ch_d = se.propagate(sc.chain, (G, G1, G2), sc.os_, rule_ctx)
+    ch_f = ms.drawn_start(x_hit, d_new, sens[0], E=(sens[1], sens[2]))
+    drawn = jnp.where(delta_o, ph.moving.drawn, True)
+    dtime = jnp.where(delta_o, sc.dist_att / sc.v_g, E.dt + E.dist / sc.v_g) + dt
+    # the gauge of u re-anchored where the chain continues (value 0): the vertex just met pinned, every chain-carried
     # field moved with it, so the photon's own derivative stays O(1)
-    dua, _ = ms.anchor(ch_d, x_hit, G["n"], delta_o & ph.moving.free & ok & (layer == 0))
+    dua, _ = ms.anchor(ch_d, x_hit, G["n"], delta_o & ph.moving.drawn & ok & (layer == 0))
     x_hit, d_new = ms.moved(x_hit, ch_d.A, dua), ms.moved(d_new, ch_d.B, dua)
     w_lobe = w_lobe * jnp.exp(jnp.sum(sg(ch_d.h) * dua))
     er_n, ei_n = ms.moved(er_n, ch_d.Er, dua), ms.moved(ei_n, ch_d.Ei, dua)
     dtime = dtime + jnp.sum(sg(ch_d.ht) * dua)
     chain = jax.tree_util.tree_map(lambda a, b: jnp.where(delta_o, a, b), ms.rebase(ch_d, dua), ch_f)
-    return x_hit, d_new, w_lobe, er_n, ei_n, dtime, chain, free
+    return x_hit, d_new, w_lobe, er_n, ei_n, dtime, chain, drawn
 
 
-def _bulk(model, ops, ph, vx):
+def _bulk(model, ops, ph, sc):
     """Return the Next of a bulk event at the free-path end: the free path ends before the next surface.
 
     The channel is drawn from the reference rates (in Geant4's fixed order: Rayleigh, Mie, WLS) and weighted by the
@@ -412,40 +422,40 @@ def _bulk(model, ops, ph, vx):
     lobe (``medium.channel_draw``). The photon's class there: before the first invisible crossing the start's, after
     the last the one before the visible crossing, between them unknown (-1 - class).
     """
-    q, cb, s, F = vx.q, vx.q["cls_before"], vx.s, vx.free
+    q, cb, s, F = sc.q, sc.q["cls_before"], sc.s, sc.free
     next_cls = jnp.where(s < q["t_pass0"], q["cls_start"], jnp.where(s > q["t_pass1"], cb, -1 - cb))
-    cs = jnp.maximum(estimator.choose(vx.mu_c_r, vx.u["channel"][0]), 0)
-    w = estimator.magic(vx.mu_c[cs] * jnp.exp(-vx.mu * F.s), vx.mu_c_r[cs] * jnp.exp(-vx.mu_r * s))
-    w = w * jnp.exp(-vx.mu_abs * F.s) * F.f
-    b = medium.channel_draw(model, ops, vx.mi, cs, F.wi, (F.er, F.ei), ph.lam, vx.u)
-    chain, free = None, None
+    cs = jnp.maximum(estimator.choose(sc.mu_c_r, sc.rand["channel"][0]), 0)
+    w = estimator.reweight(sc.mu_c[cs] * jnp.exp(-sc.mu * F.s), sc.mu_c_r[cs] * jnp.exp(-sc.mu_r * s))
+    w = w * jnp.exp(-sc.mu_abs * F.s) * F.f
+    b = medium.channel_draw(model, ops, sc.medium_idx, cs, F.wi, (F.er, F.ei), ph.lam, sc.rand)
+    chain, drawn = None, None
     if model.step.moving_source:
-        chain, free = ms.free_start(F.x, b.wo, b.sens[0], E=b.sens[1:]), jnp.bool_(True)
-    return state.Next(x=F.x, d=b.wo, w=ph.w * w * estimator.magic_log(b.lp, b.lpr) * b.yield_w, cls=next_cls,
-                      tag=ph.tag, ok=jnp.bool_(True), lam=b.lam, dtime=F.dt + F.s / vx.v_g + b.delay,
+        chain, drawn = ms.drawn_start(F.x, b.wo, b.sens[0], E=b.sens[1:]), jnp.bool_(True)
+    return state.Next(x=F.x, d=b.wo, w=ph.w * w * estimator.reweight_log(b.lp, b.lpr) * b.yield_w, cls=next_cls,
+                      sensor=ph.sensor, ok=jnp.bool_(True), lam=b.lam, dtime=F.dt + F.s / sc.v_g + b.delay,
                       layer=jnp.int32(0), sn=q["normal"].astype(F32), outcome=jnp.int32(-1), er=b.er, ei=b.ei,
-                      chain=chain, free=free)  # fmt: skip
+                      chain=chain, drawn=drawn)  # fmt: skip
 
 
-def _after(model, ops, ph, vx, nx, b0):
+def _after(model, ops, ph, sc, nx, b0):
     """Return the state after the event's roulette, w_min, edge factor, stuck rule and time limit.
 
     (alive, weight, z, nz, abandon, abandoned weight, late weight).
     """
-    q, scatter, ctl, os_ = vx.q, vx.scatter, ops.controls, vx.os_
+    q, scatter, ctl, os_ = sc.q, sc.scatter, ops.controls, sc.os_
     w_new = nx.w
     low = sg(w_new) < ctl.roulette  # Russian roulette: survive with probability w / roulette, unbiased
     p_s = sg(w_new) / jnp.maximum(ctl.roulette, ROULETTE_FLOOR)  # roulette 0 (off): no 0 / 0 in reverse mode
-    w_new = jnp.where(low, jnp.where(vx.u["roulette"][0] < p_s, w_new / jnp.maximum(p_s, 1e-30), 0.0), w_new)
+    w_new = jnp.where(low, jnp.where(sc.rand["roulette"][0] < p_s, w_new / jnp.maximum(p_s, 1e-30), 0.0), w_new)
     alive = ph.alive & nx.ok & (sg(w_new) > W_MIN)
     z_new = 1.0
     if model.step.edge_rows:
-        e_draw = (q["hit"] & ph.alive & (vx.kidx >= 0)) & ~scatter & vx.drawn & vx.fl[os_]
-        pr_o = jnp.where(jnp.asarray(DELTA)[os_], vx.te.probs[os_], vx.end.pr[os_])
-        z_new = ph.z * jnp.where(e_draw, pr_o / vx.pr_q[os_], 1.0)
+        e_draw = (q["hit"] & ph.alive & (sc.stype >= 0)) & ~scatter & sc.drawn & sc.floored[os_]
+        pr_o = jnp.where(jnp.asarray(DELTA)[os_], sc.live_eval.probs[os_], sc.end.pr[os_])
+        z_new = ph.z * jnp.where(e_draw, pr_o / sc.p_draw[os_], 1.0)
         alive = alive & ~(e_draw & (sg(ph.z) == 0.0))  # a second such draw: 0 in value and derivative, retired
     layer0 = (ph.stack.layer == 0) if model.stacked else True
-    nz_new = jnp.where(q["hit"] & ~scatter & layer0 & (sg(vx.t_if) <= ZERO_STEP_BANDS * b0), ph.nz + 1, 0).astype(I32)
+    nz_new = jnp.where(q["hit"] & ~scatter & layer0 & (sg(sc.dist) <= ZERO_STEP_BANDS * b0), ph.nz + 1, 0).astype(I32)
     abandon = alive & (nz_new >= navigation.ZERO_STEPS_BEFORE_KILL)
     abandoned = jnp.where(abandon, w_new * z_new, 0.0)
     alive = alive & ~abandon
@@ -454,55 +464,57 @@ def _after(model, ops, ph, vx, nx, b0):
     return alive & in_time, w_new, z_new, nz_new, abandon, abandoned, late
 
 
-def _advance(model, vx, nx):
+def _advance(model, sc, nx):
     """Return (vol, srf, svol) after the event (the navigator's state for the next query)."""
-    q = vx.q
+    q = sc.q
     # a bulk event: the volume the free path ends in (before the first invisible crossing the start's, after the
     # last the one before the visible crossing, located between); a surface outcome that continues beyond takes the
     # volume after (a layered surface's far side: the remembered one), a reflection the one it was located in
-    vol_b = jnp.where(vx.s < q["t_pass0"], q["vol_start"], jnp.where(vx.s > q["t_pass1"], q["vol_before"], -1))
-    after = jnp.asarray(FAR_SIDE)[vx.os_] & vx.drawn
+    vol_b = jnp.where(sc.s < q["t_pass0"], q["vol_start"], jnp.where(sc.s > q["t_pass1"], q["vol_before"], -1))
+    after = jnp.asarray(FAR_SIDE)[sc.os_] & sc.drawn
     if model.stacked:
-        stk = se.is_stack(model.tables, vx.kidx)
+        stk = se.is_stack(model.tables, sc.stype)
         after = jnp.where(stk, (nx.layer == 0) & (jnp.sum(nx.d * q["normal"]) < 0.0), after)
-    vol = jnp.where(vx.scatter, vol_b, jnp.where(after, q["vol_after"], q["vol_reflect"])).astype(I32)
-    srf = jnp.where(vx.scatter | ~q["hit"], -1, q["item"]).astype(I32)
+    vol = jnp.where(sc.scatter, vol_b, jnp.where(after, q["vol_after"], q["vol_reflect"])).astype(I32)
+    srf = jnp.where(sc.scatter | ~q["hit"], -1, q["item"]).astype(I32)
     return vol, srf, q["vol_after"].astype(I32)
 
 
 def step(model, ops, ph, key):
     """Return (the photon after one step, its Deposit); ``key`` is the photon's key (``rng.photon_key``)."""
     cfg, tables = model.step, model.tables
-    ph, pushed, b0, vx = _vertex(model, ops, ph, key)
-    q, E, scatter = vx.q, vx.end, vx.scatter
+    ph, pushed, b0, sc = _step_context(model, ops, ph, key)
+    q, E, scatter = sc.q, sc.end, sc.scatter
     z = ph.z if cfg.edge_rows else 1.0  # deposits carry w z (the edge rows' factor; 1 without them)
-    at_if = q["hit"] & ph.alive & (vx.kidx >= 0)
+    at_if = q["hit"] & ph.alive & (sc.stype >= 0)
     dep_q = jnp.where(at_if, ph.w * E.reach * E.att * E.pr[DETECT] * E.f, 0.0) * z
-    lost = jnp.where(q["hit"] & ph.alive & (vx.kidx < 0) & ~scatter,
-                     ph.w * estimator.magic(E.reach, vx.reach_ref) * E.att * E.f, 0.0) * z  # fmt: skip
-    nx = jax.lax.cond(scatter, lambda _: _bulk(model, ops, ph, vx), lambda _: _surface_event(model, ops, ph, vx), None)
-    alive, w_new, z_new, nz_new, abandon, abandoned, late = _after(model, ops, ph, vx, nx, b0)
-    vol, srf, svol = _advance(model, vx, nx)
-    stack = state.Stack(nx.layer, svol, q["cls_after"].astype(I32), q["tag"].astype(I32)) if model.stacked else None
-    mv = state.MovingSource(jnp.asarray(nx.free), jax.tree_util.tree_map(lambda a: a.astype(F32), nx.chain)) \
+    lost = jnp.where(q["hit"] & ph.alive & (sc.stype < 0) & ~scatter,
+                     ph.w * estimator.reweight(E.reach, sc.reach_ref) * E.att * E.f, 0.0) * z  # fmt: skip
+    nx = jax.lax.cond(scatter, lambda _: _bulk(model, ops, ph, sc), lambda _: _surface_event(model, ops, ph, sc), None)
+    alive, w_new, z_new, nz_new, abandon, abandoned, late = _after(model, ops, ph, sc, nx, b0)
+    vol, srf, svol = _advance(model, sc, nx)
+    stack = state.Stack(nx.layer, svol, q["cls_after"].astype(I32), q["sensor"].astype(I32)) if model.stacked else None
+    mv = state.MovingSource(jnp.asarray(nx.drawn), jax.tree_util.tree_map(lambda a: a.astype(F32), nx.chain)) \
         if cfg.moving_source else None  # fmt: skip
     ph2 = state.Photon(nx.x, nx.d, ph.t + nx.dtime, nx.lam, jnp.where(alive, w_new, 0.0), alive, ph.vertex + 1,
-                       nx.er.astype(F32), nx.ei.astype(F32), vol, srf, nx.sn, nz_new, nx.cls, nx.tag, stack, mv,
+                       nx.er.astype(F32), nx.ei.astype(F32), vol, srf, nx.sn, nz_new, nx.cls, nx.sensor, stack, mv,
                        z_new if cfg.edge_rows else None)  # fmt: skip
-    escaped = jnp.where(ph.alive & ~q["hit"] & ~scatter, ph.w * z, 0.0)  # met no surface within t_max, no bulk event
+    escaped = jnp.where(
+        ph.alive & ~q["hit"] & ~scatter, ph.w * z, 0.0
+    )  # met no surface within max_distance, no bulk event
     cb, c_k = q["cls_before"], q["cls_after"]
     dpre = tables.deposit_pre  # static: a border sensor credits the region left
-    tag_dep = q["tag"] if dpre is None else jnp.where(jnp.asarray(dpre)[cb, c_k], ph.tag, q["tag"])
-    time = ph.t + E.dt + E.t / vx.v_g  # without the moving source dt is 0 and t the crossing's distance
-    event, pair = jnp.where(scatter, -2, nx.outcome).astype(I32), cb * jnp.asarray(tables.kind_of).shape[0] + c_k
+    sensor_dep = q["sensor"] if dpre is None else jnp.where(jnp.asarray(dpre)[cb, c_k], ph.sensor, q["sensor"])
+    time = ph.t + E.dt + E.dist / sc.v_g  # without the moving source dt is 0 and t the crossing's distance
+    event, pair = jnp.where(scatter, -2, nx.outcome).astype(I32), cb * jnp.asarray(tables.type_of).shape[0] + c_k
     out_side = False if dpre is None else jnp.asarray(dpre)[cb, c_k]
-    hit = hit_angle(model, ops, ph, vx, out_side) if model.hit_angle else F32(0.0)
-    dep = Deposit(jnp.where(at_if, tag_dep, -1), dep_q, time, ph.lam, lost, abandoned, escaped, late, pushed, abandon,
-                  event, pair, hit)  # fmt: skip
+    hit = hit_angle(model, ops, ph, sc, out_side) if model.hit_angle else F32(0.0)
+    dep = Deposit(jnp.where(at_if, sensor_dep, -1), dep_q, time, ph.lam, lost, abandoned, escaped, late, pushed,
+                  abandon, event, pair, hit)  # fmt: skip
     return ph2, dep
 
 
-def hit_angle(model, ops, ph, vx, out_side):
+def hit_angle(model, ops, ph, sc, out_side):
     """Return the hit angle (rad) of a crossing into a sensor: acos(|z| / r) in the frame of the volume outside it.
 
     WCSim's definition (WCSimWCSD.cc ProcessHits, ProcessHits_boundary): into the sensor, the step's start point in
@@ -510,8 +522,8 @@ def hit_angle(model, ops, ph, vx, out_side):
     crossing point in the frame of the volume after (the glass). Evaluated as atan2(rho, |z|): finite derivatives on
     the axis.
     """
-    q, D = vx.q, geometry(model, ops).nav.dev()
+    q, D = sc.q, geometry(model, ops).nav.dev()
     v = jnp.where(out_side, q["vol_after"], q["vol_before"])
-    x = jnp.where(out_side, ph.x + vx.t_if * ph.d, ph.x)
+    x = jnp.where(out_side, ph.x + sc.dist * ph.d, ph.x)
     r = D["R"][v].T @ (x - D["t"][v])
     return jnp.arctan2(jnp.sqrt(r[0] * r[0] + r[1] * r[1] + 1e-30), jnp.abs(r[2]))

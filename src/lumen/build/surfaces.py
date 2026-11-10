@@ -26,7 +26,7 @@ signature missed a distinction); a class adjacent to itself across a non-PASS su
 wavelength domain. A DETECT deposit goes to the tag of the PV entered, except across an exit sensor (``deposit_pre``).
 
 ``compile`` also packs spectral surface and sensor params ((Law, params) pairs of the shared clamped tables) as
-``Optics.kernel_laws`` (one Law per (type, param), knots padded to a common length with clamped tails).
+``Optics.type_laws`` (one Law per (type, param), knots padded to a common length with clamped tails).
 """
 
 from __future__ import annotations
@@ -367,8 +367,8 @@ class Optics:
     signatures: tuple[tuple, ...]
     class_of: Mapping[str, int]  # PV -> class
     class_pvs: tuple[tuple[str, ...], ...]
-    kinds: tuple[legacy.SurfaceType, ...]
-    kind_of: np.ndarray  # (C, C) int32 index into kinds, -1: never crossed
+    surface_types: tuple[legacy.SurfaceType, ...]
+    type_of: np.ndarray  # (C, C) int32 index into surface_types, -1: never crossed
     row_of: np.ndarray  # (C, C) int32 row in params["kernel"][kind.name], -1: never crossed
     medium_of: np.ndarray  # (C,) int32 index into media
     media: tuple[bulk.Medium, ...]
@@ -382,7 +382,7 @@ class Optics:
     params: dict
     report: str
     deposit_pre: np.ndarray | None = None  # (C, C) bool: a DETECT deposit goes to the tag before; None: none do
-    kernel_laws: Mapping = field(default_factory=dict)  # (type name, param) -> Law of a spectral param
+    type_laws: Mapping = field(default_factory=dict)  # (type name, param) -> Law of a spectral param
 
     def kernel(self, pre, post):
         """Return the Pair crossed from PV pre into PV post (None: never crossed, also inside one class)."""
@@ -398,14 +398,14 @@ def named_params(optics: Optics, library: Library) -> dict:
     """Return the params of the library entries the optics uses, by NAME: {"media", "surfaces", "sensors"}.
 
     The calibration space, stable across recompiles (which renumber classes and rows); ``pack`` turns it into the
-    engine's rows. A spectral param (Law, params) is its params: the Law is static (``Optics.kernel_laws``).
+    engine's rows. A spectral param (Law, params) is its params: the Law is static (``Optics.type_laws``).
     """
 
     def values(p):
         return {k: (v[1] if isinstance(v, tuple) else v) for k, v in p.items()}
 
     out = {"media": {n: library.media[n].params for n in optics.media_names}, "surfaces": {}, "sensors": {}}
-    for kind in optics.kinds:
+    for kind in optics.surface_types:
         for origin in optics.rows[kind.name]:
             if origin is not None:
                 what, name = origin.split(":", 1)
@@ -455,12 +455,12 @@ def pack(optics: Optics, named: dict) -> dict:
         return jax.tree_util.tree_map(lambda v: jnp.asarray(v, jnp.float32), t)
 
     kernel = {}
-    for kind in optics.kinds:
+    for kind in optics.surface_types:
         ents = [named["surfaces" if o.split(":", 1)[0] == "surface" else "sensors"][o.split(":", 1)[1]]
                 if o is not None else None for o in optics.rows[kind.name]]  # fmt: skip
         kp = {}
         for name in kind.params:
-            if (kind.name, name) in optics.kernel_laws:  # spectral: (energy, value) tables per row
+            if (kind.name, name) in optics.type_laws:  # spectral: (energy, value) tables per row
                 kp[name] = _packed_table(name, ents)
             else:
                 kp[name] = jnp.stack([jnp.asarray(e[name], jnp.float32) for e in ents])
@@ -747,20 +747,22 @@ class _Coincident:
 
 
 def _tables(found, n_classes):
-    kinds = tuple(sorted({f[0] for f in found.values()}, key=_kind_order))
-    if len({k.name for k in kinds}) != len(kinds):
-        raise OpticsError(f"two different kinds share a name: {[k.name for k in kinds]}")
-    rows = {k.name: tuple(sorted({f[1] for f in found.values() if f[0] is k}, key=lambda o: o or "")) for k in kinds}
-    kind_of = np.full((n_classes, n_classes), -1, np.int32)
+    surface_types = tuple(sorted({f[0] for f in found.values()}, key=_kind_order))
+    if len({k.name for k in surface_types}) != len(surface_types):
+        raise OpticsError(f"two different surface types share a name: {[k.name for k in surface_types]}")
+    rows = {
+        k.name: tuple(sorted({f[1] for f in found.values() if f[0] is k}, key=lambda o: o or "")) for k in surface_types
+    }
+    type_of = np.full((n_classes, n_classes), -1, np.int32)
     row_of = np.full((n_classes, n_classes), -1, np.int32)
     deposit_pre = np.zeros((n_classes, n_classes), bool)
     pairs = {}
     for a, b in sorted(found):
         kind, origin, reasons, examples, count, side = found[(a, b)]
         r = rows[kind.name].index(origin)
-        kind_of[a, b], row_of[a, b], deposit_pre[a, b] = kinds.index(kind), r, side == "pre"
+        type_of[a, b], row_of[a, b], deposit_pre[a, b] = surface_types.index(kind), r, side == "pre"
         pairs[(a, b)] = Pair(kind, origin, r, tuple(reasons), tuple(examples), count)
-    return kinds, rows, kind_of, row_of, deposit_pre, pairs
+    return surface_types, rows, type_of, row_of, deposit_pre, pairs
 
 
 def _report(head, class_names, class_pvs, pairs, coincident, tags):
@@ -818,16 +820,16 @@ def _resolve_all(library: Library, tree, bindings: Bindings, lam_domain) -> Opti
     regions = _Regions(library, tree, d, opaque, (sigs, class_of, sig_of, class_names))
     regions.visit_tree()
     coincident = _Coincident(regions).run()
-    kinds, rows, kind_of, row_of, deposit_pre, pairs = _tables(regions.found, C)
+    surface_types, rows, type_of, row_of, deposit_pre, pairs = _tables(regions.found, C)
     media_of = np.array([media_names.index(s[0]) for s in sigs], np.int32)
     by_name = tree.by_name
     sensor_pvs = sorted((n for n in tree.order if d.sensor[n] is not None),
                         key=lambda n: (d.sensor[n], by_name[n].copy is None, by_name[n].copy or 0, n))  # fmt: skip
     tag_of = {n: i for i, n in enumerate(sensor_pvs)}
-    head = (f"optics: {C} classes, {len(pairs)} crossed class pairs, kinds {[k.name for k in kinds]}, "
+    head = (f"optics: {C} classes, {len(pairs)} crossed class pairs, kinds {[k.name for k in surface_types]}, "
             f"{len(sensor_pvs)} sensors, lambda [{lo:g}, {hi:g}] nm")  # fmt: skip
     report = _report(head, class_names, class_pvs, pairs, coincident, (sensor_pvs, tag_of, d.sensor))
-    optics = Optics(C, class_names, tuple(sigs), class_of, class_pvs, kinds, kind_of, row_of, media_of,
+    optics = Optics(C, class_names, tuple(sigs), class_of, class_pvs, surface_types, type_of, row_of, media_of,
                     tuple(library.media[n].medium for n in media_names), media_names, rows, pairs, tag_of,
                     tuple(sensor_pvs), tuple(d.sensor[n] for n in sensor_pvs), (lo, hi), {}, report,
                     deposit_pre if deposit_pre.any() else None)  # fmt: skip
@@ -843,7 +845,7 @@ def _spectral_laws(library, optics):
     """
     lo, hi = optics.lam_domain
     found = {}
-    for kind in optics.kinds:
+    for kind in optics.surface_types:
         for pname in kind.params:
             vals = [(o, _entry(library, o).params[pname]) for o in optics.rows[kind.name]]
             used = {id(v[0]): v[0] for _, v in vals if isinstance(v, tuple)}
@@ -868,7 +870,7 @@ def compile(library: Library, tree, bindings: Bindings, lam_domain) -> Optics:
     columns as (energy, value) tables padded to a common length with clamped tails.
     """
     optics = _resolve_all(library, tree, bindings, lam_domain)
-    optics = dataclasses.replace(optics, kernel_laws=_spectral_laws(library, optics))
+    optics = dataclasses.replace(optics, type_laws=_spectral_laws(library, optics))
     named = named_params(optics, library)
     return dataclasses.replace(optics, params=_numpy(pack(optics, named), {"kernel": None, "media": named["media"]}))
 

@@ -56,7 +56,7 @@ def read_reference(d) -> dict:
                 n_cfg=cfg[:, 3], energy=cfg[:, 4])  # fmt: skip
 
 
-def item_spec(tally: item.TallyShape, n_groups: int, nt: int) -> item.ItemSpec:
+def item_spec(tally: item.HistogramShape, n_groups: int, nt: int) -> item.PhotonLoop:
     """Return the default item plus arrival times on ``nt`` nodes per time group and band ("H"), late and early ("L").
 
     The node spacing ``dt`` and each sensor's time group enter through the grid operand (``grid["dt"]``,
@@ -65,14 +65,14 @@ def item_spec(tally: item.TallyShape, n_groups: int, nt: int) -> item.ItemSpec:
     base = item.photons(tally)
     nb = len(tally.lam_edges) - 1
 
-    def emits(dep, slot, grid):
+    def emits(dep, replica, grid):
         b = jnp.searchsorted(grid["lam_edges"], dep.lam, side="right") - 1
         ok = (dep.sensor >= 0) & (b >= 0) & (b < nb)
         cell = grid["group"][jnp.maximum(dep.sensor, 0)] * nb + b
         x = dep.time / grid["dt"]
         j = jnp.floor(x).astype(I32)
         g = x - j
-        adds = list(base.emits(dep, slot, grid))
+        adds = list(base.emits(dep, replica, grid))
         for jj, w in ((j, 1.0 - g), (j + 1, g)):
             node = jnp.where(ok & (jj >= 0) & (jj < nt), cell * nt + jj, -1)
             edge = jnp.where(ok & (jj >= nt), cell * 2, jnp.where(ok & (jj < 0), cell * 2 + 1, -1))

@@ -12,7 +12,7 @@ Directions are drawn at the reference values and weighted by exp(logpdf(live) - 
 weight: that is the only way parameters enter a drawn direction. A deterministic lobe's direction is a
 differentiable map.
 
-A chain lobe (Geant4's facet reflections, repeated until the photon leaves the surface) has no closed-form marginal
+A facet-path lobe (Geant4's facet reflections, repeated until the photon leaves the surface) has no closed-form marginal
 density (``logpdf`` None). It declares its path instead: ``path(p, wi, n, rand) -> (W (k_max, 3), k)`` with
 wo = W[k - 1], and ``path_logpdf(p, wi, n, W, k)``. A polarised phase function also declares its density given the
 photon's Jones vector: ``pol_sample(p, wi, er, ei, rand)`` and ``pol_logpdf(p, wi, er, ei, wo)``.

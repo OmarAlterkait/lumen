@@ -47,7 +47,7 @@ def test_auto_picks_cuda_on_a_gpu(monkeypatch):
         raise RuntimeError("stop")
 
     monkeypatch.setattr(runner.tm, "vmap", vmap)
-    spec = item.photons(item.TallyShape(1, (300.0, 500.0)))
+    spec = item.photons(item.HistogramShape(1, (300.0, 500.0)))
     with pytest.raises(RuntimeError, match="stop"):
         runner.run(spec, None, None, rows_at(2), photons.raw_key(0), backend="auto")
     assert seen["backend"] == runner.TALLYMAP_BACKEND["cuda"]

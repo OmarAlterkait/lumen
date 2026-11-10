@@ -218,7 +218,7 @@ def test_clip01_cuts_keep_the_linear_derivative_on_the_simplex_faces():
         np.testing.assert_array_equal(np.asarray(g), [1.0, -1.0])
 
 
-def test_glisur_types_name_their_chain_lobe():
+def test_glisur_types_name_their_facet_path_lobe():
     assert legacy.GLISUR_METAL.glossy == legacy.GLISUR_METAL_EFF.glossy == "glisur"
     assert legacy.UNIFIED_METAL.glossy == legacy.REFLECTOR.glossy == "unified"
     w = legacy.GLISUR_METAL.lobe_params({"R": F32(0.8), "polish": F32(0.7)}, {})

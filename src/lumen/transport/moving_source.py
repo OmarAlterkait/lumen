@@ -1,9 +1,9 @@
 """The moving-source method: derivatives for parameters that move where light starts (a source's position, direction).
 
-The rule (Reynolds transport on path space). The expected count is an integral over paths, held in some coordinates;
+The rule (Reynolds transport on path space). The expected count is an integral over paths, written in some coordinates;
 its derivative is the expectation of the integrand's derivative at fixed coordinates plus a boundary term for every
 discontinuity (sensor rim, wall, the switch between scattering and reaching a wall) that moves in them. The sampled
-coordinates (directions, free paths) move every vertex when the source moves. This method holds the VERTICES instead:
+coordinates (directions, free paths) move every vertex when the source moves. This method pins the VERTICES instead:
 a fixed discontinuity is then fixed, and its term is exactly zero.
 
 How. A vertex whose direction is drawn from a density starts a CHAIN with 2 free coordinates u. The deterministic
@@ -15,12 +15,12 @@ on a surface, 3x3 with the free path in the volume) and the weight takes the cha
 |det[Y1, Y2, d]|, Y = dy/du). Every correction is exactly zero in value.
 
 The gauge (float32): u is re-anchored at every deterministic vertex (``anchor``, ``rebase``), a value-zero move that
-holds the vertex just met, so every carried tangent stays O(1) on an expanding chain (a convex mirror multiplies
+pins the vertex just met, so every carried tangent stays O(1) on an expanding chain (a convex mirror multiplies
 dy/du ~100 per bounce). A volume end near a moving origin co-moves with it, V = w U, w = exp(-r^2 / R0^2), R0 =
 min(CO_MOVING_RADIUS, a quarter of the origin's clearance); its divergence enters the weight.
 
-Known limits (docs/dev/design.md section 9): the moving shadow edge between a moving source and its first held
-vertex is not carried; the caustic at a held end has an infinite-variance tail; an ill-conditioned end solve after a
+Known limits (docs/dev/design.md section 9): the moving shadow edge between a moving source and its first pinned
+vertex is not carried; the caustic at a pinned end has an infinite-variance tail; an ill-conditioned end solve after a
 grazing hit loses float32 precision; a zero-length segment in a medium opaque on the band's scale carries no
 attenuation or time derivative.
 """
@@ -37,7 +37,7 @@ from lumen._core import frames
 
 sg = jax.lax.stop_gradient
 PAIRS = ((0, 0), (0, 1), (1, 1))
-TINY_DET = 1e-12  # a Jacobian below this: the end is not held (weight factor 1)
+TINY_DET = 1e-12  # a Jacobian below this: the end is not pinned (weight factor 1)
 ANCHOR_COND = 1e-6  # the anchor's 2x2 determinant, relative to |A1| |A2|, below which the gauge is not moved
 CO_MOVING_RADIUS = 0.05  # m: the largest co-moving radius about a moving origin
 CLEARANCE_SHARE = 0.25  # the co-moving radius is at most this share of the origin's clearance
@@ -69,13 +69,13 @@ def no_sensitivities():
 
 
 def sensitivity(state_fn, d):
-    """Return d(er, ei)/du of a polarisation state_fn(d) -> (er, ei) along free_start's coordinates of d (values)."""
+    """Return d(er, ei)/du of a polarisation state_fn(d) -> (er, ei) along drawn_start's coordinates of d (values)."""
     e1, e2 = frames.basis(sg(d))
     tans = [jax.jvp(state_fn, (sg(d),), (e,))[1] for e in (e1, e2)]
     return tuple(sg(jnp.stack([t[c] for t in tans], 1)) for c in range(2))
 
 
-def free_start(x, d, g=None, E=None):
+def drawn_start(x, d, g=None, E=None):
     """Return the chain of a direction d drawn from a density in solid angle at x.
 
     u are the tangent-plane coordinates of d(u) = unit(d + u1 e1 + u2 e2); g the drawing density's log gradient in
@@ -90,8 +90,8 @@ def free_start(x, d, g=None, E=None):
                  jnp.stack([-d, z3, -d], 1), h, jnp.zeros(2, d.dtype), Er, Ei, x)  # fmt: skip
 
 
-def none_start(x, d):
-    """Return the chain of a direction with no free coordinates (a pencil beam): nothing is held."""
+def undrawn_start(x, d):
+    """Return the chain of a direction with no free coordinates (a pencil beam): nothing is pinned."""
     z = jnp.zeros((3, 2), d.dtype)
     return Chain(z, z, jnp.zeros((3, 3), d.dtype), jnp.zeros((3, 3), d.dtype), jnp.zeros(2, d.dtype),
                  jnp.zeros(2, d.dtype), z, z, x)  # fmt: skip
@@ -142,7 +142,7 @@ def _tangent_system(n, Ys, y):
 
 
 def surface_end(ch, y, n, Y, Y2, valid):
-    """Return (du, weight factor) that hold the end y (live, on a fixed surface of normal n) by moving u.
+    """Return (du, weight factor) that pin the end y (live, on a fixed surface of normal n) by moving u.
 
     Y = (dy/du_1, dy/du_2) live, Y2 the second derivatives (values); du has value 0, the factor value 1.
     """
@@ -162,7 +162,7 @@ def surface_end(ch, y, n, Y, Y2, valid):
 
 
 def anchor(ch, y, n, valid):
-    """Return (du, ok): the value-zero move of u that holds y (on the fixed surface of normal n), the new gauge.
+    """Return (du, ok): the value-zero move of u that pins y (on the fixed surface of normal n), the new gauge.
 
     surface_end's solve without its weight factor; an ill-conditioned solve gives 0 (the identity gauge).
     """
@@ -186,7 +186,7 @@ def rebase(ch, du):
 
 
 def volume_end(ch, x, d, s, V, valid):
-    """Return (du, ds, factor) that hold the free-path end x + s d by moving (u, s), the end's own motion V."""
+    """Return (du, ds, factor) that pin the free-path end x + s d by moving (u, s), the end's own motion V."""
     Y = [ch.A[:, i] + s * ch.B[:, i] for i in range(2)]
     Ys = [sg(v) for v in Y]
     ds_ = sg(d)
@@ -234,7 +234,7 @@ def fresh_state(ch, d, er0, ei0, unpolarised):
 
 
 def free_path_end(ch, ray, s, field, pol0, valid):
-    """Return the free-path end held in the volume (co-moving near a moving origin).
+    """Return the free-path end pinned in the volume (co-moving near a moving origin).
 
     ``ray`` = (x, d), ``field`` the clearance at a point (None: none known); ``pol0`` = (er0, ei0). Returns (weight
     factor, s, wi, er, ei, time shift, x) at the end.

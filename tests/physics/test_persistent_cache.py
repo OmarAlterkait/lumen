@@ -33,7 +33,7 @@ def _drive(det_path, out):
 
     det = lumen.load(det_path)
     model = steps.Model(tracked.from_parts(det.parts), det.parts.optics)
-    tally = item.TallyShape(len(det.parts.optics.tag_pvs), (300.0, 600.0))
+    tally = item.HistogramShape(len(det.parts.optics.tag_pvs), (300.0, 600.0))
     d = np.random.default_rng(0).normal(size=(N, 3))
     d /= np.linalg.norm(d, axis=1, keepdims=True)
     z = jnp.zeros(N, jnp.float32)

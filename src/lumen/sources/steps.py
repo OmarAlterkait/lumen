@@ -85,19 +85,19 @@ class Geant4Steps(sc._Scintillation):
             y, light = self.light_of(v)
             vis = sc.visible_energy(v["edep"] * 1e-6, path, v["birks"])
             e = sg(vis)
-        u = photon_uniforms(key, 1 + (UNIFORMS if cher else 6), n, first_id)
-        i = jnp.clip(jnp.searchsorted(jnp.cumsum(e) / jnp.sum(e), u[:, 0], side="right"), 0, e.shape[0] - 1)
+        rand = photon_uniforms(key, 1 + (UNIFORMS if cher else 6), n, first_id)
+        i = jnp.clip(jnp.searchsorted(jnp.cumsum(e) / jnp.sum(e), rand[:, 0], side="right"), 0, e.shape[0] - 1)
         scale = safe_div(jnp.sum(e), samples * e[i])
         if cher:
             axis = (b - a) / jnp.where(length > 0.0, length, 1.0)[:, None]
             x, d, lam, w, er, _ = jax.vmap(lambda u_, j: cone(u_, (index.energy, index.value), a[j], axis[j], length[j],
                                                               beta[j], q[j], v["lam_min"], v["lam_max"], 1.0))(
-                u[:, 1:], i)  # fmt: skip
-            t, pol = t0[i] + u[:, 2] * (t1[i] - t0[i]), jnp.stack([er, jnp.zeros_like(er)], 1)
+                rand[:, 1:], i)  # fmt: skip
+            t, pol = t0[i] + rand[:, 2] * (t1[i] - t0[i]), jnp.stack([er, jnp.zeros_like(er)], 1)
             if true is not None:  # the cone counts over the chord it emits along: rescale to the true length
                 w = w * safe_div(true[i], length[i])
         else:
             x, d, t, lam, w = jax.vmap(lambda u_, j: sc.flash(u_, a[j], b[j], t0[j], t1[j], y * vis[j], light,
-                                                              self.proposals, 1.0))(u[:, 1:], i)  # fmt: skip
+                                                              self.proposals, 1.0))(rand[:, 1:], i)  # fmt: skip
             pol = jnp.zeros((n, 2, 3), F32)
         return Emission(x, d, t, lam, w * scale, pol, jnp.full(n, not cher))

@@ -131,7 +131,7 @@ def test_geant4_rindex_group_index_is_geant4s_groupvel(df):
 
 def test_media(df):
     e = rules.medium(df.materials["Liq"])
-    assert e.medium.index.kind == "g4_rindex" and e.medium.absorption is not None
+    assert e.medium.index.form == "g4_rindex" and e.medium.absorption is not None
     assert [c.name for c in e.medium.channels] == ["rayleigh"]
     w = rules.medium(df.materials["Shifter"], "shifter")
     assert [c.name for c in w.medium.channels] == ["wls"] and w.params["wls"]["yield"] == 1.0
@@ -199,7 +199,7 @@ def test_groupvel_export_is_accepted_a_user_table_refused(df):
     )
     exported = _with(liq, GROUPVEL=schema.Property("GROUPVEL", 299.792458 / ng, eg))
     assert rules.geant4_groupvel_export(exported.properties)
-    assert rules.medium(exported).medium.index.kind == "g4_rindex"
+    assert rules.medium(exported).medium.index.form == "g4_rindex"
     user = _with(liq, GROUPVEL=schema.Property("GROUPVEL", 0.99 * 299.792458 / ng, eg))
     with pytest.raises(rules.OpticsRefused, match="user GROUPVEL"):
         rules.medium(user)
@@ -272,9 +272,9 @@ def test_compile_packs_spectral_kernel_params(df):
                          sensors=(regions.SensorBinding("s", 1, lv="Sen"),),
                          disjoint=tuple((a, c) for i, a in enumerate(pvs) for c in pvs[i + 1:]))  # fmt: skip
     o = regions.compile(lib, t, b, (100.0, 900.0))
-    assert ("glisur_metal", "R") in o.kernel_laws
+    assert ("glisur_metal", "R") in o.type_laws
     blk = o.params["kernel"]["glisur_metal"]["R"]
-    law = o.kernel_laws[("glisur_metal", "R")]
+    law = o.type_laws[("glisur_metal", "R")]
     lam = np.linspace(100, 900, 50)
     for i, origin in enumerate(o.rows["glisur_metal"]):
         got = np.asarray(law({k: jnp.asarray(v[i]) for k, v in blk.items()}, jnp.asarray(lam, F32)))
