@@ -8,15 +8,15 @@ Each choice is recorded with ``origin="import"`` and a note.
   smallest length the navigator resolves) at every knot is bound opaque: Geant4 refracts a photon in and absorbs it
   within that length, and lumen's navigator does not track inside a mesh (the facet rule). Its surfaces still apply.
   Elsewhere such a medium is tracked as Geant4 tracks it (the photon refracts in and is absorbed on its first step).
-- **One-sided WLS films (D51).** A box of a WLS material (WLSABSLENGTH) thinner than the band at its first
-  placement, with no surface of its own, is a film on the face it touches: per placement, its sibling boxes in its
-  mother (turned by signed permutations, as is the film) are searched for a contact; the contact set must be exactly
-  one complete flat face of one backing, else the conversion is refused. Every placement of the backing's volume
-  must carry a film on the same face of its own frame (a film on both faces is refused). The film material is bound
-  to its mother's material (index-matched: checked when the film is built), and the backing's skin becomes a
-  ``lumen:wls_film`` surface named after the film volume, with that face's normal as ``local_axis`` (the build
-  turns it by each placement's world rotation: ``lumen.build.library.split_films``). Geant4 never attaches a film
-  to a face: its effect follows from the face the film volume touches.
+- **One-sided WLS films** (docs/dev/design.md section 7). A box of a WLS material (WLSABSLENGTH) thinner than the band
+  at its first placement, with no surface of its own, is a film on the face it touches: per placement, its sibling boxes
+  in its mother (turned by signed permutations, as is the film) are searched for a contact; the contact set must be
+  exactly one complete flat face of one backing, else the conversion is refused. Every placement of the backing's volume
+  must carry a film on the same face of its own frame (a film on both faces is refused). The film material is bound to
+  its mother's material (index-matched: checked when the film is built), and the backing's skin becomes a
+  ``lumen:wls_film`` surface named after the film volume, with that face's normal as ``local_axis`` (the build turns it
+  by each placement's world rotation: ``lumen.build.library.split_films``). Geant4 never attaches a film to a face: its
+  effect follows from the face the film volume touches.
 
 The union split by leaf count is the navigator build's rule (``lumen.build.lowering.split_unions``).
 """
@@ -36,7 +36,7 @@ CONTACT = 1e-12  # m: two GDML lengths that agree to this are equal (1e-9 mm)
 
 
 class ImportRuleError(ValueError):
-    """A WLS film whose contact is not exactly one complete flat face per placement (D51)."""
+    """A WLS film whose contact is not exactly one complete flat face per placement."""
 
 
 def apply(df: schema.DetectorFile) -> schema.DetectorFile:

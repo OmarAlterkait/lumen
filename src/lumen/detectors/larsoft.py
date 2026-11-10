@@ -4,7 +4,7 @@ SBND (sbnd_v02_00_full_simulation.gdml, sbndcode 4e41b3d8): the GDML holds every
 optical simulation gives Geant4. The recipe's decisions, each checked against the GDML first:
 
 - The TPB film (volCPATPB, 23 nm on one face of each CPA foil) is lowered by the general film rule
-  (``lumen.build.import_rules``, D51): TPB bound to LAr, the foil's skin a ``lumen:wls_film`` on the film's face.
+  (``lumen.build.import_rules``): TPB bound to LAr, the foil's skin a ``lumen:wls_film`` on the film's face.
 - The outside: the detector volume (volCryostat) is exactly the inner box of volCryoMembrane (steel), placed at the
   same position, so the outside carries the membrane's skin (checked).
 - Every material without RINDEX is one opaque medium (Geant4 kills a photon there).

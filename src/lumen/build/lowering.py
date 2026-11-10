@@ -25,11 +25,7 @@ rock and ground; photons never come back from them), which volumes are sensors (
 SensDet tag, an EFFICIENCY surface, or only by name: the rule is declared and the report lists what it matched),
 and the optics of each medium, attached by ``media``.
 
-Notes
------
-Ported from lumen.scene.mapping, build, normalise and load (rebuild/next ec8de54c), themselves from LUCiD's gdml_v2
-(geom-vec a0579a25). The input is now a ``lumen.format.schema.DetectorFile`` in metres, so the mm to m conversions
-are gone; every other operation is the baseline's, in the same order.
+The input is a ``lumen.format.schema.DetectorFile`` in metres.
 """
 
 from __future__ import annotations
@@ -79,7 +75,7 @@ def rot_from_angles(x, y, z):
 
 
 def _rotation(angles):
-    """Return the physvol matrix of angles: the identity when no rotation is given (all +0), as the baseline read it."""
+    """Return the physvol matrix of angles: the identity when no rotation is given (all +0)."""
     if all(a == 0.0 and math.copysign(1.0, a) > 0 for a in angles):
         return IDENT
     return rot_from_angles(*angles)
@@ -330,7 +326,7 @@ def find_detector(df, spec, mapper=None):
 
 # ==================================================================================================== lowering
 def flat_aux(volume):
-    """Return a volume's auxiliary (type, value) pairs as the baseline read them: each tag and its direct children."""
+    """Return a volume's auxiliary (type, value) pairs: each tag and its direct children."""
     out = []
     for a in volume.aux:
         out.append((a.type, a.value))

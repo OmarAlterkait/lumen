@@ -38,11 +38,6 @@ Sensor groups
 The outside material is always its own opaque medium, "outside". ``sources`` maps every parameter leaf of the
 library (the paths of ``surfaces.named_params``, e.g. ("media", "Water", "index", "value")) to the
 detector-file key it came from, as data (``Source``).
-
-Notes
------
-These are the baseline recipes' libraries (lumen rebuild/next ec8de54c: lumen.detectors.wcsim.library,
-sbnd_full.tree / library / film_surfaces / bindings, microboone.library / bindings) as recorded decisions.
 """
 
 from __future__ import annotations
@@ -101,7 +96,7 @@ def split_films(df: schema.DetectorFile, tree, instances):
     """Return (tree, films): each WLS-film skin's volume split by film side, films {split lv: (surface, axis)}.
 
     A placement's film axis is its world rotation times the surface's ``local_axis``, rounded to 6 decimals (+ 0.0:
-    no negative zero); its LV becomes ``<lv>|film<axis>``, as the baseline's sbnd_full.tree names it.
+    no negative zero); its LV becomes ``<lv>|film<axis>``.
     """
     film_lvs = _film_skins(df)
     if not film_lvs:

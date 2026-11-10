@@ -23,11 +23,8 @@ Geant4 counts them: a values attribute that ends in whitespace (or is empty) has
 reads with ``while (!eof) stream >> token``). A conflicting re-definition is a GDMLError, as are an overflowing literal
 and a matrix with a value that does not evaluate (a NaN, an unknown name), used or not, as in Geant4.
 
-Notes
------
-Ported from the reader of lumen.scene.gdml (rebuild/next), itself from LUCiD's gdml_v2 reader, and extended with
-what the importer needs: material compositions, elements, isotopes, temperatures and pressures, nested auxiliary
-tags, the top-level userinfo, and the setup named ``Default``.
+Beyond the geometry the reader keeps what the importer needs: material compositions, elements, isotopes, temperatures
+and pressures, nested auxiliary tags, the top-level userinfo, and the setup named ``Default``.
 """
 
 from __future__ import annotations
