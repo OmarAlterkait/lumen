@@ -31,6 +31,30 @@ equals the automatic derivative to 1e-10, so the derivative is right. The exactn
 difference's own error from the difference at h/4 (a 1/h error gives |FDX(h/4) − FDX(h)| / 3) and allows three times
 it; an automatic derivative that misses a term still disagrees at every h.
 
+A family at the edge of its domain (a probability at 0 or 1) takes a one-sided finite difference, and its step h is
+chosen by scanning down by four: the step is accepted where its difference agrees with both neighbours, at 4h and at
+h/4, within two standard errors. One agreement is not enough: on ANNIE's R7081 photocathode
+(`dielectric_rt_sensor.T`, 16x the default photons) the differences at h = 1/16 and 1/64 agreed, yet the one at 1/64
+was 2.2 standard errors off the automatic derivative (−0.18129 against −0.18201); at 1/256 and 1/1024 it fell on it
+(−0.18285 and −0.18195). The truncation at 1/64 was below the noise of one comparison and above that of the final
+test. With two agreements required, the scan stops at the first step whose neighbours both confirm it.
+
+The groups' spread is tested against a band calibrated to the noise it sees: the mean of the groups' z^2 must lie
+below its null plus three standard deviations, and that standard deviation is sqrt((κ − 1) / ndf), κ the kurtosis
+of the per-replica finite-difference values pooled over the family's groups (never of their differences from the
+automatic derivative or of the groups' z, so a real bias cannot widen its own band; at least 3, the Gaussian value,
+so a light-tailed family keeps the Pearson band). A finite difference whose sides change photons' paths has heavy-tailed replicas: on
+ANNIE's two PMT photocathode transmittances (`dielectric_rt_sensor.T`, at their edge T = 0) the Gaussian band
+(1.67 for 50 groups) failed one or the other in turn at the default photon count, χ² 1.86 and 1.87, while their
+totals agreed (z +0.44 and −0.51) and both passed at 4x and 16x the photons. The record carries κ for every family.
+
+The automatic derivative at an edge is drawn through the edge floor (`lumen.transport.estimator`): the outcomes the
+edge closes are proposed with a fixed share of the draws (1 %), so the path they open is sampled. On a reflector the
+baseline's share, 1 % of the absorbed fraction, was 0.1 % at a reflectivity of 0.9; the derivative's positive part then
+came from a draw in a thousand at a large weight, and its replicas' spread understated the error (a closed unified box:
+the automatic derivative sat one to three standard errors below the difference at every h, and agreed at a larger
+share). The fixed share keeps the estimand and cuts that error about three times.
+
 ## Compiled programs and the persistent cache
 
 lumen turns on JAX's persistent compilation cache by default (`<LUMEN_CACHE>/xla`, never under HOME; an explicit

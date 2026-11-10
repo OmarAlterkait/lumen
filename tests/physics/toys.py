@@ -9,6 +9,8 @@ Each toy is a GDML string and a recipe. Materials have constant tables over 1-12
 - ``border_pair()``: two touching water boxes A | B in a vacuum world, a detecting border A -> B only; B the sensor.
 - ``rt_boxes(r)``: three touching water boxes A | B | C; A -> B a dielectric_dielectric surface with R = r and T = 0
   (a probability at its domain's edge), B -> C detecting; C the sensor.
+- ``lobe_plate(sigma, **consts)``: a unified ground metal plate (its three constants at 0 unless set) in a water
+  detector volume, hit once by a pencil; two counting slabs above it.
 - ``overlap(name)``: one of g4ref's overlap toys (tests/data/overlap_toys), its slab counting every entry.
 """
 
@@ -199,6 +201,44 @@ def rt_boxes(r=0.5, absorption=1e3):
                        structure=structure)  # fmt: skip
     group = SensorGroup("c", "border_into", "lumen:geant4", lv="CLV", settings={"efficiency_on_entry": 1.0})
     return gdml, Recipe("rt_boxes", "WorldLV", BAND, (group,))
+
+
+def lobe_plate(sigma=0.2, **consts):
+    """Return (GDML, recipe) of a unified ground metal plate in a water detector volume, with two counting slabs above.
+
+    The plate's skin: dielectric_metal, unified, ground, sigma_alpha ``sigma``, REFLECTIVITY 0.9 and the three
+    constants (SPECULARSPIKE / SPECULARLOBE / BACKSCATTER, default 0: every reflection Lambertian; ``consts`` sets
+    them by Geant4 key). A pencil from (-0.6, 0, 0.3) m along (0.6, 0, -0.8) hits it once; a reflected photon reaches
+    a slab or leaves the volume, never the plate again, so the charge is linear in each constant.
+    """
+    define = []
+    mats = [material("Water", define, RINDEX=N_WATER, ABSLENGTH=1e3), material("Metal", define),
+            material("SlabA", define, RINDEX=N_WATER, ABSLENGTH=1e3),
+            material("SlabB", define, RINDEX=N_WATER, ABSLENGTH=1e3), material("Vac", define)]  # fmt: skip
+    props = dict(REFLECTIVITY=0.9, SPECULARSPIKECONSTANT=0.0, SPECULARLOBECONSTANT=0.0, BACKSCATTERCONSTANT=0.0)
+    solids = ['  <box name="WorldS" x="6" y="6" z="6" lunit="m"/>',
+              '  <box name="WaterS" x="4" y="4" z="4" lunit="m"/>',
+              '  <box name="PlateS" x="2" y="2" z="0.02" lunit="m"/>',
+              '  <box name="SlabS" x="1" y="1" z="0.05" lunit="m"/>',
+              surface("Plate", define, "ground", sigma, **(props | consts))]  # fmt: skip
+    structure = ('  <volume name="PlateLV"><materialref ref="Metal"/><solidref ref="PlateS"/></volume>\n'
+                 '  <volume name="SlabALV"><materialref ref="SlabA"/><solidref ref="SlabS"/></volume>\n'
+                 '  <volume name="SlabBLV"><materialref ref="SlabB"/><solidref ref="SlabS"/></volume>\n'
+                 '  <volume name="WaterLV"><materialref ref="Water"/><solidref ref="WaterS"/>\n'
+                 '    <physvol name="pvPlate"><volumeref ref="PlateLV"/><position name="pp" z="-0.5" unit="m"/>'
+                 "</physvol>\n"
+                 '    <physvol name="pvSlabA"><volumeref ref="SlabALV"/><position name="pa" x="0.9" z="0.5" unit="m"/>'
+                 "</physvol>\n"
+                 '    <physvol name="pvSlabB"><volumeref ref="SlabBLV"/><position name="pb" x="-0.9" z="0.5" unit="m"/>'
+                 "</physvol>\n  </volume>\n"
+                 '  <volume name="WorldLV"><materialref ref="Vac"/><solidref ref="WorldS"/>\n'
+                 '    <physvol name="pvWater"><volumeref ref="WaterLV"/></physvol>\n  </volume>\n'
+                 '  <skinsurface name="PlateSkin" surfaceproperty="Plate"><volumeref ref="PlateLV"/>'
+                 "</skinsurface>")  # fmt: skip
+    gdml = HEAD.format(define="\n".join(define), materials="\n".join(mats), solids="\n".join(solids),
+                       structure=structure)  # fmt: skip
+    group = SensorGroup("slab", "any_entry", "lumen:counting", lv_pattern="^Slab", settings={"eff": 1.0})
+    return gdml, Recipe("lobe_plate", "WaterLV", BAND, (group,))
 
 
 def overlap(name):

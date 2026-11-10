@@ -80,10 +80,18 @@ def markdown(rows) -> str:
             continue
         gated = [r for r in sel if r["pass"] is not None]
         out += [f"## {title}", "", f"{sum(bool(r['pass']) for r in gated)} of {len(gated)} gated rows pass.", ""]
-        note = [("note", lambda r: str(r.get("extra", {}).get("note", "")))] if check == "gradients" else []
+        note = [("κ (Q / Tw)", _kappa), ("note", lambda r: str(r.get("extra", {}).get("note", "")))] \
+            if check == "gradients" else []  # fmt: skip
         out += [_table(sorted(sel, key=lambda r: (r["detector"], r["quantity"])), named + common + note), ""]
     out += ["## Not validated", ""] + [f"- {x}" for x in NOT_VALIDATED] + [""]
     return "\n".join(out)
+
+
+def _kappa(r) -> str:
+    """Return a gradient row's spread-band kurtosis (charge / time-weighted), or ''."""
+    e = r.get("extra", {})
+    ks = [e.get(c, {}).get("kappa") for c in ("charge", "time_weighted")]
+    return " / ".join(f"{k:.2f}" for k in ks) if all(isinstance(k, (int, float)) for k in ks) else ""
 
 
 def write(rows, path) -> Path:

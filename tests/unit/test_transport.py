@@ -70,7 +70,7 @@ def test_the_edge_floor_proposes_the_zero_outcomes_at_their_share():
     assert float(jnp.sum(jnp.where(fl, q, 0.0))) == pytest.approx(1.0)  # S = 0: n eps = 1
     pr = jnp.zeros(10, F32).at[ABSORB].set(0.5).at[SPECULAR].set(0.5)
     q, fl = estimator.edge_floor(pr, jnp.int32(0), jnp.int32(0), tables, (("painted", 0),))
-    s, e = 0.5, estimator.EDGE_BUDGET * 0.5
+    s, e = 0.5, estimator.EDGE_BUDGET  # a fixed share of the draws, whatever S
     assert float(jnp.sum(jnp.where(fl, q, 0.0))) == pytest.approx(s * e / (1 - e), rel=1e-6)
     q2, fl2 = estimator.edge_floor(pr, jnp.int32(0), jnp.int32(1), tables, (("painted", 0),))  # not an edge row
     assert not bool(jnp.any(fl2)) and np.array_equal(np.asarray(q2), np.asarray(pr))

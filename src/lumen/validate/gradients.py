@@ -15,12 +15,14 @@ Per family, on K replicas of ``photons`` photons (one run; the same photons and 
   z of AD - FD in total, with the groups' mean z^2 against the t null (K - 1) / (K - 3); a group whose median replica
   sees no FD jump (|FD| < AD / 10) is "FD unresolved" and leaves the mean (the median rule);
 - FDX (every side sampled at the nominal: the estimator's own realisation), Richardson at h = 1/1024: AD / FDX = 1.
-A family at an edge takes the inward one-sided stencil on an h-scan (h / 4 until F(4h) - F(h) is unresolved), the
-fixed-reference stencil when it moves no draw. A family whose AD is exactly 0 while its outcome is drawn (the edge
-rows proposed it, or it moves no draw) is "zero" (``judge_zero``): gated on the FD and FDX totals being 0, not on the
-groups' spread, which then measures only FD noise. Russian roulette is off in the comparison. ``reverse``: ``jax.grad``
-of a fixed random weighting of Q and Tw against the same weighting of the forward derivatives (lumen's own reverse
-check; tallymap's runtime replay is not used).
+SPREAD: the groups' mean z^2 passes below null + 3 sqrt((kappa - 1) / ndf), kappa the per-replica FD values' pooled
+kurtosis (``kurtosis``, at least 3: the Gaussian band for a light-tailed family).
+A family at an edge takes the inward one-sided stencil on an h-scan (h / 4 until F(h) agrees with both F(4h) and
+F(h / 4)), the fixed-reference stencil when it moves no draw. A family whose AD is exactly 0 while its outcome is
+drawn (the edge rows proposed it, or it moves no draw) is "zero" (``judge_zero``): gated on the FD and FDX totals
+being 0, not on the groups' spread, which then measures only FD noise. Russian roulette is off in the comparison.
+``reverse``: ``jax.grad`` of a fixed random weighting of Q and Tw against the same weighting of the forward
+derivatives (lumen's own reverse check; tallymap's runtime replay is not used).
 """
 
 from __future__ import annotations
@@ -148,7 +150,32 @@ def compare(ad, fd, f0, h, n):
     return dict(ad=ad[:, -1].mean() / n, ad_e=stats.sem(ad)[-1] / n, fd=fd[:, -1].mean() / n,
                 fd_e=stats.sem(fd)[-1] / n, z=float(z[-1]), chi2=float(np.mean(z[:-1][ok] ** 2)) if ok.any() else 0.0,
                 ndf=int(ok.sum()), null=stats.t_null(k), unresolved=int(unres.sum()),
-                floor=float(fl[-1]) / n, zmax=float(np.max(np.abs(z[:-1][ok]))) if ok.any() else 0.0)  # fmt: skip
+                kappa=kurtosis(fd[:, :-1][:, ok]), floor=float(fl[-1]) / n,
+                zmax=float(np.max(np.abs(z[:-1][ok]))) if ok.any() else 0.0)  # fmt: skip
+
+
+def kurtosis(x):
+    """Return the replicas' standardised fourth moment, pooled over the groups (columns of x, K rows), at least 3.
+
+    The spread band's noise model (``spread_passes``), from the per-replica FD values alone (never AD - FD or the
+    groups' z: a real per-group bias must not widen its own band). A heavy-tailed FD (photons whose paths the FD's
+    sides change) widens the band; 3 (Gaussian) is the floor, so a light-tailed family keeps the Gaussian band.
+    """
+    c = x - x.mean(0)
+    m2, m4 = np.mean(c**2, 0), np.mean(c**4, 0)
+    good = m2 > 0
+    return float(max(np.mean(m4[good] / m2[good] ** 2), 3.0)) if good.any() else 3.0
+
+
+def spread_passes(c) -> bool:
+    """Return whether the groups' mean z^2 is within its band: null + 3 sqrt((kappa - 1) / ndf) (``SPREAD``).
+
+    Var(z^2) = kappa - 1 for z of kurtosis kappa: 2 for Gaussian z (the Pearson band of ``stats.chi2_passes``);
+    heavier tails widen it by the family's own estimate.
+    """
+    k = c.get("kappa", 3.0)
+    return bool(c["ndf"] == 0 or c["chi2"] <= c["null"] + max(3.0 * np.sqrt((k - 1.0) / c["ndf"]),
+                                                              stats.CHI2_FLOOR * c["null"]))  # fmt: skip
 
 
 class _Sides:
@@ -172,30 +199,33 @@ class _Sides:
 
 
 def _edge_fd(sides, j, ad, v0, o, n):
-    """Return (FD, h, stencil) of an edge family: the inward h-scan, fixed-reference when the family moves no draw."""
-    prev, fixed, chosen = None, False, None
+    """Return (FD, h, stencil) of an edge family: the inward h-scan, fixed-reference when the family moves no draw.
+
+    The scan goes down ``edge_hs`` (h / 4 each step) and stops at the first h whose FD agrees with both neighbours,
+    F(4h) and F(h / 4) (``CONVERGED``): one agreement alone can be noise hiding a truncation (ANNIE's R7081
+    dielectric_rt_sensor.T: F(1/16) and F(1/64) agreed, but F(1/64) was 2.2 sigma off the AD at 16x photons, and
+    F(1/256), F(1/1024) fell on it; docs/explanation/validation.md).
+    """
+    fixed, fs = False, []
+
+    def agree(a, b):
+        diffs = (a[c][:, -1] - b[c][:, -1] for c in (0, 1))
+        return max(abs(float(np.mean(d) / max(stats.sem(d), 1e-300))) for d in diffs) < CONVERGED
+
     for h in o["edge_hs"]:
         f = sides.fd(j, h, True, fixed)
-        if (
-            prev is None
-            and float(np.max(np.abs(f - sides.fd(j, h, True, True))) / max(np.max(np.abs(f)), 1e-30)) < 1e-5
-        ):
+        if not fs and float(np.max(np.abs(f - sides.fd(j, h, True, True))) / max(np.max(np.abs(f)), 1e-30)) < 1e-5:
             fixed, f = True, sides.fd(j, h, True, True)
-        if prev is not None:
-            dz = [
-                abs(float(np.mean(d) / max(stats.sem(d), 1e-300)))
-                for d in (prev[c][:, -1] - f[c][:, -1] for c in (0, 1))
-            ]
-            if max(dz) < CONVERGED:
-                chosen = (f, h)
-                break
-        prev = f
-    f, h = chosen or (prev, o["edge_hs"][-1])
+        fs.append((f, h))
+        if len(fs) >= 3 and agree(fs[-3][0], fs[-2][0]) and agree(fs[-2][0], fs[-1][0]):
+            f, h = fs[-2]
+            return f, h, "fixed-reference" if fixed else "shared-reference"
+    f, h = fs[-1]
     return f, h, "fixed-reference" if fixed else "shared-reference"
 
 
 def _fd_passes(ad, fd, v0, h, n):
-    return all(abs(c["z"]) <= stats.Z_MAX and stats.chi2_passes(c["chi2"], c["ndf"], c["null"])
+    return all(abs(c["z"]) <= stats.Z_MAX and spread_passes(c)
                for c in (compare(ad[k], fd[k], v0[k], h, n) for k in (0, 1)))  # fmt: skip
 
 
@@ -267,7 +297,7 @@ def judge(cq, ct, xq, xt, no_draw, exact_gated=True):
     exact = all(_exact(c) for c in (xq, xt))
     note = "" if exact_gated else "infinite variance (SPEC section 9): AD / FDX reported; "
     exact = exact or not exact_gated
-    fd_ok = no_draw or all(abs(c["z"]) <= stats.Z_MAX and stats.chi2_passes(c["chi2"], c["ndf"], c["null"])
+    fd_ok = no_draw or all(abs(c["z"]) <= stats.Z_MAX and spread_passes(c)
                            for c in (cq, ct))  # fmt: skip
     note += ("" if exact else "AD / FDX off; ") + ("" if fd_ok else "AD - FD off; ")
     note += "moves no draw" if no_draw else ""

@@ -11,7 +11,12 @@ surface type's ``domain``: a fraction at 0 or 1, a film's yield or thickness at 
 derived from ``wrt`` and the domains, never an option). At those
 rows every continuing outcome of the surface type whose reference probability is 0 is proposed at eps: drawn, the
 photon carries eps / q and ``Photon.z`` carries p / eps, exactly 0 in value and dp / eps in derivative. eps gives the
-floored outcomes the share e = EDGE_BUDGET (1 - S) of the draws, S the continuing reference mass. A Mie forward ratio
+floored outcomes the fixed share e = EDGE_BUDGET of the draws at that row, whatever the continuing reference mass S
+(the baseline's e = EDGE_BUDGET (1 - S) starved them on a reflector: at R = 0.9, S = 0.9 and e = 0.001, so the
+derivative's positive part, the path the floored outcome opens, came from a draw in a thousand at weight 1 / eps,
+heavy-tailed: on a closed unified box its replicas' spread was underestimated and the AD sat 1-3 sigma low; at e =
+0.01 its error is three times smaller and AD and FD agree). The value pays e of the draws at an edge row (photons with
+z = 0); the estimand is unchanged (D68). A Mie forward ratio
 at 0 or 1 in ``wrt`` has its reference moved inside by the same share (``mie_reference``); its live weight is the
 direction density's ratio.
 
@@ -31,7 +36,7 @@ from lumen._core.safe import safe_div
 from lumen.surfaces.outcomes import N_OUTCOMES, TERMINAL
 
 sg = jax.lax.stop_gradient
-EDGE_BUDGET = 0.01  # the share of a vertex's draws the floored outcomes take, times (1 - S) (baseline's edge_budget)
+EDGE_BUDGET = 0.01  # the share of an edge row's draws the floored outcomes take (the baseline's edge_budget x (1 - S))
 EDGE_SHARE_MIN, EDGE_SHARE_MAX = 1e-6, 0.5  # that share's clip
 MIE_RATIO = "forward_ratio"
 
@@ -124,7 +129,7 @@ def edge_floor(pr_r, kidx, row, tables, rows):
     fl = at & jnp.asarray(sup)[k] & (p <= 0.0)
     S = jnp.sum(jnp.where(cont, p, 0.0))
     n = jnp.maximum(jnp.sum(fl), 1)
-    e = jnp.clip(EDGE_BUDGET * (1.0 - S), EDGE_SHARE_MIN, EDGE_SHARE_MAX)
+    e = min(max(EDGE_BUDGET, EDGE_SHARE_MIN), EDGE_SHARE_MAX)  # a fixed share (module docstring)
     eps = jnp.where(S > 0.0, S * e / (1.0 - e), 1.0) / n
     return jnp.where(fl, eps.astype(pr_r.dtype), p), fl
 

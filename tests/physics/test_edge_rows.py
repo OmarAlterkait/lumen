@@ -50,3 +50,40 @@ def test_the_edge_floor_gives_the_closed_form_derivative_at_t_zero(toy):
     assert abs(ad - exact) <= 4.0 * err and err < 0.03, (ad, err, exact)
     ad_off, _ = _ad(s0, path, row)
     assert ad_off == 0.0  # the outcome is never proposed without the edge rows
+
+
+KEYS = {"p_lobe": "SPECULARLOBECONSTANT", "p_back": "BACKSCATTERCONSTANT"}
+M = 1 << 20
+
+
+def _plate(s, x_param=None, x=0.0, edge=False, seed=900):
+    """Return (Q, Tw) per replica of the pencil onto the plate, or their jvp in ``x_param`` at x (edge rows on)."""
+    p0 = photons.packed(s.det)
+    kind = next(k.name for k in s.det.parts.optics.kinds if "p_lobe" in k.params)
+    rows = photons.pencil([-0.6, 0.0, 0.3], [0.6, 0.0, -0.8], 400.0, M)
+
+    def q(y):
+        v = p0["kernel"][kind][x_param] if x_param else None
+        p = p0 if v is None else {**p0, "kernel": {**p0["kernel"], kind: {**p0["kernel"][kind], x_param: (
+            {**v, "value": v["value"].at[0].add(y)} if isinstance(v, dict) else v.at[0].add(y))}}}  # fmt: skip
+        ops = photons.operands(s, p, jax.tree_util.tree_map(jax.lax.stop_gradient, p), steps.Controls(roulette=0.0))
+        t = runner.run(item.photons(s.tally), s.model, ops, rows, photons.raw_key(seed), replicas=K, max_vertices=2000)
+        return t.outputs["Q"].reshape(K, -1).sum(-1), t.outputs["Tw"].reshape(K, -1).sum(-1)
+
+    out = jax.jit(lambda y: jax.jvp(q, (y,), (1.0,))[1])(jnp.float32(x)) if edge else jax.jit(q)(jnp.float32(x))
+    return [np.asarray(v, np.float64) for v in out]
+
+
+@pytest.mark.parametrize("param", ["p_lobe", "p_back"])
+def test_a_unified_constant_at_zero_gives_its_exact_derivative(toy, param):
+    # one reflection: Q is linear in the constant, so dQ/dp = Q(p = 1) - Q(p = 0) exactly (each its own photons)
+    s0, s1 = toy("lobe_plate", 0.2), toy("lobe_plate", 0.2, **{KEYS[param]: 1.0})
+    q0, q1 = _plate(s0, seed=901), _plate(s1, seed=901)
+    kind = next(k.name for k in s0.det.parts.optics.kinds if "p_lobe" in k.params)
+    edge = estimator.edge_rows(s0.det.parts.optics, photons.packed(s0.det), [("kernel", kind, param, 0)])
+    assert edge == ((kind, 0),), edge
+    ad = _plate(toy("lobe_plate", 0.2, step=steps.StepConfig(edge_rows=edge)), param, edge=True)
+    for c in (0, 1):  # Q and the time-weighted Q
+        exact, e_exact = q1[c].sum() - q0[c].sum(), np.hypot(*(np.std(v[c], ddof=1) for v in (q0, q1))) * np.sqrt(K)
+        a, e_a = ad[c].sum(), np.std(ad[c], ddof=1) * np.sqrt(K)
+        assert abs(a - exact) <= 4.0 * np.hypot(e_a, e_exact) and e_a < 0.05 * abs(exact), (param, c, a, e_a, exact)
