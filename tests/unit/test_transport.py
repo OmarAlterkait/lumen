@@ -202,3 +202,41 @@ def test_a_many_bounce_chain_is_rescaled_without_changing_a_bit():
     fixed = jax.jvp(lambda d: end(ms.rescale(huge), d), (f32(np.zeros(3)),), (f32([0.3, 0.1, 0.0]),))
     assert not np.isfinite(np.asarray(raw)).all()
     assert all(np.asarray(a).tobytes() == np.asarray(b).tobytes() for a, b in zip(fixed, want, strict=True))
+
+
+def _rot_x(a):
+    c, s = np.cos(a), np.sin(a)
+    return np.array([[1, 0, 0], [0, c, -s], [0, s, c]], np.float32)
+
+
+def test_the_hit_angle_reads_only_the_sensors_own_pose():
+    """docs/dev/design.md section 12: the CE coordinate of a crossing point, frame by frame (study test-plan item 1).
+
+    (a) inside a glass mother and (b) straight in the water: one world pose, one angle (the mother never enters);
+    (c) turned 180 degrees about x, its cathode with it: the same angle;
+    (d) the solid's origin moved along its axis, (e) its axis off z: the angle changes, the documented 0.2 limit (a
+    declared axis and reference point).
+    """
+    from lumen.transport.step import sensor_angle
+
+    rng = np.random.default_rng(0)
+    u = rng.normal(size=(64, 3)).astype(np.float32)
+    local = 0.25 * u / np.linalg.norm(u, axis=1, keepdims=True)
+    local[:, 2] = np.abs(local[:, 2])  # the cathode: the +z half of a sphere about the solid's origin
+    want = np.arccos(np.abs(local[:, 2]) / 0.25)
+    R, t = _rot_x(0.3), np.array([1.0, -2.0, 0.5], np.float32)
+    world = local @ R.T + t
+    ang = jax.vmap(lambda x: sensor_angle(jnp.asarray(R), jnp.asarray(t), x))
+    a = np.asarray(ang(jnp.asarray(world)))
+    np.testing.assert_allclose(a, want, atol=2e-6)  # (a) = (b): the sensor's world pose only
+    Rf = R @ _rot_x(np.pi)  # (c) the PMT turned over, its cathode points with it
+    np.testing.assert_allclose(np.asarray(jax.vmap(lambda x: sensor_angle(jnp.asarray(Rf), jnp.asarray(t), x))(
+        jnp.asarray(local @ Rf.T + t))), want, atol=2e-6)  # fmt: skip
+    behind = np.asarray(ang(jnp.asarray(local * np.array([1, 1, -1], np.float32) @ R.T + t)))
+    np.testing.assert_allclose(behind, np.pi - want, atol=2e-6)  # signed: a point behind the plane is past 90 degrees
+    t_d = t + R @ np.array([0.0, 0.0, 0.05], np.float32)  # (d) the origin 5 cm up the axis
+    a_d = np.asarray(jax.vmap(lambda x: sensor_angle(jnp.asarray(R), jnp.asarray(t_d), x))(jnp.asarray(world)))
+    assert np.max(np.abs(a_d - want)) > 1e-2
+    R_e = R @ np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]], np.float32)  # (e) the axis along local y
+    a_e = np.asarray(jax.vmap(lambda x: sensor_angle(jnp.asarray(R_e), jnp.asarray(t), x))(jnp.asarray(world)))
+    assert np.max(np.abs(a_e - want)) > 1e-1

@@ -126,3 +126,34 @@ def test_a_detector_without_a_sensor_model_simulates_arrivals_only(toy):
     q = float(np.asarray(light.arrivals, np.float64).sum())
     assert light.histograms is None and q > 0.0 and np.isfinite(np.asarray(light.mean_arrival_time)).all()
     assert abs(q - on_axis(Z0, L_ABS)[0]) < Z_MAX * float(np.asarray(light.arrivals_error).sum())
+
+
+def test_the_hit_angle_is_smooth_in_a_source_at_the_detector_centre(pmt_sphere, tmp_path):
+    """A CE table read at the crossing point (the sensor's frame): a source at the ball's centre has a finite
+    position derivative, equal to the one 1 um away on the same photons (WCSim's start point: ~1e15 per m there)."""
+    vs = tmp_path / "ce.json"
+    d = json.loads(json.dumps(dict(
+        schema="lumen-pmt-values/1", model="lumen:pmt", model_version=1, name="ce", version=1, readout="pe",
+        provenance=dict(source="tests/physics/test_sources.py", status="measured"),
+        qe=dict(band_edges_nm=[300.0, 600.0], values=[1.0]),
+        ce=dict(theta_deg=[0, 10, 20, 30, 40, 50, 60, 70, 80, 90], values=[1, 1, .99, .95, .9, .85, .8, .69, .35, .13]),
+        efficiency=1.0, t_offset_ns=0.0, tts=None, charge=None, gain=1.0, threshold=None, dark_rate_hz=0.0,
+        frontend=dict(sampling_ns=1.0, unit="pe", window_ns=0.0, charge_step_pe=0.25, charge_max_pe=4.0))))  # fmt: skip
+    vs.write_text(json.dumps(d))
+    g0 = next(g for g in pmt_sphere.sensor_set.groups if g.model == "lumen:pmt")
+    sset = dataclasses.replace(
+        pmt_sphere.sensor_set,
+        groups=tuple(dataclasses.replace(g0, defaults=str(vs)) if x is g0 else x for x in pmt_sphere.sensor_set.groups),
+    )
+    parts = build.build(pmt_sphere.file, sset)
+    det = lumen.Detector(pmt_sphere.name, pmt_sphere.path, pmt_sphere.file, sset, parts, pmt_sphere.sensors,
+                         pmt_sphere.calibration, build.parameters(pmt_sphere.file, sset, parts))  # fmt: skip
+    p0 = det.params()
+
+    def pe(z):
+        light = lumen.simulate(det, point(z), samples=1 << 14, seed=7, wrt=("source/position",))
+        return lumen.readout.pe(light, p0).sum()
+
+    v, d0 = jax.jvp(pe, (F32(0.0),), (F32(1.0),))
+    _, d1 = jax.jvp(pe, (F32(1e-6),), (F32(1.0),))
+    assert np.isfinite(float(d0)) and abs(float(d0) - float(d1)) <= 1e-3 * float(v), (v, d0, d1)  # per m

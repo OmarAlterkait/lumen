@@ -522,15 +522,28 @@ def step(model, ops, ph, key):
 
 
 def hit_angle(model, ops, ph, sc, out_side):
-    """Return the hit angle (rad) of a crossing into a sensor: acos(|z| / r) in the frame of the volume outside it.
+    """Return the hit angle (rad) of a sensor crossing: acos(z / r) of the crossing point in the sensor's own frame.
 
-    WCSim's definition (WCSimWCSD.cc ProcessHits, ProcessHits_boundary): into the sensor, the step's start point in
-    the frame of the volume it starts in (the glass); out of it (``out_side``, credited to the volume left), the
-    crossing point in the frame of the volume after (the glass). Evaluated as atan2(rho, |z|): finite derivatives on
-    the axis.
+    The collection-efficiency table is defined on the position of the hit on the PMT about its axis. The crossing point
+    on the sensor's surface is that position, in the frame of the sensor's placement (the volume entered, or for
+    ``out_side`` the volume left). WCSim evaluates the same formula at the step's start point in the frame of the
+    volume the step starts in (WCSimWCSD.cc:75-84, 220-224, e2dc7a4): with the sensor inside its glass, a proxy for the
+    crossing point off by the glass thickness (SK's expected PE -0.2 to -0.3 %, port/REPORT.md); with the sensor
+    placed straight in the detector volume, the angle of the photon's origin about that volume's centre, singular at
+    it. Evaluated as atan2(rho, |z|): finite derivatives on the axis.
     """
     q, D = sc.q, geometry(model, ops).nav.dev()
-    v = jnp.where(out_side, q["vol_after"], q["vol_before"])
-    x = jnp.where(out_side, ph.x + sc.dist * ph.d, ph.x)
-    r = D["R"][v].T @ (x - D["t"][v])
-    return jnp.arctan2(jnp.sqrt(r[0] * r[0] + r[1] * r[1] + 1e-30), jnp.abs(r[2]))
+    v = jnp.where(out_side, q["vol_before"], q["vol_after"])
+    return sensor_angle(D["R"][v], D["t"][v], ph.x + sc.dist * ph.d)
+
+
+def sensor_angle(R, t, x):  # noqa: N803 -- R a rotation matrix, as in the navigator
+    """Return acos(z / r) (rad) of the world point x in the frame of a placement (rotation R, translation t).
+
+    Only the sensor's own pose enters: the angle is the same whatever volume holds the sensor. The polar angle is about
+    the sensor solid's origin and its local +z axis, signed (beyond 90 degrees behind the origin's plane; a declared
+    axis and reference point are 0.2 scope, port/REPORT.md). WCSim folds it with |z|; every crossing of SK's and
+    WCTE's cathodes has z > 0, so the two agree bitwise there (job 44177141).
+    """
+    r = R.T @ (x - t)
+    return jnp.arctan2(jnp.sqrt(r[0] * r[0] + r[1] * r[1] + 1e-30), r[2])

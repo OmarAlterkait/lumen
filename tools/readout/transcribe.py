@@ -154,9 +154,10 @@ def sk_sets(src, hh):
     d["provenance"]["fields"] = dict(
         qe=f"{w_where}; {q_where}: physical QE, without SensitiveDetector_Only's x4/3 (WCSimWCSD.cc:213); WCSim's "
         "rule (WCSimPMTQE.cc:41-80): linear, 0 at or above 660 nm",
-        ce=f"WCSim develop e2dc7a4 src/WCSimPMTObject.cc:{ce_line}: the SKDetSim table (commented in WCSim), "
-        "transcribed "
-        "from WCSim src/WCSimPMTObject.cc:70-71; theta = acos(|z_local| / r_local) of the hit point",
+        ce=f"WCSim's 2011 collection-efficiency table (commit 3a56a2caeb, 2011-05-28; dropped for a flat 100 % in "
+        "2a3ff0adc6, 2015-03-19, the comment there: \"Different from SKDetSim\"), kept commented at WCSim develop "
+        f"e2dc7a4 src/WCSimPMTObject.cc:{ce_line - 1}-{ce_line}; its source and its coordinate are not documented "
+        "(unverified); WCSim's convention: theta = acos(|z_local| / r_local) about the PMT solid's origin",
         tts=f"{src.where('PMT20inch::HitTimeSmearing(')}: WCSim's per-digit smear 0.33 + sqrt(10 / Q) ns at Q = 1 pe, "
         "used as a per-photoelectron Gaussian (WCSim has no per-photoelectron time spread)",
         charge=f"{c_where} (rn1pe: WCSimWCPMT.cc:55-77)", threshold=f"{t_where}: the SKI acceptance",
@@ -165,7 +166,8 @@ def sk_sets(src, hh):
         "(WCSimWCDigitizer.hh:115); WCSim's 0.985 charge factor (WCSimWCDigitizer.cc:262) and 0.4 ns time "
         "truncation are its conventions, not physical values")  # fmt: skip
     d["provenance"]["warning"] = ("timing unverified until transcribed: the per-photoelectron time spread is WCSim's "
-                                  "per-digit smear at 1 pe")  # fmt: skip
+                                  "per-digit smear at 1 pe; CE unverified: WCSim's 2011 table, not SKDetSim's; its "
+                                  "origin and coordinate are undocumented (docs/dev/design.md section 12)")  # fmt: skip
     return d, s1
 
 

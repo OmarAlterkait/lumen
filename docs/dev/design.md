@@ -442,8 +442,12 @@ after tracking:  detection  η_s(λ, θ) = ε_s · QE(λ) · CE(θ)             
 
 - **One sensor model: `lumen:pmt`.** SBND's X-ARAPUCAs and MicroBooNE's discs stay counting sensors read by the
   `lumen:counting` surface reader, with their reference efficiencies applied as constants.
-- **Hit angle**: θ = acos(|z_local| / r_local) of the hit position on the PMT, WCSim's definition
-  (WCSimWCSD.cc ProcessHits), so CE(θ) means the same in both codes.
+- **Hit angle**: θ = acos(z_local / r_local) of the crossing point on the sensor, in the sensor's own placement
+  frame (signed: WCSim's |z| agrees bitwise on SK and WCTE, whose cathode crossings all have z > 0): the hit position on the PMT about its axis, on which the CE table is defined. WCSim evaluates the formula at
+  the step's start point in the glass's frame (WCSimWCSD.cc:75-84, 220-224), a proxy off by the glass thickness:
+  lumen's SK expected PE is 0.2-0.3 % below that proxy's (job 44172555). WCSim's point would make CE depend on the
+  photon's origin for a sensor placed straight in the detector volume, with a derivative singular at that volume's
+  centre.
 - **Two histograms per group**: charge (sensor × λ knots × θ knots, exact in QE and CE) and time (sensor × one λ band
   × time nodes, scaled per sensor to the charge histogram). The time histogram is weighted at the reference QE: exact
   for a QE scale, approximate for a QE shape. Grids are static, derived from the components' declared supports and
@@ -465,7 +469,7 @@ dark rate, threshold (acceptance vs charge), front end (sampling, baseline, nois
 
 | Default values | Source |
 |---|---|
-| `sk_r3600` | physical QE: WCSim's PMT20inch table without the ×4/3 of `SensitiveDetector_Only`; the SKI threshold acceptance; SPE table and dark rate from WCSim; CE: the SKDetSim table {100, 100, 99, 95, 90, 85, 80, 69, 35, 13} % in 10° steps, 0 at θ ≥ 90° (WCSimPMTObject.cc:70-71) |
+| `sk_r3600` | physical QE: WCSim's PMT20inch table without the ×4/3 of `SensitiveDetector_Only`; the SKI threshold acceptance; SPE table and dark rate from WCSim; CE (**unverified**): WCSim's 2011 table {100, 100, 99, 95, 90, 85, 80, 69, 35, 13} % in 10° steps (commit 3a56a2caeb; dropped for a flat 100 % in 2a3ff0adc6, whose comment calls it "different from SKDetSim"; kept commented at WCSimPMTObject.cc:70-71), in WCSim's convention; its source and coordinate are undocumented |
 | `wcte_r14374` | the same rule for WCTE's 3-inch PMT (own QE table, CE 95 % flat in WCSim) |
 | `wcsim_annie_<type>` | ANNIE's PMT tables from annie WCSim |
 | `sbnd_pmt` | `digi_pmt_sbnd.fcl`: efficiency 0.0392 coated (VUV), 0.026 coated (visible), 0.0357 uncoated; TTS 2.4 ns FWHM; transit 55.1 ns; SPE template; 2 ns sampling |
@@ -493,7 +497,7 @@ branches in Python on a parameter value, never closes over a parameter array and
 | gradients | same-random-number and fixed-reference finite differences | K = 32 replicas, the (K−1)/(K−3) null, roulette off, automatic edge h-scans with a fixed-reference stencil, "FD unresolved" by the median rule, declared parameters only; forward on six detectors, reverse on SK and SBND |
 | geometry import | g4ref `--probe` point location | 100 % |
 | overlaps | the 18 g4ref overlap toys; the overlap census | detected fraction and mean time within errors |
-| WCSim digits, SK consistency | digits from the charge-check runs; QE/CE-on runs with the patched SKDetSim CE table | yields 1 %, timing 0.02 ns and 1 %, threshold loss; digit times truncated on a 0.4 ns grid, applied on the reference side |
+| WCSim digits, SK consistency | digits from the charge-check runs; QE/CE-on runs with WCSim's 2011 CE table patched in | yields 1 %, timing 0.02 ns and 1 %, threshold loss; digit times truncated on a 0.4 ns grid, applied on the reference side |
 | SBND PMT waveforms | sbndcode OpDetSim; photon lists from the SBND reference | mean and variance per channel |
 | Mie | §11 | §11 |
 | export | Geant4 10.7.4 round trip on toys | `import(export(df)) == df`; Geant4 hits equal |

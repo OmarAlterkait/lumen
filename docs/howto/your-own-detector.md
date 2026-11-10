@@ -182,30 +182,29 @@ for it in range(8):
     x = x + step * jnp.minimum(1.0, 0.1 / jnp.linalg.norm(step))   # at most 10 cm per step
 ```
 ```
-  iteration 0: x = [0.0034, -0.0033, 0.0999] m
-  iteration 1: x = [0.063, -0.043, 0.1697] m
-  iteration 2: x = [0.0955, -0.0631, 0.2223] m
+  iteration 0: x = [0.037, -0.0266, 0.089] m
+  iteration 1: x = [0.0767, -0.0534, 0.1768] m
+  iteration 2: x = [0.094, -0.0635, 0.2239] m
   ...
-  iteration 7: x = [0.0945, -0.0532, 0.2271] m
-  fitted [0.0945, -0.0532, 0.2271] +- [0.0209, 0.0207, 0.0183] m; truth [0.1, -0.05, 0.2]
+  iteration 7: x = [0.0926, -0.0541, 0.2255] m
+  fitted [0.0926, -0.0541, 0.2255] +- [0.0213, 0.0206, 0.0183] m; truth [0.1, -0.05, 0.2]
 ```
 
-The fit ends within 1.5 errors of the truth. Two things to know:
+The fit ends within 1.4 errors of the truth. Two things to know:
 
-- **Limit the step.** From the centre, the first Gauss-Newton step was far larger than the tank (z = 3.3 m in an
-  earlier run without the limit), so the loop caps each step at 10 cm. A fit that puts the source outside the
-  detector volume gives no light and no derivative.
-- **Check the derivative on your detector.** While this guide was written, a check of the derivative against a
-  central finite difference (h = 2 cm, 4 seeds, source on the axis) found the derivative below the finite difference
-  by about 30 % in this detector (for example 217.5 against 314.5 per m for PMT_top_0 at z = 0.1 m), and by more at
-  the exact centre. The same check in the tutorial's tank agreed within two standard errors. The size of the
-  disagreement relative to its noise was not measured; it is under investigation. Until it is resolved, compare the
-  derivative with a finite difference, as the tutorial does, before you rely on it.
+- **Limit the step.** A Gauss-Newton step can leave the detector, which then gives no light and no derivative; the
+  loop caps each step at 10 cm. From the centre the first step points at the source and is capped.
+- **The derivative agrees with a finite difference.** With 32 seeds of 2^18 photons and a central difference of
+  h = 2 cm, the source-position derivative of every PMT's expected PE agrees with the finite difference within
+  1.8 standard errors at the centre and at z = 0.1 m, with the liner as given and with a black liner (for example
+  PMT_top_0 with a black liner: 94.7 against 95.3 per m at the centre, 129.0 against 129.4 at z = 0.1 m). The
+  collection efficiency is read at the photon's crossing point on the PMT, in the PMT's own frame, so the derivative
+  is smooth through the centre of the tank.
 
 ### An optical value
 
-Changing a value never recompiles the photon loop, so a scan is cheap: each call below took 0.04 to 0.06 s after the
-first. Here the liner's reflectivity is fitted to pseudo-data
+Changing a value never recompiles the photon loop, so a scan is cheap: each call below took 0.02 s after the first.
+Here the liner's reflectivity is fitted to pseudo-data
 made with the sheet reflecting 15 % instead of 10 % (50 flashes of the central source, summed per PMT), by a parabola
 through the likelihood near its minimum:
 
@@ -221,19 +220,19 @@ for s in np.linspace(0.5, 2.5, 9):
 ```
 ```
   surfaces/LinerSurface/REFLECTIVITY: unit -, range (0.0, 1.0), gradient method reweight
-  REFLECTIVITY 0.050: NLL -208495.67   (0.17 s)
-  REFLECTIVITY 0.075: NLL -208633.20   (0.04 s)
-  REFLECTIVITY 0.100: NLL -208732.64   (0.04 s)
-  REFLECTIVITY 0.125: NLL -208791.00   (0.05 s)
-  REFLECTIVITY 0.150: NLL -208804.86   (0.05 s)
-  REFLECTIVITY 0.175: NLL -208770.30   (0.05 s)
-  REFLECTIVITY 0.200: NLL -208683.03   (0.05 s)
-  REFLECTIVITY 0.225: NLL -208538.09   (0.06 s)
-  REFLECTIVITY 0.250: NLL -208329.89   (0.06 s)
-  fitted REFLECTIVITY 0.1438 +- 0.0036 (truth 0.150)
+  REFLECTIVITY 0.050: NLL -209265.45   (0.13 s)
+  REFLECTIVITY 0.075: NLL -209406.34   (0.02 s)
+  REFLECTIVITY 0.100: NLL -209509.16   (0.02 s)
+  REFLECTIVITY 0.125: NLL -209570.97   (0.02 s)
+  REFLECTIVITY 0.150: NLL -209588.33   (0.02 s)
+  REFLECTIVITY 0.175: NLL -209557.33   (0.02 s)
+  REFLECTIVITY 0.200: NLL -209473.66   (0.02 s)
+  REFLECTIVITY 0.225: NLL -209332.44   (0.02 s)
+  REFLECTIVITY 0.250: NLL -209127.94   (0.02 s)
+  fitted REFLECTIVITY 0.1456 +- 0.0036 (truth 0.150)
 ```
 
-The fit is 1.7 errors from the truth. The error is the statistical one of the data only; the Monte Carlo error of
+The fit is 1.2 errors from the truth. The error is the statistical one of the data only; the Monte Carlo error of
 the model (2^20 photons at one seed) is not included.
 
 The derivative is available through `simulate` too: name the key in `wrt` and trace the value. At the fitted scale
@@ -248,10 +247,10 @@ def nll(s):
 value, slope = jax.jvp(nll, (s_hat,), (1.0,))
 ```
 ```
-  dNLL/d(scale) at the fit: -8.60 (curvature 776.4: a step of -0.0111)
+  dNLL/d(scale) at the fit: -8.89 (curvature 775.6: a step of -0.0115)
 ```
 
-The step (−0.011 in the scale, −0.0011 in REFLECTIVITY) is a third of the fit's error.
+The step (−0.012 in the scale, −0.0012 in REFLECTIVITY) is a third of the fit's error.
 
 A water absorption length is a poor example in a detector this small: at 60 m against a 1.2 m tank, a 10 % change
 moves the light by about 0.1 %.
