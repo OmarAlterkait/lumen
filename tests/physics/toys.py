@@ -237,13 +237,13 @@ def lobe_plate(sigma=0.2, **consts):
                  "</skinsurface>")  # fmt: skip
     gdml = HEAD.format(define="\n".join(define), materials="\n".join(mats), solids="\n".join(solids),
                        structure=structure)  # fmt: skip
-    group = SensorGroup("slab", "any_entry", "lumen:counting", lv_pattern="^Slab", settings={"eff": 1.0})
+    group = SensorGroup("slab", "any_entry", "lumen:counting", lv_pattern="^Slab", settings={"efficiency": 1.0})
     return gdml, Recipe("lobe_plate", "WaterLV", BAND, (group,))
 
 
 def overlap(name):
     """Return (GDML, recipe) of one of g4ref's overlap toys (their world kept, the slab volS counting)."""
-    group = SensorGroup("slab", "any_entry", "lumen:counting", lv="volS", settings={"eff": 1.0})
+    group = SensorGroup("slab", "any_entry", "lumen:counting", lv="volS", settings={"efficiency": 1.0})
     return (DATA / f"{name}.gdml").read_text(), Recipe(name, "volWorld", (415.0, 425.0), (group,))
 
 

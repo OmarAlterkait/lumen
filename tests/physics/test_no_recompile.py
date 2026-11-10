@@ -67,11 +67,11 @@ def test_no_value_recompiles(setup):
     jax.monitoring.register_event_duration_secs_listener(lambda name, *a, **k: seen.append(name))
     absorb = p.scale("materials/Water/ABSLENGTH", 0.5)
     calibration = p.with_layer({"materials/Water/ABSLENGTH": absorb["materials/Water/ABSLENGTH"],
-                                "sensors/pmt/eff": 0.5}, "calibration test")  # fmt: skip
+                                "sensors/pmt/efficiency": 0.5}, "calibration test")  # fmt: skip
     changed = dict(
         materials=go(absorb),
         surfaces=go(p.scale("surfaces/Liner/REFLECTIVITY", 0.5)),
-        sensors=go(p.set("sensors/pmt/eff", 0.25)),
+        sensors=go(p.set("sensors/pmt/efficiency", 0.25)),
         calibration=go(calibration),
         source=go(r=rows(shift=0.1, t=2.0, lam=450.0)),
         controls=go(controls=steps.Controls(0.5, 3.0, 1e-2)),

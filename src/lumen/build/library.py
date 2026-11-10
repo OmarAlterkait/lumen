@@ -31,9 +31,9 @@ Sensor groups
     ``border_into`` with model ``lumen:geant4``: the borders into the group's volumes are sensors through the
     surface's own detection (``settings["efficiency_on_entry"]`` replaces the efficiency on entry, the sensors are
     named ``<settings["name_prefix"] or the group name>:<surface>``). ``any_entry`` with model ``lumen:counting``: a
-    counting sensor of efficiency ``settings["eff"]`` on every placement of the group's volumes. ``border_into`` with
-    model ``lumen:pmt``: tracked as ``lumen:geant4`` with every absorption entering counted (efficiency 1 on entry):
-    the PMT's QE, CE and efficiency apply after tracking (``lumen.sensors``).
+    counting sensor of efficiency ``settings["efficiency"]`` on every placement of the group's volumes.
+    ``border_into`` with model ``lumen:pmt``: tracked as ``lumen:geant4`` with every absorption entering counted
+    (efficiency 1 on entry): the PMT's QE, CE and efficiency apply after tracking (``lumen.sensors``).
 
 The outside material is always its own opaque medium, "outside". ``sources`` maps every parameter leaf of the
 library (the paths of ``surfaces.named_params``, e.g. ("media", "Water", "index", "value")) to the
@@ -251,8 +251,8 @@ def _counting(tree, groups):
             continue
         if g.model != "lumen:counting":
             raise LibraryError(f"sensor group {g.name!r}: any_entry reads the model 'lumen:counting', not {g.model!r}")
-        sensors[g.name] = regions.SensorEntry(legacy.COUNTING, {"eff": float(g.settings["eff"])})
-        sources[g.name] = {("eff",): Source(f"sensors/{g.name}/eff", "setting")}
+        sensors[g.name] = regions.SensorEntry(legacy.COUNTING, {"eff": float(g.settings["efficiency"])})
+        sources[g.name] = {("eff",): Source(f"sensors/{g.name}/efficiency", "setting")}
         for lv in (x for x in lvs if g.selects(x)):
             sbind.append(regions.SensorBinding(g.name, len(tree.placements(lv)), lv=lv))
     return sensors, sbind, sources

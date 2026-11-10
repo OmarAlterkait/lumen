@@ -16,3 +16,10 @@ detector's; a non-empty one is refused, naming the options. To do: nothing, or c
 (`lumen.rules.optics.value_key`). Only a dielectric_metal ground surface has the key. A calibration or a `Params.set`
 with the old key is refused, naming the new one. To do: rename the key in calibrations (`<name>.params.json`) and
 scripts. The detector files do not change (the key is derived at load).
+
+## Sensor sets: a counting group's `eff` is `efficiency`
+
+An `any_entry` (`lumen:counting`) group's setting `eff` is now `efficiency`, so its parameter key is
+`sensors/<group>/efficiency` (it was `sensors/<group>/eff`). A sensor set (`sensors/<set>.json`) with the old setting
+is refused, naming the new one. To do: convert the detector again (the shipped recipes write `efficiency`), or rename
+the setting in the sensor set's JSON and the key in calibrations.

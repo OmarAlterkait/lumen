@@ -16,7 +16,7 @@ from lumen.recipe import Recipe
 
 FOIL, FILM, SIDE = 1.0, 2e-5, 400.0  # mm
 BAND = (110.0, 600.0)  # nm: inside the tables (1-12 eV)
-SLABS = tuple(SensorGroup(f"slab{k}", "any_entry", "lumen:counting", lv=f"Slab{k}LV", settings={"eff": 1.0})
+SLABS = tuple(SensorGroup(f"slab{k}", "any_entry", "lumen:counting", lv=f"Slab{k}LV", settings={"efficiency": 1.0})
               for k in (0, 1))  # fmt: skip
 RECIPE = Recipe("film_toy", "TankLV", BAND, SLABS)
 

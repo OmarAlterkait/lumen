@@ -101,7 +101,7 @@ def detectors(tmp_path_factory):
             d = tmp_path_factory.mktemp(f"mie_{case}_{rings}")
             # one group per ring: adjacent rings of one sensor type would be one region, crossed invisibly
             groups = tuple(SensorGroup(f"ring{i}", "any_entry", "lumen:counting", lv=f"volRing{i}",
-                                       settings={"eff": 1.0}) for i in range(rings))  # fmt: skip
+                                       settings={"efficiency": 1.0}) for i in range(rings))  # fmt: skip
             recipe = Recipe(f"mie_{case}", "volWorld", (300.0, 600.0), groups)
             out[(case, rings)] = lumen.load(lumen.convert(write_gdml(d / "mie.gdml", case, rings), recipe,
                                                           d / "mie.lumen"))  # fmt: skip

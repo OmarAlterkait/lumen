@@ -101,9 +101,9 @@ def sbnd_columns(df, loaded, tree, inputs) -> dict:
 # Neither SBND's nor MicroBooNE's GDML has an exporter defect Geant4 refuses (lumen.gdml.reader.REPAIRS): no repairs.
 SBND = Recipe(
     name="sbnd", detector_volume="auto:argon,lar", wavelength_range=SBND_WAVELENGTHS,
-    groups=(SensorGroup("pmt", "any_entry", "lumen:counting", lv="volOpDetSensitive", settings={"eff": 1.0}),
+    groups=(SensorGroup("pmt", "any_entry", "lumen:counting", lv="volOpDetSensitive", settings={"efficiency": 1.0}),
             SensorGroup("xarapuca", "any_entry", "lumen:counting", lv="volOpDetSensitiveXArapucaFilter",
-                        settings={"eff": 1.0})),
+                        settings={"efficiency": 1.0})),
     decisions=(sbnd_optics,), inputs=("pds_mapping",), sensor_columns=sbnd_columns)  # fmt: skip
 
 
@@ -145,5 +145,5 @@ def microboone_optics(df: schema.DetectorFile, inputs: dict) -> schema.DetectorF
 
 MICROBOONE = Recipe(
     name="microboone", detector_volume="auto:argon,lar", wavelength_range=MICROBOONE_WAVELENGTHS,
-    groups=(SensorGroup("pmt", "any_entry", "lumen:counting", lv="volOpDetSensitive", settings={"eff": 1.0}),),
+    groups=(SensorGroup("pmt", "any_entry", "lumen:counting", lv="volOpDetSensitive", settings={"efficiency": 1.0}),),
     decisions=(microboone_optics,))  # fmt: skip

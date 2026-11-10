@@ -65,6 +65,9 @@ class SensorSet:
                 raise ValueError(f"sensor group {g.name!r}: rule {g.rule!r} is not one of {RULES}")
             if (g.lv is None) == (g.lv_pattern is None):
                 raise ValueError(f"sensor group {g.name!r}: give exactly one of lv and lv_pattern")
+            if "eff" in g.settings:  # its name before lumen 0.1
+                raise ValueError(f"sensor group {g.name!r}: the setting 'eff' is now 'efficiency' (rename it, or "
+                                 "convert the detector again)")  # fmt: skip
 
     def is_sensor(self, lv: str) -> bool:
         """Return whether the logical volume ``lv`` is a sensor volume: one that a group selects."""

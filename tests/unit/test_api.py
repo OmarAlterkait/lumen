@@ -15,7 +15,7 @@ RECIPE = Recipe(
     name="toy",
     detector_volume="TankLV",
     wavelength_range=(300.0, 600.0),
-    groups=(SensorGroup("pmt", "any_entry", "lumen:counting", lv="PmtLV", settings={"eff": 1.0}),),
+    groups=(SensorGroup("pmt", "any_entry", "lumen:counting", lv="PmtLV", settings={"efficiency": 1.0}),),
 )
 
 
@@ -60,12 +60,12 @@ def test_convert_and_load(converted):
 def test_params_keys_info_and_precedence(converted):
     det = lumen.load(converted)
     p = det.params()
-    assert "materials/Water/ABSLENGTH" in p and "surfaces/Liner/REFLECTIVITY" in p and "sensors/pmt/eff" in p
+    assert "materials/Water/ABSLENGTH" in p and "surfaces/Liner/REFLECTIVITY" in p and "sensors/pmt/efficiency" in p
     info = p.info("materials/Water/ABSLENGTH")
     assert info.unit == "m" and info.method == "reweight" and info.available and info.table
     assert not p.info("materials/Water/RINDEX").available  # refractive-index derivatives: pending validation
     assert p.explain("materials/Water/ABSLENGTH") == "detector file"
-    assert p.explain("sensors/pmt/eff") == "sensor model defaults"
+    assert p.explain("sensors/pmt/efficiency") == "sensor model defaults"
     with pytest.raises(UnknownParamKey, match="Did you mean"):
         p["materials/Water/ABSLENGHT"]
     q = p.scale("materials/Water/ABSLENGTH", 2.0)

@@ -48,8 +48,8 @@ TREE = (("<outside>", "<outside>", "<outside>"), ("w/W", "W", "Liq", "<outside>"
         ("w/f1/Foil", "Foil", "Steel", "w/W"), ("w/f2/Foil", "Foil", "Steel", "w/W"),
         ("w/sh/S", "S", "Shifter", "w/W"), ("w/sen/Sen", "Sen", "Liq", "w/W", 0))  # fmt: skip
 INSTANCES = (Inst("w/f1/Foil", np.eye(3)), Inst("w/f2/Foil", np.diag([-1.0, -1.0, 1.0])))
-COUNTING = SensorSet("default",
-                     (SensorGroup("sen", "any_entry", "lumen:counting", lv="Sen", settings={"eff": 0.5}),))  # fmt: skip
+COUNTING = SensorSet("default", (SensorGroup("sen", "any_entry", "lumen:counting", lv="Sen",
+                                             settings={"efficiency": 0.5}),))  # fmt: skip
 PLUS, MINUS = "Foil|film(np.float64(1.0), np.float64(0.0), np.float64(0.0))", \
     "Foil|film(np.float64(-1.0), np.float64(0.0), np.float64(0.0))"  # fmt: skip
 
@@ -89,7 +89,7 @@ def test_every_encoding_on_the_toy(toy):
     assert src[("surfaces", f"film:{PLUS}", "d")].key == "surfaces/film/settings/thickness_m"
     assert src[("surfaces", f"film:{PLUS}", "b:R", "value")] == glue.Source("surfaces/paint/REFLECTIVITY", "value")
     assert src[("surfaces", f"film:{PLUS}", "eta")].column == "fixed"
-    assert src[("sensors", "sen", "eff")] == glue.Source("sensors/sen/eff", "setting")
+    assert src[("sensors", "sen", "eff")] == glue.Source("sensors/sen/efficiency", "setting")
     leaves = {(s, n) + p for s in ("surfaces", "sensors") for n, ps in named[s].items() for p in _paths(ps)}
     assert leaves <= set(src) and not [k for k, v in src.items() if v.note == "unrecorded"]
 
@@ -165,3 +165,8 @@ def test_refusals(toy):
         df.materials["Shifter"], optics=model("geant4", medium="Liq"))})  # fmt: skip
     with pytest.raises(glue.LibraryError, match="defined by another material"):
         glue.library_and_bindings(two, tree(*TREE), INSTANCES, COUNTING)
+
+
+def test_a_counting_group_setting_named_eff_is_refused():
+    with pytest.raises(ValueError, match="'eff' is now 'efficiency'"):
+        SensorSet("default", (SensorGroup("sen", "any_entry", "lumen:counting", lv="Sen", settings={"eff": 0.5}),))

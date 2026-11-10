@@ -40,7 +40,7 @@ def toy_detector(gdml, spec):
     from lumen.recipe import Recipe
 
     lam = HC / spec["energy_ev"]
-    group = SensorGroup("slab", "any_entry", "lumen:counting", lv=spec["sensor_lv"], settings={"eff": 1.0})
+    group = SensorGroup("slab", "any_entry", "lumen:counting", lv=spec["sensor_lv"], settings={"efficiency": 1.0})
     recipe = Recipe(gdml.stem, spec["world"], (lam - BAND, lam + BAND), (group,))
     out = (
         _env.cache_dir()
