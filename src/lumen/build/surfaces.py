@@ -1,42 +1,29 @@
-"""The legacy optical-region compiler: a library, a volume tree and bindings to the static tables the engine gathers.
+"""The surface lookup: Geant4's boundary rule over every crossing the navigator reports, as the tables the step reads.
 
-Internal, and used only until the Geant4 surface lookup replaces it; carried over unchanged from the baseline (lumen
-rebuild/next ec8de54c: lumen.describe's library, bindings and resolve, lumen.classes, lumen.tables, and the
-compile / border parts of lumen.adapters.gdml_optics).
+    optics = compile(library, tree, bindings, lam_domain)
+    optics.kernel(pre, post)          # the Pair of the crossing pre -> post: surface type, row, why
 
-Three inputs, all plain Python:
+Three inputs, all plain Python (``lumen.build.library`` makes them from a detector file):
 
-    Library    named media (bulk.Medium + params), surfaces (a legacy surface type + params) and sensor types (a
-               detecting type + params)
+    Library    named media (bulk.Medium + params), surfaces (a surface type + params) and sensor types (a detecting
+               type + params)
     Tree       the physical volumes as world instances (``lumen.build.tree``): each PV names its logical volume,
                material and mother PV
     Bindings   attach a library to one tree by EXACT names: materials -> media, skin surfaces (LV -> surface), border
                surfaces (ordered PV pair -> surface), sensors (LV or PV -> sensor type, expected count) and sibling
                adjacency facts
 
-``resolve`` checks all three against each other and fails closed.
+``resolve`` checks all three against each other and fails closed. Each adjacent ordered PV pair (pre, post) --
+mother/daughter always, siblings unless declared disjoint -- and each coincident face p -> q via a zero-thickness b
+resolves to a surface type by ``lumen.rules.boundary`` (Geant4's precedence). Pairs leaving an opaque medium are never
+crossed.
 
-An optical class is a set of PVs with the same SYMBOLIC signature
-
-    (library medium, skin surface of its LV, sensor type, border roles = {(partner class, 'out' | 'in', surface)})
-
-so classes never depend on parameter values. A boundary exists only where the class changes. Each adjacent ordered
-PV pair (pre, post) -- mother/daughter always, siblings unless declared disjoint -- resolves to a surface type with
-Geant4's precedence:
-
-    entering a sensor PV            the sensor's type
-    border surface (pre, post)      the ordered pair only; a border SENSOR (leaving the sensor PV pre: WCSim's
-                                    AirCathodeSurface Detection, counted on the tube it leaves) is the sensor's type
-    skins                           post daughter of pre: post's LV skin, then pre's; otherwise pre's, then post's
-    default                         same medium: PASS; both media have an index: DIELECTRIC; else ABSORBER (NoRINDEX)
-
-A surface flagged ``ignored_between_same_material`` between two PVs of the same tree material is PASS (Geant4's
-SameMaterial). A DIELECTRIC into an opaque medium is ABSORBER (NoRINDEX); any other type that would put the photon
-into an opaque medium is an error. Pairs leaving an opaque medium are never crossed.
-
-Guards (fail closed): two PV pairs of one class pair resolving to different surfaces; a class adjacent to itself
-across a non-PASS surface; laws invalid over the wavelength domain. A DETECT deposit goes to the tag of the PV
-entered, except across a border sensor, where it goes to the PV left (``deposit_pre``).
+Classes are an internal compression, never part of the rule: the PVs with the same symbolic signature (medium, skin
+surface, sensor type, border roles = {(partner class, 'out' | 'in', surface)}, refined to a fixed point) share every
+crossing, so the step's tables are (class, class) arrays and the navigator carries a class per volume. They never
+depend on parameter values. Guards (fail closed): two PV pairs of one class pair resolving to different surfaces (the
+signature missed a distinction); a class adjacent to itself across a non-PASS surface; laws invalid over the
+wavelength domain. A DETECT deposit goes to the tag of the PV entered, except across an exit sensor (``deposit_pre``).
 
 ``compile`` also packs spectral surface and sensor params ((Law, params) pairs of the shared clamped tables) as
 ``Optics.kernel_laws`` (one Law per (type, param), knots padded to a common length with clamped tails).
@@ -44,17 +31,16 @@ entered, except across a border sensor, where it goes to the PV left (``deposit_
 
 from __future__ import annotations
 
-import re
-import warnings
-from collections import Counter
+import dataclasses
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 import numpy as np
 
 from lumen.media import bulk, laws
+from lumen.rules import boundary
 from lumen.surfaces import _legacy as legacy
-from lumen.surfaces.outcomes import DETECT, FAR_SIDE
+from lumen.surfaces.outcomes import DETECT
 
 # the baseline's surface-type order (lumen.interface.KINDS); every other type sorts after these, by name
 ORDERED_TYPES = (
@@ -355,88 +341,6 @@ def resolve(library: Library, tree, bindings: Bindings) -> Description:
                        frozenset(disjoint), disjoint_lvs, entry)  # fmt: skip
 
 
-# ------------------------------------------------------------------------------------------------- tables by hand
-@dataclass(frozen=True, eq=False)
-class Tables:
-    """The static optical tables the step reads, built by hand (tests, toys).
-
-    ``kind_of`` / ``row_of`` (C, C) int32: the surface type and its row for the ordered class pair (-1 never
-    crossed); ``medium_of`` (C,) int32 into ``media``; ``kernel_laws`` {(type name, param): Law} for spectral params;
-    ``deposit_pre`` (C, C) bool or None: pairs whose DETECT deposit goes to the tag of the region left.
-    """
-
-    kinds: tuple
-    kind_of: np.ndarray
-    row_of: np.ndarray
-    medium_of: np.ndarray
-    media: tuple
-    kernel_laws: dict | None = None
-    deposit_pre: np.ndarray | None = None
-
-    @property
-    def n_classes(self):
-        """Return the number of regions."""
-        return int(self.medium_of.shape[0])
-
-    @property
-    def max_channels(self):
-        """Return the largest number of bulk channels of a medium."""
-        return max([len(m.channels) for m in self.media] + [0])
-
-    def __hash__(self):
-        """Hash by identity (static)."""
-        return id(self)
-
-
-def _by_hand_blocks(full, n_classes):
-    kinds, blocks, laws_ = [], {}, {}
-    kind_of = np.full((n_classes, n_classes), -1, np.int32)
-    row_of = np.full((n_classes, n_classes), -1, np.int32)
-    for (a, b), (kind, p) in sorted(full.items(), key=lambda kv: kv[0]):
-        if kind not in kinds:
-            kinds.append(kind)
-            blocks[kind.name] = {k: [] for k in kind.params}
-        kind_of[a, b] = kinds.index(kind)
-        row_of[a, b] = len(next(iter(blocks[kind.name].values()))) if kind.params else 0
-        for k in kind.params:
-            v = p[k]
-            if isinstance(v, tuple):
-                law, lp = v
-                if laws_.setdefault((kind.name, k), law) is not law:
-                    raise ValueError(f"{kind.name}.{k}: every row of a spectral param must use the same Law")
-                blocks[kind.name][k].append({q: np.asarray(x, np.float32) for q, x in lp.items()})
-            else:
-                blocks[kind.name][k].append(np.asarray(v, np.float32))  # a scalar or a vector
-    return kinds, blocks, laws_, kind_of, row_of
-
-
-def by_hand(media, medium_of, pairs, default=None):
-    """Return (Tables, kernel params) from {(class before, class after): (type, params dict)}.
-
-    ``default`` (type, params) applies to every other ordered pair of distinct classes. A param given as (Law, law
-    params) is spectral (Tables.kernel_laws).
-
-    Notation: C the number of classes.
-    """
-    C = len(medium_of)
-    full = dict(pairs)
-    if default is not None:
-        for a in range(C):
-            for b in range(C):
-                if a != b and (a, b) not in full:
-                    full[(a, b)] = default
-    kinds, blocks, laws_, kind_of, row_of = _by_hand_blocks(full, C)
-    kp = {}
-    for name, blk in blocks.items():
-        kp[name] = {}
-        for k, rows in blk.items():
-            if rows and isinstance(rows[0], dict):
-                kp[name][k] = {q: np.stack([r[q] for r in rows]) for q in rows[0]}
-            else:
-                kp[name][k] = np.stack(rows).astype(np.float32)
-    return Tables(tuple(kinds), kind_of, row_of, np.asarray(medium_of, np.int32), tuple(media), laws_), kp
-
-
 # ------------------------------------------------------------------------------------------------- the compiled optics
 @dataclass(frozen=True, eq=False)
 class Pair:
@@ -485,41 +389,9 @@ class Optics:
         return self.pairs.get((self.class_of[pre], self.class_of[post]))
 
 
-def _f32(tree):
-    if isinstance(tree, Mapping):
-        return {k: _f32(v) for k, v in tree.items()}
-    return np.array(tree, np.float32)
-
-
 def _entry(library, origin):
     what, name = origin.split(":", 1)
     return (library.surfaces if what == "surface" else library.sensors)[name]
-
-
-def pack_params(optics: Optics, library: Library) -> dict:
-    """Return the traced params pytree for a library whose VALUES may differ from the one compiled."""
-    kernel = {}
-    for kind in optics.kinds:
-        rows = optics.rows[kind.name]
-        kp = {}
-        for name in kind.params:
-            vals = []
-            for origin in rows:
-                e = _entry(library, origin)
-                if e.kind is not kind:
-                    raise OpticsError(f"{origin}: kind changed from {kind.name} to {e.kind.name}; recompile")
-                vals.append(np.asarray(e.params[name], np.float32))
-            if len({v.shape for v in vals}) != 1:
-                raise OpticsError(f"{kind.name}.{name}: rows have different shapes {[v.shape for v in vals]}")
-            kp[name] = np.stack(vals)
-        kernel[kind.name] = kp
-    media = {}
-    for name, med in zip(optics.media_names, optics.media, strict=False):
-        e = library.media[name]
-        if e.medium is not med:
-            raise OpticsError(f"medium {name!r} changed its Medium object; recompile")
-        media[name] = _f32(e.params)
-    return {"kernel": kernel, "media": media}
 
 
 def named_params(optics: Optics, library: Library) -> dict:
@@ -572,7 +444,10 @@ def _packed_table(name, ents):
 
 
 def pack(optics: Optics, named: dict) -> dict:
-    """Return pack_params from named params (``named_params``' structure; values may be traced, gradients flow)."""
+    """Return the step's params (``kernel`` rows by type, ``media``) from named params (``named_params``' structure).
+
+    Values may be traced: gradients flow to the named params.
+    """
     import jax
     import jax.numpy as jnp
 
@@ -656,47 +531,26 @@ class _Regions:
         self.sigs, self.class_of, self.sig_of, self.class_names = classes
         self.found, self.rels, self.legs = {}, {}, {}
 
-    def _surface_kernel(self, pre, post, rel):
-        lib, d = self.library, self.d
-        surf, reason = d.borders.get((pre, post)), "border"
-        if surf is None:
-            order = (("post", post), ("pre", pre)) if rel == "daughter" else (("pre", pre), ("post", post))
-            for side, n in order:
-                if d.skin[n] is not None:
-                    surf, reason = d.skin[n], f"skin({side})"
-                    break
-        if surf is not None:
-            e = lib.surfaces[surf]
-            same = self.tree.by_name[pre].material == self.tree.by_name[post].material
-            if e.ignored_between_same_material and same:
-                return legacy.PASS, None, f"{reason} {surf}: same-material"
-            return e.kind, f"surface:{surf}", reason
-        if d.medium[pre] == d.medium[post]:
-            return legacy.PASS, None, "default"
-        if not self.opaque[d.medium[post]]:
-            return legacy.DIELECTRIC, None, "default"
-        return legacy.ABSORBER, None, "default: NoRINDEX"
+    # the PV-level view lumen.rules.boundary reads
+    borders = property(lambda self: self.d.borders)
+    skin = property(lambda self: self.d.skin)
+    sensor = property(lambda self: self.d.sensor)
+    medium = property(lambda self: self.d.medium)
+
+    def enters_sensor(self, pre, post):
+        """Return whether the crossing pre -> post meets post's sensor type."""
+        return self.d.enters_sensor(pre, post)
+
+    def material(self, pv):
+        """Return a PV's tree material."""
+        return self.tree.by_name[pv].material
 
     def kernel_of(self, pre, post, rel):
-        """Return (type, origin, reason, side credited) of the crossing pre -> post (Geant4's precedence)."""
-        lib, d = self.library, self.d
-        if d.enters_sensor(pre, post):
-            kind, origin, reason = lib.sensors[d.sensor[post]].kind, f"sensor:{d.sensor[post]}", "sensor"
-        elif d.borders.get((pre, post)) in lib.sensors:  # resolve: pre is a sensor PV
-            s = d.borders[(pre, post)]
-            return lib.sensors[s].kind, f"sensor:{s}", f"border sensor {s} (credited to pre)", "pre"
-        else:
-            kind, origin, reason = self._surface_kernel(pre, post, rel)
-        # a stacked type (coated) never ends in the post medium: its STRAIGHT is the film crossing onto the backing
-        # at the same point, and coated refuses backings that transmit
-        if self.opaque[d.medium[post]] and not kind.stack and any(FAR_SIDE[o] for o in kind.outcomes):
-            if kind is not legacy.DIELECTRIC:
-                raise OpticsError(f"{pre!r} -> {post!r}: kind {kind.name} ({reason}) would put the photon into the "
-                                  f"opaque medium {d.medium[post]!r}")  # fmt: skip
-            kind, origin, reason = legacy.ABSORBER, None, f"{reason}: NoRINDEX"
-        if not kind.params:
-            origin = None
-        return kind, origin, reason, "post"
+        """Return (type, origin, reason, side credited) of the crossing pre -> post (``boundary.crossing``)."""
+        try:
+            return boundary.crossing(self, pre, post, rel)
+        except boundary.BoundaryError as err:
+            raise OpticsError(str(err)) from None
 
     def visit(self, pre, post, rel, count):
         """Resolve one adjacent PV pair (``count`` PV pairs like it) into its class pair."""
@@ -822,8 +676,6 @@ class _Regions:
 # 1e-12 m tolerance, and a float32 geometry merges a b thinner than its band). Nested coincident faces compose (to a
 # fixed point). A class pair also adjacent directly keeps its direct surface (the report lists any that would
 # differ). A candidate with no valid surface is left unresolved and listed: crossed, the photon is reported lost.
-OUTWARD = ("mother", "sibling", "outward")
-INWARD = ("daughter", "sibling", "inward")
 
 
 class _Coincident:
@@ -836,18 +688,12 @@ class _Coincident:
         self.via, self.shadowed, self.unresolved, self.prenote = {}, [], {}, []
 
     def _relation(self, p, b, q, rp, rq):
-        if (p, b) in self.inside and rq & set(OUTWARD) and rp & {"mother", "outward"}:
-            return "outward"
-        if (q, b) in self.inside and rp & set(INWARD) and rq & {"daughter", "inward"}:
-            return "inward"
-        return None
+        return boundary.coincident((p, b) in self.inside, (q, b) in self.inside, rp, rq)
 
     def _through_pass(self, p, b, q, fb, fq):
         names = self.r.class_names
-        k_ = fq if fb[0] is legacy.PASS else fb
-        kind, origin, side = k_[0], k_[1], k_[5]
         leg = (b, q) if fb[0] is legacy.PASS else (p, b)
-        reason = f"pass via {names[b]}: as {names[leg[0]]} -> {names[leg[1]]} ({k_[2][0]})"
+        kind, origin, reason, side = boundary.through(fb, fq, names[b], (names[leg[0]], names[leg[1]]))
         if side == "pre":
             self.prenote.append(f"  {p} -> {q} via {b}: {kind.name} {origin or ''} is credited to the region "
                                 f"before, {names[p]} where b is merged (a float32-thin b), not {b}")  # fmt: skip
@@ -955,8 +801,8 @@ def _media(library, d, lam_domain):
     return lo, hi, media_names, {name: library.media[name].medium.opaque for name in media_names}
 
 
-def compile_classes(library: Library, tree, bindings: Bindings, lam_domain) -> Optics:
-    """Return the Optics of a library on a tree (the class compiler, scalar params only; see ``compile``).
+def _resolve_all(library: Library, tree, bindings: Bindings, lam_domain) -> Optics:
+    """Return the Optics of a library on a tree without its packed params (``compile`` packs them).
 
     Notation: C the number of classes.
     """
@@ -985,228 +831,45 @@ def compile_classes(library: Library, tree, bindings: Bindings, lam_domain) -> O
                     tuple(library.media[n].medium for n in media_names), media_names, rows, pairs, tag_of,
                     tuple(sensor_pvs), tuple(d.sensor[n] for n in sensor_pvs), (lo, hi), {}, report,
                     deposit_pre if deposit_pre.any() else None)  # fmt: skip
-    object.__setattr__(optics, "params", pack_params(optics, library))
     return optics
 
 
 # ------------------------------------------------------------------------------------------ compile with spectra
-def pad(e, v, n):
-    """Return an (energy, value) table padded to n knots past its end (flat; float64)."""
-    e, v = np.asarray(e, np.float64), np.asarray(v, np.float64)
-    k = n - len(e)
-    if k <= 0:
-        return e, v
-    step = max(PAD_STEP * abs(e[-1]), PAD_STEP)
-    return np.concatenate([e, e[-1] + step * np.arange(1, k + 1)]), np.concatenate([v, np.full(k, v[-1])])
+def _spectral_laws(library, optics):
+    """Return {(type name, param): Law} of the spectral columns, each row's law validated over the wavelength domain.
 
-
-def _scalar_library(library):
-    """Return the library with every spectral param replaced by 0.0, and the spectral params by entry."""
-    spectral = {}
-
-    def plain(what, entries, make):
-        out = {}
-        for n_, e in entries.items():
-            sp = {k: v for k, v in e.params.items() if isinstance(v, tuple)}
-            if sp:
-                spectral[f"{what}:{n_}"] = sp
-                e = make(e, {k: (0.0 if k in sp else v) for k, v in e.params.items()})
-            out[n_] = e
-        return out
-
-    lib = Library(library.media,
-                  plain("surface", library.surfaces,
-                        lambda e, p: SurfaceEntry(e.kind, p, e.ignored_between_same_material)),
-                  plain("sensor", library.sensors, lambda e, p: SensorEntry(e.kind, p)))  # fmt: skip
-    return lib, spectral
-
-
-def _spectral_rows(library, rows, spectral, kind, pname, lam):
-    vals = [spectral.get(o, {}).get(pname) for o in rows]
-    if all(v is None for v in vals):
-        return None, None
-    used = {id(v[0]): v[0] for v in vals if v is not None}
-    if len(used) != 1:
-        raise OpticsError(f"{kind.name}.{pname}: rows use different Laws")
-    law = next(iter(used.values()))
-    if law.params != ("energy", "value"):
-        raise OpticsError(f"{kind.name}.{pname}: only (energy, value) tables are packed")
-    lps = []
-    for o, v in zip(rows, vals, strict=False):
-        if v is None:
-            what, nm = o.split(":", 1)
-            s = float((library.surfaces if what == "surface" else library.sensors)[nm].params[pname])
-            lp = {"energy": np.array([1.0, 2.0]), "value": np.array([s, s])}
-        else:
-            lp = v[1]
-        laws.validate(law, lp, lam[0], lam[1], name=f"{o}.{pname}")
-        lps.append(lp)
-    nk = max(len(lp["energy"]) for lp in lps)
-    padded = [pad(lp["energy"], lp["value"], nk) for lp in lps]
-    return law, {"energy": np.stack([a for a, _ in padded]).astype(np.float32),
-                 "value": np.stack([b for _, b in padded]).astype(np.float32)}  # fmt: skip
-
-
-def compile(library: Library, tree, bindings: Bindings, lam_domain) -> Optics:
-    """Return the Optics of a library whose surface / sensor params may be spectral ((Law, params) pairs).
-
-    ``compile_classes`` on the library with its spectral params set aside, then the spectral columns packed: the rows
-    of one (type, param) share one Law, scalar rows become flat tables, knots are padded to a common length with
-    clamped tails, and each row's law is validated over the wavelength domain.
+    The rows of one (type, param) share one Law, an (energy, value) table; a scalar row in a spectral column is a flat
+    table.
     """
-    lib, spectral = _scalar_library(library)
-    optics = compile_classes(lib, tree, bindings, lam_domain)
-    kernel = {k: dict(v) for k, v in optics.params["kernel"].items()}
+    lo, hi = optics.lam_domain
     found = {}
     for kind in optics.kinds:
         for pname in kind.params:
-            law, packed = _spectral_rows(library, optics.rows[kind.name], spectral, kind, pname, optics.lam_domain)
-            if law is not None:
-                kernel[kind.name][pname] = packed
-                found[(kind.name, pname)] = law
-    object.__setattr__(optics, "kernel_laws", found)
-    object.__setattr__(optics, "params", dict(optics.params, kernel=kernel))
-    return optics
+            vals = [(o, _entry(library, o).params[pname]) for o in optics.rows[kind.name]]
+            used = {id(v[0]): v[0] for _, v in vals if isinstance(v, tuple)}
+            if not used:
+                continue
+            if len(used) != 1:
+                raise OpticsError(f"{kind.name}.{pname}: rows use different Laws")
+            law = next(iter(used.values()))
+            if law.params != ("energy", "value"):
+                raise OpticsError(f"{kind.name}.{pname}: only (energy, value) tables are packed")
+            for o, v in vals:
+                lp = v[1] if isinstance(v, tuple) else {"energy": np.array([1.0, 2.0]), "value": np.array([v, v])}
+                laws.validate(law, lp, lo, hi, name=f"{o}.{pname}")
+            found[(kind.name, pname)] = law
+    return found
 
 
-# ---------------------------------------------------------------------------------------- the GDML's borders
-@dataclass(frozen=True)
-class BorderSensor:
-    """How border_library reads the borders into a sensor volume.
+def compile(library: Library, tree, bindings: Bindings, lam_domain) -> Optics:
+    """Return the Optics of a library on a tree, its surface and sensor params possibly spectral ((Law, params)).
 
-    ``model`` names the sensor model (None: the default, stock Geant4's reading); ``eff_in`` replaces the detection
-    efficiency on entry (a sensitive detector that counts every absorption: WCSim's, 1); ``prefix`` names the
-    sensors ("<prefix>:<surface>").
+    The crossings resolved (``_resolve_all``), then the params packed by ``pack``: scalar rows stacked, spectral
+    columns as (energy, value) tables padded to a common length with clamped tails.
     """
+    import jax
 
-    model: str | None = None
-    eff_in: float | None = None
-    prefix: str = "sensor"
-
-
-def _segments(tree):
-    seg = {}
-    for pv in tree.order:
-        parts = pv.split("/")
-        if len(parts) >= 2:  # a physvol placed several times in one mother: '<name>#<index>'
-            seg.setdefault(re.sub(r"#\d+$", "", parts[-2]), []).append(pv)
-    return seg
-
-
-def _aliased(tree):
-    al = getattr(tree, "aliases", {}) or {}
-
-    def alias(n):  # a dissolved envelope's name -> the placement holding its region
-        seen = set()
-        while n in al and n not in seen:
-            seen.add(n)
-            n = al[n]
-        return n
-
-    return alias
-
-
-def _border_pairs(tree, seg, a, b, inside):
-    """Return the adjacent tree PV pairs of one border a -> b (GDML physvol names)."""
-    from lumen.build.tree import OUTSIDE_PV
-
-    grp = getattr(tree, "groups", {}) or {}  # dissolved envelopes: siblings touch within one envelope instance
-    bs = set(seg.get(b, ()))
-    b_in, b_sib = {}, {}  # b's instances by mother (x's daughters), and by (mother, envelope instance) (siblings)
-    for y in bs:
-        b_in.setdefault(tree.by_name[y].mother, []).append(y)
-        b_sib.setdefault((tree.by_name[y].mother, grp.get(y, "")), []).append(y)
-    pairs = []
-    for x in seg.get(a, ()):  # x's neighbours only (daughters, mother, siblings): linear, not |a| |b|
-        m = tree.by_name[x].mother
-        sib = b_sib.get((m, grp.get(x, "")), ()) if m is not None else ()
-        near = set(b_in.get(x, ())) | ({m} & bs) | set(sib)
-        pairs += [(x, y) for y in sorted(near) if y != x and relation(tree, x, y) is not None]
-        # the kept detector against its GDML mother, which the tree holds as the outside: a border from the
-        # detector volume into the physvol that contains it
-        if m == OUTSIDE_PV and not bs and inside(a, b):
-            pairs.append((x, OUTSIDE_PV))
-    if not seg.get(a) and seg.get(b) and inside(b, a):  # ... and from that mother into the detector
-        pairs += [(OUTSIDE_PV, y) for y in seg[b] if tree.by_name[y].mother == OUTSIDE_PV]
-    return pairs
-
-
-def border_bindings(df, tree) -> dict:
-    """Return the GDML border surfaces on a tree: {(pre tree PV, post tree PV): surface name}.
-
-    A GDML physvol name matches every world instance whose placement segment (the path segment before the member
-    volume) is that name (or that name + '#k': one physvol placed several times in one mother); a border applies to
-    each adjacent (mother/daughter or sibling) instance pair. Fail closed when a border matches nothing; a border
-    whose two volumes both lie outside the kept detector is dropped with a warning.
-    """
-    seg = _segments(tree)
-    lv_of = {p.name: p.volume for p in df.placements}  # physvol -> its LV
-
-    def inside(dname, mname):  # is physvol dname a daughter of physvol mname's LV
-        return mname in lv_of and any(df.placements[i].name == dname for i in df.volumes[lv_of[mname]].daughters)
-
-    alias = _aliased(tree)
-    out, dropped = {}, []
-    for border in df.borders:
-        a, b = alias(border.pv1), alias(border.pv2)
-        pairs = _border_pairs(tree, seg, a, b, inside)
-        if not pairs and not seg.get(a) and not seg.get(b):
-            dropped.append(border.name)  # both volumes lie outside the kept detector
-            continue
-        if not pairs:
-            raise OpticsError(f"bordersurface {border.name!r} ({a!r} -> {b!r}): no adjacent world instances")
-        for pr in pairs:
-            out[pr] = border.surface
-    if dropped:
-        warnings.warn(f"{len(dropped)} border surfaces lie wholly outside the kept detector and are dropped (e.g. "
-                      f"{dropped[:3]})", stacklevel=2)  # fmt: skip
-    return out
-
-
-def border_library(df, tree, sensor_pvs, lam_domain=None, how: BorderSensor | None = None):
-    """Return the GDML's border surfaces with its sensors: (sensors, surfaces, borders, sensor bindings).
-
-    Exactly in the directions the GDML defines them (G4LogicalBorderSurface: ordered pv1 -> pv2). A border INTO a
-    sensor volume is that sensor (the photon absorbed-and-detected there by the surface's sensor model,
-    ``lumen.rules.optics.sensor``); a border OUT OF one whose surface detects is a sensor too, its hit credited to the
-    volume left (Geant4's Detection leaving a sensitive volume, e.g. WCSim's ProcessHits_boundary); any other border
-    is its surface. A sensor volume detects only across its borders (SensorBinding entry "border"). ``how``: the
-    sensor model, the efficiency on entry and the sensors' name prefix (BorderSensor).
-
-    Returns sensors {name: SensorEntry}, surfaces {name: SurfaceEntry}, borders {(pre, post): name} and the sensor
-    bindings.
-    """
-    from lumen.rules import optics as rules
-
-    how = BorderSensor() if how is None else how
-    n_lv = Counter(tree.by_name[p].lv for p in sensor_pvs)
-    sensors, surfaces, borders, sbind, bound = {}, {}, {}, [], set()
-    for (pre, post), s in sorted(border_bindings(df, tree).items()):
-        rec = df.surfaces[s]
-        if post in sensor_pvs:
-            k = f"{how.prefix}:{s}"
-            if k not in sensors:
-                sensors[k] = rules.sensor(rec, lam_domain, how.model, eff=how.eff_in)
-            lv = tree.by_name[post].lv
-            if (k, lv) not in bound:
-                bound.add((k, lv))
-                sbind.append(SensorBinding(k, n_lv[lv], lv=lv, entry="border"))
-            borders[(pre, post)] = k
-        elif pre in sensor_pvs and rules.nonzero(rec.properties, "EFFICIENCY"):
-            k = f"{how.prefix}:{s}|out"
-            if k not in sensors:
-                sensors[k] = rules.sensor(rec, lam_domain, how.model)
-            borders[(pre, post)] = k
-        else:
-            if s not in surfaces:
-                surfaces[s] = rules.surface(rec)
-            borders[(pre, post)] = s
-    return sensors, surfaces, borders, tuple(sbind)
-
-
-def channel_of(df, mother_lv: str, child_lv: str) -> int:
-    """Return the copy number of the one placement of ``child_lv`` inside ``mother_lv`` (LArSoft OpDet channels)."""
-    hits = [df.placements[i].copy for i in df.volumes[mother_lv].daughters if df.placements[i].volume == child_lv]
-    if len(hits) != 1:
-        raise OpticsError(f"{mother_lv!r}: {len(hits)} placements of {child_lv!r} (want 1)")
-    return 0 if hits[0] is None else int(hits[0])  # Geant4's default copy number is 0
+    optics = _resolve_all(library, tree, bindings, lam_domain)
+    optics = dataclasses.replace(optics, kernel_laws=_spectral_laws(library, optics))
+    params = jax.tree_util.tree_map(np.asarray, pack(optics, named_params(optics, library)))
+    return dataclasses.replace(optics, params=params)

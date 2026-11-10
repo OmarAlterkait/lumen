@@ -31,7 +31,7 @@ Terms marked *dev* stay in developer documentation and code; user-facing text (t
 | `u` (deposit coordinate) | **hit coordinates** on the sensor | `SensorModel.hit_coordinates` |
 | `u` (uniforms) | **`rand`** (the step's random numbers) | `_core/rng.py` |
 | kind, Kind | *dev*: **legacy surface type** (B0's 16); new code has **surface models** made of factors | `surfaces/_legacy.py` |
-| optical class, class compiler | *dev*: **legacy optical regions** (Phase A only) | `build/_legacy_regions.py` |
+| optical class | *dev*: the surface lookup's internal compression (PVs that share every crossing) | `build/surfaces.py` |
 | SurfaceKernel | *dev*: the compiled surface model (outcome probabilities, lobes, amplitudes) | `surfaces/kernel.py` |
 | Sheet | **SurvivalCut** (Geant4's R/T cut ahead of the interface) | `surfaces/compose.py` |
 | Rao-Blackwellised deposit | **expected detection** (the detected share is added at every surface hit, not sampled) | *dev* |

@@ -28,7 +28,7 @@ import lumen
 from lumen import run as runner
 from lumen._core.safe import literal
 from lumen.format.sensorsets import SensorGroup
-from lumen.geometry import _legacy_tracked as tracked
+from lumen.geometry import tracked
 from lumen.recipe import Recipe
 from lumen.transport import estimator, item, state
 from lumen.transport import step as steps

@@ -11,7 +11,8 @@ from __future__ import annotations
 import dataclasses
 from dataclasses import dataclass
 
-from lumen.build import _legacy_regions, legacy_library, lowering, spec
+from lumen.build import library as optics_library
+from lumen.build import lowering, spec, surfaces
 from lumen.build import tree as volume_tree
 from lumen.params import ParamInfo
 
@@ -39,8 +40,8 @@ def build(df, sensor_set) -> Parts:
     nav_scene = lowering.split_unions(loaded.scene, n) if n else loaded.scene
     base = volume_tree.tree_from_geometry(loaded)
     insts = tuple(volume_tree.instances(loaded))
-    tree, library, bindings, sources = legacy_library.library_and_bindings(bound(df), base, insts, sensor_set)
-    optics = _legacy_regions.compile(library, tree, bindings, df.wavelength_range)
+    tree, library, bindings, sources = optics_library.library_and_bindings(bound(df), base, insts, sensor_set)
+    optics = surfaces.compile(library, tree, bindings, df.wavelength_range)
     return Parts(loaded, loaded.scene, nav_scene, base, tree, insts, library, bindings, optics, sources)
 
 

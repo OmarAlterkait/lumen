@@ -1,5 +1,5 @@
-"""The legacy region compiler (lumen.build._legacy_regions; the baseline's tests/test_classes.py): classes from
-symbolic signatures, Geant4 border/skin precedence and defaults, the guards (surface conflicts in a class pair,
+"""The surface lookup (lumen.build.surfaces, lumen.rules.boundary; the baseline's tests/test_classes.py): classes
+from symbolic signatures, Geant4 border/skin precedence and defaults, the guards (surface conflicts in a class pair,
 invisible self-crossings), fail-closed bindings, sensor tags, and static tables that do not depend on parameter values
 or input order."""
 
@@ -9,8 +9,8 @@ import random
 import numpy as np
 import pytest
 
-from lumen.build import _legacy_regions as regions
-from lumen.build._legacy_regions import (
+from lumen.build import surfaces as regions
+from lumen.build.surfaces import (
     Bindings,
     DescriptionError,
     Library,
@@ -82,7 +82,7 @@ def tree(*specs):
 def compile_(t, lib=None, mats=None, **kw):
     used = {p.material for p in t.pvs}
     mats = mats if mats is not None else {m: MATS[m] for m in used}
-    return regions.compile_classes(lib or library(), t, Bindings(mats, **kw), LAM)
+    return regions.compile(lib or library(), t, Bindings(mats, **kw), LAM)
 
 
 def kern(o, pre, post):
@@ -183,8 +183,8 @@ def test_value_only_changes_leave_partition_and_tables_identical():
     assert float(b.params["media"]["water"]["index"]["value"]) == pytest.approx(1.40)
     assert float(b.params["kernel"]["photocathode"]["qe"][0]) == pytest.approx(0.3)
     # re-packing params for a value-changed library reproduces them without recompiling
-    rp = regions.pack_params(a, lib)
-    assert np.array_equal(rp["kernel"]["reflector"]["R"], rb)
+    rp = regions.pack(a, regions.named_params(a, lib))
+    assert np.array_equal(np.asarray(rp["kernel"]["reflector"]["R"]), rb)
     # rows gather the right surface
     cw, cb, cb2 = a.class_of["World"], a.class_of["Box"], a.class_of["Box2"]
     assert a.params["kernel"]["reflector"]["R"][a.row_of[cw, cb]] == pytest.approx(0.9)
@@ -353,6 +353,29 @@ def test_no_rindex_absorbs_and_opaque_media_are_never_left():
     assert kern(o, "World", "Can2")[0] is legacy.ABSORBER
     with pytest.raises(regions.OpticsError, match="opaque"):
         compile_(t, skins={"CanLV": "matched"})
+
+
+def test_a_frontpainted_transmission_into_an_opaque_medium_is_absorbed_where_it_lands():
+    """Geant4's frontpainted finish skips the RINDEX check: T transmits into the steel, killed at the next step."""
+    import jax.numpy as jnp
+
+    from lumen.surfaces.outcomes import ABSORB, STRAIGHT
+
+    t = tree(("World", "WorldLV", "Water", None), ("Can", "CanLV", "Steel", "World"),
+             ("Box", "BoxLV", "Acrylic", "World"))  # fmt: skip
+    lib = library()
+    paint = SurfaceEntry(legacy.PAINTED_T, {"R": 0.4, "T": 0.25, "f_spec": 1.0})
+    lib = dataclasses.replace(lib, surfaces={**lib.surfaces, "paint": paint})
+    o = compile_(t, lib=lib, skins={"CanLV": "paint", "BoxLV": "paint"})
+    into = o.kernel("World", "Can")
+    assert into.kind is legacy.into_opaque(legacy.PAINTED_T) and into.origin == "surface:paint"
+    assert "absorbed" in into.reasons[0] and set(into.kind.params) == {"R", "T", "f_spec"}
+    assert o.kernel("World", "Box").kind is legacy.PAINTED_T  # into a medium with RINDEX it transmits
+    p = {k: jnp.float32(v) for k, v in paint.params.items()}
+    pr, base = into.kind.probs(p, {}), legacy.PAINTED_T.probs(p, {})
+    assert float(pr[STRAIGHT]) == 0.0 and float(pr[ABSORB]) == pytest.approx(float(base[ABSORB] + base[STRAIGHT]))
+    assert float(jnp.sum(pr)) == pytest.approx(1.0) and STRAIGHT not in into.kind.outcomes
+    assert legacy.into_opaque(legacy.PAINTED_T) is into.kind  # one object per base: one row block
 
 
 def test_surface_ignored_between_the_same_material():
@@ -552,7 +575,7 @@ def test_determinism_under_shuffled_input_and_idempotence():
         mats = _shuffled({m: MATS[m] for m in ("Water", "Steel", "Acrylic")}, rnd)
         _same(ref, compile_(tree(*s), mats=mats, **k2))
     lib, t, b = library(), tree(*specs), Bindings({m: MATS[m] for m in ("Water", "Steel", "Acrylic")}, **kw)
-    _same(regions.compile_classes(lib, t, b, LAM), regions.compile_classes(lib, t, b, LAM))
+    _same(regions.compile(lib, t, b, LAM), regions.compile(lib, t, b, LAM))
     assert b.skins == kw["skins"] and len(lib.surfaces) == len(library().surfaces)
 
 

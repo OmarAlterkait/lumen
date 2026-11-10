@@ -142,7 +142,7 @@ KINDS = {
     "a 3-vector": _vector,
     "a list of 3-vectors": lambda v: isinstance(v, (list, tuple)) and all(_vector(x) for x in v),
 }
-# the settings an optics model records (lumen.build.legacy_library reads them) and the build options, by kind
+# the settings an optics model records (lumen.build.library reads them) and the build options, by kind
 OPTICS_SETTINGS = {
     "medium": "a name", "material": "a name", "film_material": "a name", "front_material": "a name",
     "backing": "a name", "thickness_m": "a number", "local_axis": "a 3-vector", "expected_axes": "a list of 3-vectors",

@@ -177,8 +177,8 @@ def _sensor_group(det):
 
 
 def _model(det, hit_angle: bool, moving=False, origins=None):
-    from lumen.geometry import _legacy_tracked as tracked
     from lumen.geometry import clearance as ray_clear
+    from lumen.geometry import tracked
     from lumen.transport import step as steps
 
     k = (id(det), hit_angle, moving, None if origins is None else origins.tobytes())

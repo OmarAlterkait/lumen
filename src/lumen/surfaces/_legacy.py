@@ -29,6 +29,7 @@ from lumen.surfaces.outcomes import (
     DETECT,
     DIFFUSE,
     DIFFUSE_T,
+    FAR_SIDE,
     GLOSSY,
     INDEX,
     N_OUTCOMES,
@@ -483,6 +484,34 @@ def fixed(kind, consts):
                               kind.reemit_lobe, kind.stack, amps)  # fmt: skip
         _FIXED[key] = (kind, derived)  # the base kept alive: its id stays unique
     return _FIXED[key][1]
+
+
+_INTO_OPAQUE = {}  # base type -> its form ending in an opaque medium: one object per base
+
+
+def is_painted(kind):
+    """Return whether a type is a frontpainted surface (PAINTED_T, or one derived from it by ``fixed``)."""
+    return kind.name.split("{")[0] == PAINTED_T.name
+
+
+def into_opaque(kind):
+    """Return ``kind`` with its far-side outcomes absorbed: a frontpainted transmission into a medium without RINDEX.
+
+    Geant4's frontpainted finishes skip the RINDEX check, so the photon is transmitted and killed at its next step
+    (NoRINDEX): for the light it is an absorption where it lands. The parameters stay (T is read; its derivative is 0).
+    """
+    if id(kind) not in _INTO_OPAQUE:
+
+        def probs(p, ctx):
+            pr = kind.probs(p, ctx)
+            far = jnp.asarray(FAR_SIDE)
+            return jnp.where(far, 0.0, pr).at[..., ABSORB].add(jnp.sum(jnp.where(far, pr, 0.0), -1))
+
+        outs = tuple(o for o in kind.outcomes if not FAR_SIDE[o]) + (() if ABSORB in kind.outcomes else (ABSORB,))
+        derived = SurfaceType(f"{kind.name}|into_opaque", kind.params, outs, probs, kind.lobe_params, kind.reemit,
+                              kind.glossy, kind.reemit_lobe, kind.stack, kind.amps)  # fmt: skip
+        _INTO_OPAQUE[id(kind)] = (kind, derived)
+    return _INTO_OPAQUE[id(kind)][1]
 
 
 TYPES = (

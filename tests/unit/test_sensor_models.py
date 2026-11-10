@@ -1,5 +1,5 @@
 """The readers of a detecting surface (lumen.rules.optics.SENSOR_SURFACES) and the GDML's directional borders
-(_legacy_regions.border_library; the baseline's tests/test_sensor_models.py): the default reads a detecting surface as
+(library.border_library; the baseline's tests/test_sensor_models.py): the default reads a detecting surface as
 stock Geant4 does; a reader passed in replaces it without touching the core; a border applies only in the direction
 the GDML defines it, and a sensor detects from whichever side its border surface is defined on."""
 
@@ -9,8 +9,8 @@ import numpy as np
 import pytest
 from optics_toy import tree
 
-from lumen.build import _legacy_regions as regions
-from lumen.build._legacy_regions import SensorEntry
+from lumen.build import library as glue
+from lumen.build.surfaces import SensorEntry
 from lumen.format import schema
 from lumen.rules import optics as rules
 from lumen.surfaces import _legacy as legacy
@@ -96,14 +96,14 @@ def test_borders_apply_in_the_gdml_directions_and_detect_from_either_side(monkey
     cath = surf("cath", REFLECTIVITY=prop("REFLECTIVITY", 0.0), EFFICIENCY=prop("EFFICIENCY", 1.0))
     mirror = surf("mirror", REFLECTIVITY=prop("REFLECTIVITY", 0.9))
     df = types.SimpleNamespace(surfaces={"cath": cath, "mirror": mirror})
-    monkeypatch.setattr(regions, "border_bindings", lambda df_, t_: {("Body", "Inner"): "cath",
+    monkeypatch.setattr(glue, "border_bindings", lambda df_, t_: {("Body", "Inner"): "cath",
                                                                      ("Inner", "Body"): "cath",
                                                                      ("World", "Body"): "mirror"})  # fmt: skip
-    sensors, surfaces, borders, sb = regions.border_library(df, t, {"Inner"}, LAM)
+    sensors, surfaces, borders, sb = glue.border_library(df, t, {"Inner"}, LAM)
     assert borders == {("Body", "Inner"): "sensor:cath", ("Inner", "Body"): "sensor:cath|out",
                        ("World", "Body"): "mirror"}  # fmt: skip
     assert set(sensors) == {"sensor:cath", "sensor:cath|out"} and set(surfaces) == {"mirror"}
     assert [(b.sensor, b.lv, b.entry) for b in sb] == [("sensor:cath", "InnerLV", "border")]
     # WCSim's sensitive detector: every absorption on entry counts
-    s2, _, _, _ = regions.border_library(df, t, {"Inner"}, LAM, regions.BorderSensor(eff_in=1.0, prefix="pmt"))
+    s2, _, _, _ = glue.border_library(df, t, {"Inner"}, LAM, glue.BorderSensor(eff_in=1.0, prefix="pmt"))
     assert s2["pmt:cath"].params["qe"] == 1.0 and s2["pmt:cath|out"].params["qe"] == 1.0

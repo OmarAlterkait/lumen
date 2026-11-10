@@ -1,4 +1,4 @@
-"""lumen.build.legacy_library: a detector file's recorded optics decisions as the region compiler's library and
+"""lumen.build.library: a detector file's recorded optics decisions as the region compiler's library and
 bindings -- every material, surface and sensor encoding, the WLS-film split, the outside surface, a recipe skin
 replacing the GDML's, and the parameter sources."""
 
@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 from optics_toy import read_toy, tree
 
-from lumen.build import _legacy_regions as regions
-from lumen.build import legacy_library as glue
+from lumen.build import library as glue
+from lumen.build import surfaces as regions
 from lumen.format import schema
 from lumen.format.sensorsets import SensorGroup, SensorSet
 from lumen.surfaces import _legacy as legacy
@@ -68,7 +68,7 @@ def test_every_encoding_on_the_toy(toy):
     assert lib.surfaces[f"film:{MINUS}"].kind.name == "coated:Shifter:painted{axis=(-1,0,0),b:f_spec=0,d=1e-06,eta=1}"
     assert "axis" not in film.params and "d" not in film.params and "L" in film.params
     assert (
-        b.borders == {("w/blk1/Blk", "w/other/X"): "paint"} and lib.surfaces["paint"].kind.name == "painted{f_spec=0}"
+        b.borders == {("w/blk1/Blk", "w/other/X"): "paint"} and lib.surfaces["paint"].kind.name == "painted_t{f_spec=0}"
     )
     assert lib.sensors["sen"].params == {"eff": 0.5} and b.sensors == (regions.SensorBinding("sen", 1, lv="Sen"),)
     o = regions.compile(lib, t, b, LAM)

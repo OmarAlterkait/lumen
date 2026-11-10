@@ -27,8 +27,7 @@ from nav_toys import (
 )
 
 from lumen.build import lowering, solids
-from lumen.geometry import _legacy_tracked as tracked
-from lumen.geometry import navigate
+from lumen.geometry import navigate, tracked
 from lumen.validate import oracle
 
 

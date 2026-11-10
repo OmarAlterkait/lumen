@@ -5,7 +5,7 @@ import types
 import numpy as np
 import pytest
 
-from lumen.build import legacy_library
+from lumen.build import library as optics_library
 from lumen.build.tree import PV, Tree
 from lumen.format import schema
 
@@ -31,12 +31,12 @@ TURN = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])  # 90 degr
 
 
 def test_films_facing_the_expected_axes_are_split():
-    tree, films = legacy_library.split_films(*film_case([np.eye(3), FLIP]))
+    tree, films = optics_library.split_films(*film_case([np.eye(3), FLIP]))
     assert sorted(tuple(ax) for ax in tree.film_axes.values()) == [(-1.0, 0.0, 0.0), (1.0, 0.0, 0.0)]
     assert len(films) == 2 and all(lv.startswith("Foil|film") for lv in films)
 
 
 @pytest.mark.parametrize("rotations", [[np.eye(3), TURN], [np.eye(3)], [np.eye(3), FLIP, TURN]])
 def test_a_film_facing_another_axis_is_refused(rotations):
-    with pytest.raises(legacy_library.LibraryError, match="expects"):
-        legacy_library.split_films(*film_case(rotations))
+    with pytest.raises(optics_library.LibraryError, match="expects"):
+        optics_library.split_films(*film_case(rotations))

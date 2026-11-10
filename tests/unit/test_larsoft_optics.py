@@ -6,7 +6,7 @@ from decimal import Decimal
 
 import numpy as np
 
-from lumen.build import _legacy_regions as regions
+from lumen.build import surfaces as regions
 from lumen.build.tree import PV, Tree
 from lumen.detectors import larsoft_optics as lar
 from lumen.format import schema

@@ -6,16 +6,16 @@ shell dissolved (g4ref: a 1 um shell detects as a 0.1 mm one).
 
 Ported from the navigator part of the baseline's tests/test_coincident.py; its transport toys (the charge with and
 without the shell, the reflecting coincident face) come with the transport. Its class-compiler tests are in
-test_legacy_regions.py."""
+test_surfaces.py."""
 
 import numpy as np
 from nav_toys import defn, make_scene, per_ray
-from test_legacy_regions import LAM, MATS, library, tree
+from test_surfaces import LAM, MATS, library, tree
 
-from lumen.build import _legacy_regions as regions
 from lumen.build import solids
+from lumen.build import surfaces as regions
 from lumen.build.tree import OUTSIDE_PV
-from lumen.geometry import _legacy_tracked as tracked
+from lumen.geometry import tracked
 from lumen.surfaces import _legacy as legacy
 
 GLASS = "glass_0/glass"

@@ -71,7 +71,7 @@ class Controls(NamedTuple):
 class Model:
     """The static model: the geometry, the optics tables, the step config and the clearance field.
 
-    The geometry carries its optical classes (``lumen.geometry._legacy_tracked``); the clearance field
+    The geometry carries its optical classes (``lumen.geometry.tracked``); the clearance field
     (``lumen.geometry.clearance.Clearance``) serves the moving-source method; ``hit_angle``: the deposit carries the
     hit angle (a sensor model reads CE).
     """

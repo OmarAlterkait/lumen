@@ -14,7 +14,8 @@ import numpy as np
 import pytest
 from optics_toy import TOY, read_toy, tree
 
-from lumen.build import _legacy_regions as regions
+from lumen.build import library as glue
+from lumen.build import surfaces as regions
 from lumen.format import schema
 from lumen.media import bulk, laws, spectra
 from lumen.rules import optics as rules
@@ -48,7 +49,7 @@ def test_reading_units_and_keys(df):
 def test_enum_valued_surface_attributes(df):
     """a GDML export writes Geant4's enum values: unified, groundfrontpainted, dielectric_dielectric"""
     assert rules.surface_names(df.surfaces["enum"]) == ("unified", "groundfrontpainted", "dielectric_dielectric")
-    assert rules.surface(df.surfaces["enum"]).kind is legacy.PAINTED
+    assert rules.surface(df.surfaces["enum"]).kind is legacy.PAINTED_T  # T at Geant4's default 0
 
 
 def test_scintillation_reading_conventions(df):
@@ -205,9 +206,9 @@ def test_groupvel_export_is_accepted_a_user_table_refused(df):
 
 
 SUPPORTED = {"glis": legacy.GLISUR_METAL, "glispol": legacy.SPECULAR_METAL, "glis1": legacy.SPECULAR_METAL,
-             "uni": legacy.UNIFIED_METAL, "paint": legacy.PAINTED, "paintT": legacy.PAINTED_T,
+             "uni": legacy.UNIFIED_METAL, "paint": legacy.PAINTED_T, "paintT": legacy.PAINTED_T,
              "die": legacy.DIELECTRIC_RT, "pdieR": legacy.DIELECTRIC_RT}  # fmt: skip
-# a polished surface's type never depends on whether R or T is present: Geant4 reads them at its defaults (R 1, T 0)
+# a dielectric_dielectric type never depends on whether R or T is present: Geant4 reads them at its defaults (R 1, T 0)
 REFUSED = {"lut": "model", "dich": "model", "back": "finish", "gdie": "ground dielectric", "eff": "EFFICIENCY",
            "mT": "TRANSMITTANCE", "cplx": "REALRINDEX", "usig": "sigma_alpha", "neg": "polish"}  # fmt: skip
 
@@ -291,9 +292,9 @@ def test_compile_packs_spectral_kernel_params(df):
 def test_border_bindings_on_a_tree(df):
     pvs = (("<outside>", "<outside>", "Air"), ("w/W", "W", "Liq", "<outside>"),
            ("w/blk1/Blk", "Blk", "Steel", "w/W"), ("w/other/X", "X", "Liq", "w/W"))  # fmt: skip
-    assert regions.border_bindings(df, tree(*pvs)) == {("w/blk1/Blk", "w/other/X"): "paint"}
+    assert glue.border_bindings(df, tree(*pvs)) == {("w/blk1/Blk", "w/other/X"): "paint"}
     with pytest.raises(regions.OpticsError, match="no adjacent"):
-        regions.border_bindings(df, tree(*pvs[:3]))
+        glue.border_bindings(df, tree(*pvs[:3]))
 
 
 def test_coverage_lists_tables_short_of_the_range(df):

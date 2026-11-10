@@ -1,7 +1,8 @@
 """The photon state: 13 core fields and the optional parts a run asks for, built in one place from an emission row.
 
 - core: x, d (m), t (ns), lam (nm), w, alive, vertex, er, ei (the Jones vector), vol, srf, sn, nz; always;
-- legacy: cls, tag (the optical class and sensor tag of the region), until the surface lookup replaces the regions;
+- cls, tag: the surface lookup's class of the volume (its internal compression, ``lumen.build.surfaces``) and its
+  sensor index;
 - ``Stack``: layer, svol, scls, stag, when a layered (coated) surface exists;
 - ``MovingSource``: free and the chain (``lumen.transport.moving_source``), when wrt holds a moving-path parameter;
 - ``z``: the edge-row factor (``lumen.transport.estimator.edge_floor``), when wrt holds a parameter at a domain edge.

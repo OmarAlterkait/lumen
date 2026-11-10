@@ -23,7 +23,7 @@ from test_importer import write
 
 import lumen
 from lumen import run as runner
-from lumen.geometry import _legacy_tracked as tracked
+from lumen.geometry import tracked
 from lumen.transport import item, state
 from lumen.transport import step as steps
 

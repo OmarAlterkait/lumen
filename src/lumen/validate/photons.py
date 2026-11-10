@@ -18,7 +18,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from lumen import sources
-from lumen.geometry import _legacy_tracked as tracked
+from lumen.geometry import tracked
 from lumen.transport import item, state
 from lumen.transport import step as steps
 

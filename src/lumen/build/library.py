@@ -1,7 +1,7 @@
-"""A detector file's recorded optics decisions as the legacy region compiler's Library and Bindings.
+"""A detector file's recorded optics decisions as the surface lookup's Library and Bindings.
 
     tree, library, bindings, sources = library_and_bindings(df, tree, instances, sensor_set)
-    optics = _legacy_regions.compile(library, tree, bindings, df.wavelength_range)
+    optics = surfaces.compile(library, tree, bindings, df.wavelength_range)
 
 Each material, surface and sensor group names the optics model that reads it (``OpticsModel.name``):
 
@@ -26,7 +26,7 @@ Surfaces
 Skins and borders
     The GDML's skins are bound where their logical volume is in the tree; a recipe skin on a volume replaces the
     GDML's. ``df.outside_surface`` is the skin of the outside region. The GDML's borders are read with the sensor
-    set's ``border_into`` group (``_legacy_regions.border_library``).
+    set's ``border_into`` group (``border_library``).
 Sensor groups
     ``border_into`` with model ``lumen:geant4``: the borders into the group's volumes are sensors through the
     surface's own detection (``settings["efficiency_on_entry"]`` replaces the efficiency on entry, the sensors are
@@ -36,7 +36,7 @@ Sensor groups
     the PMT's QE, CE and efficiency apply after tracking (``lumen.sensors``).
 
 The outside material is always its own opaque medium, "outside". ``sources`` maps every parameter leaf of the
-library (the paths of ``_legacy_regions.named_params``, e.g. ("media", "Water", "index", "value")) to the
+library (the paths of ``surfaces.named_params``, e.g. ("media", "Water", "index", "value")) to the
 detector-file key it came from, as data (``Source``).
 
 Notes
@@ -47,11 +47,15 @@ sbnd_full.tree / library / film_surfaces / bindings, microboone.library / bindin
 
 from __future__ import annotations
 
+import re
+import warnings
+from collections import Counter
+from dataclasses import dataclass
 from typing import NamedTuple
 
 import numpy as np
 
-from lumen.build import _legacy_regions as regions
+from lumen.build import surfaces as regions
 from lumen.build.tree import OUTSIDE_MATERIAL, OUTSIDE_PV, PV, Tree
 from lumen.format import schema
 from lumen.media import bulk, phase
@@ -255,13 +259,13 @@ def _border_groups(df, tree, groups):
     if len(border) > 1:
         raise LibraryError(f"sensor groups {[g.name for g in border]}: one border_into group is supported")
     if not border:
-        return set(), regions.BorderSensor(), None
+        return set(), BorderSensor(), None
     g = border[0]
     if g.model not in BORDER_MODELS:
         raise LibraryError(f"sensor group {g.name!r}: border_into reads a model of {BORDER_MODELS}, not {g.model!r}")
     pvs = {p for p in tree.order if g.selects(tree.by_name[p].lv)}
     eff_in = 1.0 if g.model == "lumen:pmt" else g.settings.get("efficiency_on_entry")
-    how = regions.BorderSensor(None, eff_in, g.settings.get("name_prefix", g.name))
+    how = BorderSensor(None, eff_in, g.settings.get("name_prefix", g.name))
     return pvs, how, g
 
 
@@ -291,7 +295,7 @@ def library_and_bindings(df: schema.DetectorFile, tree, instances, sensor_set):
     media, bind, msrc = _media(df, tree)
     surfaces, skins, ssrc = _surfaces(df, tree, films)
     pvs, how, group = _border_groups(df, tree, sensor_set.groups)
-    sensors, bsurf, borders, sbind = regions.border_library(df, tree, pvs, df.wavelength_range, how)
+    sensors, bsurf, borders, sbind = border_library(df, tree, pvs, df.wavelength_range, how)
     for name, e in bsurf.items():
         if name not in surfaces:
             surfaces[name], ssrc[name] = e, _surface_sources(df.surfaces[name], e.params)
@@ -477,3 +481,134 @@ def _flatten(library, sources):
             for leaf in _leaves(e.params):
                 out[(section, name) + leaf] = src.get(leaf, src.get(leaf[:1], Source(None, "fixed", "unrecorded")))
     return out
+
+
+# ---------------------------------------------------------------------------------------- the GDML's borders
+@dataclass(frozen=True)
+class BorderSensor:
+    """How border_library reads the borders into a sensor volume.
+
+    ``model`` names the sensor model (None: the default, stock Geant4's reading); ``eff_in`` replaces the detection
+    efficiency on entry (a sensitive detector that counts every absorption: WCSim's, 1); ``prefix`` names the
+    sensors ("<prefix>:<surface>").
+    """
+
+    model: str | None = None
+    eff_in: float | None = None
+    prefix: str = "sensor"
+
+
+def _segments(tree):
+    seg = {}
+    for pv in tree.order:
+        parts = pv.split("/")
+        if len(parts) >= 2:  # a physvol placed several times in one mother: '<name>#<index>'
+            seg.setdefault(re.sub(r"#\d+$", "", parts[-2]), []).append(pv)
+    return seg
+
+
+def _aliased(tree):
+    al = getattr(tree, "aliases", {}) or {}
+
+    def alias(n):  # a dissolved envelope's name -> the placement holding its region
+        seen = set()
+        while n in al and n not in seen:
+            seen.add(n)
+            n = al[n]
+        return n
+
+    return alias
+
+
+def _border_pairs(tree, seg, a, b, inside):
+    """Return the adjacent tree PV pairs of one border a -> b (GDML physvol names)."""
+    grp = getattr(tree, "groups", {}) or {}  # dissolved envelopes: siblings touch within one envelope instance
+    bs = set(seg.get(b, ()))
+    b_in, b_sib = {}, {}  # b's instances by mother (x's daughters), and by (mother, envelope instance) (siblings)
+    for y in bs:
+        b_in.setdefault(tree.by_name[y].mother, []).append(y)
+        b_sib.setdefault((tree.by_name[y].mother, grp.get(y, "")), []).append(y)
+    pairs = []
+    for x in seg.get(a, ()):  # x's neighbours only (daughters, mother, siblings): linear, not |a| |b|
+        m = tree.by_name[x].mother
+        sib = b_sib.get((m, grp.get(x, "")), ()) if m is not None else ()
+        near = set(b_in.get(x, ())) | ({m} & bs) | set(sib)
+        pairs += [(x, y) for y in sorted(near) if y != x and regions.relation(tree, x, y) is not None]
+        # the kept detector against its GDML mother, which the tree holds as the outside: a border from the
+        # detector volume into the physvol that contains it
+        if m == OUTSIDE_PV and not bs and inside(a, b):
+            pairs.append((x, OUTSIDE_PV))
+    if not seg.get(a) and seg.get(b) and inside(b, a):  # ... and from that mother into the detector
+        pairs += [(OUTSIDE_PV, y) for y in seg[b] if tree.by_name[y].mother == OUTSIDE_PV]
+    return pairs
+
+
+def border_bindings(df, tree) -> dict:
+    """Return the GDML border surfaces on a tree: {(pre tree PV, post tree PV): surface name}.
+
+    A GDML physvol name matches every world instance whose placement segment (the path segment before the member
+    volume) is that name (or that name + '#k': one physvol placed several times in one mother); a border applies to
+    each adjacent (mother/daughter or sibling) instance pair. Fail closed when a border matches nothing; a border
+    whose two volumes both lie outside the kept detector is dropped with a warning.
+    """
+    seg = _segments(tree)
+    lv_of = {p.name: p.volume for p in df.placements}  # physvol -> its LV
+
+    def inside(dname, mname):  # is physvol dname a daughter of physvol mname's LV
+        return mname in lv_of and any(df.placements[i].name == dname for i in df.volumes[lv_of[mname]].daughters)
+
+    alias = _aliased(tree)
+    out, dropped = {}, []
+    for border in df.borders:
+        a, b = alias(border.pv1), alias(border.pv2)
+        pairs = _border_pairs(tree, seg, a, b, inside)
+        if not pairs and not seg.get(a) and not seg.get(b):
+            dropped.append(border.name)  # both volumes lie outside the kept detector
+            continue
+        if not pairs:
+            raise regions.OpticsError(f"bordersurface {border.name!r} ({a!r} -> {b!r}): no adjacent world instances")
+        for pr in pairs:
+            out[pr] = border.surface
+    if dropped:
+        warnings.warn(f"{len(dropped)} border surfaces lie wholly outside the kept detector and are dropped (e.g. "
+                      f"{dropped[:3]})", stacklevel=2)  # fmt: skip
+    return out
+
+
+def border_library(df, tree, sensor_pvs, lam_domain=None, how: BorderSensor | None = None):
+    """Return the GDML's border surfaces with its sensors: (sensors, surfaces, borders, sensor bindings).
+
+    Exactly in the directions the GDML defines them (G4LogicalBorderSurface: ordered pv1 -> pv2). A border INTO a
+    sensor volume is that sensor (the photon absorbed-and-detected there by the surface's sensor model,
+    ``lumen.rules.optics.sensor``); a border OUT OF one whose surface detects is a sensor too, its hit credited to the
+    volume left (Geant4's Detection leaving a sensitive volume, e.g. WCSim's ProcessHits_boundary); any other border
+    is its surface. A sensor volume detects only across its borders (SensorBinding entry "border"). ``how``: the
+    sensor model, the efficiency on entry and the sensors' name prefix (BorderSensor).
+
+    Returns sensors {name: SensorEntry}, surfaces {name: SurfaceEntry}, borders {(pre, post): name} and the sensor
+    bindings.
+    """
+    how = BorderSensor() if how is None else how
+    n_lv = Counter(tree.by_name[p].lv for p in sensor_pvs)
+    sensors, surfaces, borders, sbind, bound = {}, {}, {}, [], set()
+    for (pre, post), s in sorted(border_bindings(df, tree).items()):
+        rec = df.surfaces[s]
+        if post in sensor_pvs:
+            k = f"{how.prefix}:{s}"
+            if k not in sensors:
+                sensors[k] = rules.sensor(rec, lam_domain, how.model, eff=how.eff_in)
+            lv = tree.by_name[post].lv
+            if (k, lv) not in bound:
+                bound.add((k, lv))
+                sbind.append(regions.SensorBinding(k, n_lv[lv], lv=lv, entry="border"))
+            borders[(pre, post)] = k
+        elif pre in sensor_pvs and rules.nonzero(rec.properties, "EFFICIENCY"):
+            k = f"{how.prefix}:{s}|out"
+            if k not in sensors:
+                sensors[k] = rules.sensor(rec, lam_domain, how.model)
+            borders[(pre, post)] = k
+        else:
+            if s not in surfaces:
+                surfaces[s] = rules.surface(rec)
+            borders[(pre, post)] = s
+    return sensors, surfaces, borders, tuple(sbind)

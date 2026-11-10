@@ -2,6 +2,8 @@
 default item's cells and the trace's integer halves. The step itself is gated against the baseline on six detectors
 (tools/port/check_a6.py) and by the physics tier (tests/physics)."""
 
+import types
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -9,8 +11,7 @@ import pytest
 
 from lumen import diagnostics
 from lumen._core.safe import safe_div
-from lumen.build import _legacy_regions as regions
-from lumen.media import bulk, laws, phase
+from lumen.media import phase
 from lumen.surfaces import _legacy as legacy
 from lumen.surfaces.outcomes import ABSORB, DETECT, SPECULAR, TERMINAL
 from lumen.transport import estimator, item, state
@@ -41,10 +42,9 @@ def test_the_proposal_is_the_baselines_defensive_mix_at_zero_bit_for_bit():
 
 
 def _tables():
-    water = bulk.Medium("w", laws.constant("index"), None, (bulk.mie(laws.constant("length")),))
-    refl = {"R": 0.0, "f_spec": 1.0}
-    return regions.by_hand([water], [0, 0], {(0, 1): (legacy.PAINTED, refl), (1, 0): (legacy.PAINTED, dict(refl,
-                           R=0.5))})  # fmt: skip
+    """Two rows of one painted type (R 0 and 0.5): the estimator reads only the tables' types."""
+    kp = {"painted": {"R": np.array([0.0, 0.5], np.float32), "f_spec": np.array([1.0, 1.0], np.float32)}}
+    return types.SimpleNamespace(kinds=(legacy.PAINTED,)), kp
 
 
 def test_edge_rows_come_from_wrt_and_the_domains():
