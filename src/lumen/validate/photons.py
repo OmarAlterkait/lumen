@@ -1,11 +1,12 @@
 """Photons through a loaded detector, for the checks: the model, the sources they emit and the sensor positions.
 
     s = photons.setup(det, lam_edges)                         # the model on the detector's navigator
-    rows = photons.isotropic(jnp.array([0.0, 0.0, 0.0]), 400.0, 1 << 20, key)
+    rows = lumen.sources.Point((0.0, 0.0, 0.0), n_photons=1e6, lam=400.0).emit(None, key, 1 << 20)
     ops = photons.operands(s, det.pack(params))               # every value an operand: one compile per detector
     tally = lumen.run.run(spec, s.model, ops, rows, raw_key, replicas=8)
 
-Sources follow the references' convention: isotropic, monochromatic, unpolarised photons at t = 0, weight 1 each.
+Sources follow the references' convention: isotropic, monochromatic, unpolarised photons at t = 0, weight 1 each
+(``lumen.sources.Point``; ``isotropic`` and ``pencil`` build its rows).
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from lumen import sources
 from lumen.geometry import _legacy_tracked as tracked
 from lumen.transport import item, state
 from lumen.transport import step as steps
@@ -59,21 +61,16 @@ def operands(s: Setup, params, reference=None, controls=None):
     return steps.operands(s.model, params, reference, controls, item.grid(s.tally))
 
 
-@jax.jit
 def isotropic(x, lam, n_key):
-    """Return an Emission of isotropic photons from the points ``x`` (n, 3) m at ``lam`` (n,) nm, t = 0, weight 1."""
+    """Return an Emission of isotropic photons from the points ``x`` (n, 3) m at ``lam`` (nm, (n,) or one), t = 0,
+    weight 1: ``lumen.sources.Point``'s draw under ``n_key``."""  # noqa: D205, D209
     n = x.shape[0]
-    d = jax.random.normal(n_key, (n, 3), F32)
-    d = d / jnp.linalg.norm(d, axis=1, keepdims=True)
-    z = jnp.zeros(n, F32)
-    return state.Emission(x.astype(F32), d, z, lam.astype(F32), z + 1.0, jnp.zeros((n, 2, 3), F32), jnp.ones(n, bool))
+    return sources.Point(x, n_photons=float(n), lam=lam).emit(None, n_key, n)
 
 
 def pencil(x, d, lam, n) -> state.Emission:
     """Return an Emission of ``n`` photons from ``x`` along ``d`` at ``lam`` nm, t = 0, weight 1, unpolarised."""
-    z = jnp.zeros(n, F32)
-    return state.Emission(jnp.tile(jnp.asarray(x, F32), (n, 1)), jnp.tile(jnp.asarray(d, F32), (n, 1)), z, z + lam,
-                          z + 1.0, jnp.zeros((n, 2, 3), F32), jnp.ones(n, bool))  # fmt: skip
+    return sources.Point(x, n_photons=float(n), lam=lam, direction=d).emit(None, jax.random.PRNGKey(0), n)
 
 
 def raw_key(seed, *folds):

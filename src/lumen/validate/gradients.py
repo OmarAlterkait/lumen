@@ -35,6 +35,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from lumen import run as runner
+from lumen import sources
 from lumen.transport import estimator, item
 from lumen.transport import step as steps
 from lumen.validate import photons, records, references, stats
@@ -454,7 +455,7 @@ def _rows(s, spec, o):
     x = photons.source_points(s, spec)
     src = jax.random.randint(jax.random.PRNGKey(51), (n,), 0, len(x))
     pts = jnp.asarray(x, F32)[src]
-    return photons.isotropic(pts, jnp.full(n, spec["wavelength"], F32), jax.random.PRNGKey(50))
+    return sources.Point(pts, n_photons=float(n), lam=spec["wavelength"]).emit(None, jax.random.PRNGKey(50), n)
 
 
 def _reverse(name, obs, ops, fwd, n_sensors, o):

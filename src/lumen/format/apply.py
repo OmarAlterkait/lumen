@@ -58,7 +58,7 @@ def _changes(df: schema.DetectorFile, values) -> dict:
     out: dict = {"materials": {}, "surfaces": {}}
     defaults = None
     for key, v in values.items():
-        if key.startswith(SENSOR_PREFIX):
+        if key.startswith((SENSOR_PREFIX, "source/")):  # sensor settings, and a source's own parameters
             continue
         parts = key.split("/")
         if len(parts) != 3 or parts[0] not in out:

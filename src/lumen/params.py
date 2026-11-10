@@ -101,6 +101,12 @@ class Params(Mapping):
             return self.set(key, Table(v.energy, np.asarray(v.value) * factor))
         return self.set(key, np.asarray(v) * factor)
 
+    def merged(self, values: dict, spec: Mapping, layer: str) -> Params:
+        """Return a copy with new keys (their values and ParamInfo) from one layer; a key already here keeps its own."""
+        new = {k: v for k, v in values.items() if k not in self._values}
+        return Params({**self._values, **new}, {**self._spec, **{k: spec[k] for k in new}},
+                      {**self._layers, **dict.fromkeys(new, layer)})  # fmt: skip
+
     def with_layer(self, values: dict, layer: str) -> Params:
         """Return a copy with several values replaced by one layer (a calibration, sensor defaults)."""
         out = self

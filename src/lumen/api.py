@@ -19,6 +19,7 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from lumen import _env
 from lumen.format import calibrations as cal
@@ -136,7 +137,8 @@ def load(name_or_path, *, sensors: str = "default", calibration: str = cal.NOMIN
 
 # ------------------------------------------------------------------------------------------------------ simulate
 EXACT_CELL_FACTOR = 5  # device bytes per histogram byte: the GPU's exact sums keep a u64 sum and a u64 scratch per cell
-_MODELS: dict = {}  # (id(det), hit angle) -> (det, Model): one compile per detector and layout
+_MODELS: dict = {}  # (id(det), hit angle, moving source, origins) -> (det, Model): one compile per detector and layout
+SOURCE_STREAM = np.uint32(0xFFFFFFFF)  # the source's key: fold_in(key, SOURCE_STREAM), never a photon's id (< 2^31)
 
 
 @jax.tree_util.register_pytree_node_class
@@ -174,15 +176,38 @@ def _sensor_group(det):
     return groups[0], plugins.sensor_models.get(groups[0].model)(groups[0].defaults)
 
 
-def _model(det, hit_angle: bool):
+def _model(det, hit_angle: bool, moving=False, origins=None):
     from lumen.geometry import _legacy_tracked as tracked
+    from lumen.geometry import clearance as ray_clear
     from lumen.transport import step as steps
 
-    k = (id(det), hit_angle)
+    k = (id(det), hit_angle, moving, None if origins is None else origins.tobytes())
     if k not in _MODELS:
         geom = tracked.from_parts(det.parts, cache=True)
-        _MODELS[k] = (det, steps.Model(geom, det.parts.optics, hit_angle=hit_angle))
+        field = None if origins is None else ray_clear.Clearance(origins, ray_clear.ray_clearance(geom.nav, origins))
+        _MODELS[k] = (det, steps.Model(geom, det.parts.optics, steps.StepConfig(moving_source=moving), field,
+                                       hit_angle=hit_angle))  # fmt: skip
     return _MODELS[k][1]
+
+
+def _moving(source, params, wrt) -> tuple:
+    """Return (the moving-source method is on, the source's origins (m) for its clearance, None when traced)."""
+    from lumen import sources
+
+    if any(not k.startswith(sources.PREFIX) for k in wrt):
+        raise ValueError(f"simulate: wrt takes the source's keys ({sources.PREFIX}<field>), got {list(wrt)}")
+    moved = [k for k in wrt if k.removeprefix(sources.PREFIX) in getattr(source, "MOVING", ())]
+    if not moved:
+        return False, None
+    if not source.drawn_direction:
+        raise sources.GradientNotAvailable(f"simulate: {moved} move the photons of a source whose directions are "
+                                           "not drawn from a density (drawn_direction False)")  # fmt: skip
+    v = source.values(params)
+    try:
+        pts = [np.asarray(v[f], np.float32).reshape(-1, 3) for f in ("x", "start", "end") if f in v]
+    except jax.errors.TracerArrayConversionError:  # traced origins: no co-moving radius (exact, without the field)
+        return True, None
+    return True, np.unique(np.concatenate(pts), axis=0)
 
 
 def _budget() -> float:
@@ -194,10 +219,14 @@ def _budget() -> float:
 
 
 def simulate(det, source, params=None, *, samples: int, seed: int, replicas: int = 16, gate=None,  # noqa: PLR0913
-             chunk: int = 1 << 20, backend: str = "auto") -> Light:  # fmt: skip
+             chunk: int = 1 << 20, backend: str = "auto", wrt=()) -> Light:  # fmt: skip
     """Return the Light of ``samples`` photons of ``source`` through ``det`` at ``params`` (default: its own).
 
-    ``source``: an Emission batch of at least ``samples`` rows, or a function ``(first_id, count) -> Emission``. The
+    ``source``: a ``lumen.sources`` source, its fields from ``params``' ``source/`` keys where given (its random
+    numbers under ``fold_in(key(seed), SOURCE_STREAM)``); for the port tools also an Emission batch of at least
+    ``samples`` rows, or a function ``(first_id, count) -> Emission``. ``wrt``: the source keys a derivative is
+    taken in; one that moves the photons (a position) turns on the moving-source method, with the clearance about
+    the source's origins (none when they are traced), and needs a source whose directions are drawn. The
     photons run in chunks of ``chunk`` (``lumen.readout.photon_chunks``), photon i under ``fold_in(key(seed), i)``.
     The histograms are those of the sensor set's group with a sensor model (``lumen:pmt``), on its static grid
     (``lumen.readout.make_grid`` with ``gate`` (ns), default the group's ``readout["gate"]``); ``simulate`` refuses
@@ -217,10 +246,15 @@ def simulate(det, source, params=None, *, samples: int, seed: int, replicas: int
         raise ValueError(f"simulate: sensor group {group.name!r} must contain every sensor of the detector")
     r = item.Readout(n, grid, int(replicas))
     ro.check_memory(grid, n, int(replicas), 0, _budget())
-    model = _model(det, grid.theta_knots is not None)
-    packed = jax.tree_util.tree_map(jnp.asarray, det.pack(det.params() if params is None else params))
+    params = det.params() if params is None else params
+    moving, origins = _moving(source, params, wrt) if hasattr(source, "emit") else (False, None)
+    model = _model(det, grid.theta_knots is not None, moving, origins)
+    packed = jax.tree_util.tree_map(jnp.asarray, det.pack(params))
     ops = steps.operands(model, packed, None, steps.Controls(), None)
     key = jax.random.key_data(jax.random.PRNGKey(int(seed)))
+    if hasattr(source, "emit"):
+        src, skey = source, jax.random.fold_in(key, SOURCE_STREAM)
+        source = lambda first, count: src.emit(params, skey, count, first, int(samples))  # noqa: E731
     size, acc = min(int(chunk), int(samples)), None
     for first, count in ro.photon_chunks(int(samples), size):
         rows = source(first, count) if callable(source) else \
@@ -238,7 +272,8 @@ def simulate(det, source, params=None, *, samples: int, seed: int, replicas: int
     mean_t = jnp.where(arrivals > 0.0, acc["arrival_t"] / jnp.where(arrivals > 0.0, arrivals, 1.0), jnp.nan)
     health = {k: acc[k] for k in ("lost", "abandoned", "escaped", "late", "truncated", "n_truncated", "stuck")}
     prov = (("seed", int(seed)), ("samples", int(samples)), ("replicas", int(replicas)), ("chunk", size),
-            ("backend", backend), ("detector", det.name), ("calibration", det.calibration))  # fmt: skip
+            ("backend", backend), ("detector", det.name), ("calibration", det.calibration),
+            ("wrt", tuple(wrt)))  # fmt: skip
     hist = item.histograms(r, acc, sensor_model, group.name, gate)
     return Light(arrivals, err, mean_t, hist, health, prov)
 

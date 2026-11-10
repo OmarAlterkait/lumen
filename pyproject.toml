@@ -65,6 +65,7 @@ ignore = ["N806"]
 "tools/port/leaf_goldens.py" = ["N812"]
 "tools/port/import_goldens.py" = ["N812"]
 "tools/port/harness/b0_run.py" = ["N812"]
+"tools/port/a9s_source_goldens.py" = ["N803", "N812"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"

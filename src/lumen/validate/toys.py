@@ -15,10 +15,10 @@ from __future__ import annotations
 
 import json
 
-import jax.numpy as jnp
 import numpy as np
 
 from lumen import run as runner
+from lumen import sources
 from lumen.transport import step as steps
 from lumen.units import HC
 from lumen.validate import photons, records, references, stats
@@ -70,11 +70,8 @@ def lumen_toy(det, spec, isotropic, replicas):
     lam = HC / spec["energy_ev"]
     x = np.asarray(spec["source_mm"]) * 1e-3
     key = photons.raw_key(3)
-    if isotropic:
-        rows = photons.isotropic(jnp.tile(jnp.asarray(x, jnp.float32), (PHOTONS, 1)), jnp.full(PHOTONS, lam),
-                                 photons.raw_key(4))  # fmt: skip
-    else:
-        rows = photons.pencil(x, spec["direction"], lam, PHOTONS)
+    src = sources.Point(x, n_photons=float(PHOTONS), lam=lam, direction=None if isotropic else spec["direction"])
+    rows = src.emit(None, photons.raw_key(4), PHOTONS)
     ops = photons.operands(s, photons.packed(det), controls=CONTROLS)
     t = runner.run(item_spec(s), s.model, ops, rows, key, max_vertices=GUARD, replicas=replicas)
     q = np.asarray(t.outputs["Q"], np.float64).reshape(replicas, -1).sum(1)

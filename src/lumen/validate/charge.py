@@ -32,6 +32,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from lumen import run as runner
+from lumen import sources
 from lumen.transport import item
 from lumen.units import HC
 from lumen.validate import photons, records, references, stats
@@ -89,8 +90,7 @@ def run_source(s, run_args, x_m, lam, nph, key):
     spec, ops, k, nc = run_args
     acc, n_calls = None, max(1, int(round(nph / nc)))
     for i in range(n_calls):
-        rows = photons.isotropic(jnp.tile(jnp.asarray(x_m, F32), (nc, 1)), jnp.full(nc, lam, F32),
-                                 jax.random.fold_in(key, 1 << 20 | i))  # fmt: skip
+        rows = sources.Point(x_m, n_photons=float(nc), lam=lam).emit(None, jax.random.fold_in(key, 1 << 20 | i), nc)
         t = runner.run(spec, s.model, ops, rows, key, replicas=k, first_id=i * nc)
         out = {name: np.asarray(v, np.float64) for name, v in t.outputs.items()}
         acc = out if acc is None else {name: acc[name] + v for name, v in out.items()}
