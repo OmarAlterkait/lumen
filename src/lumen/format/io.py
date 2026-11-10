@@ -255,7 +255,6 @@ def to_files(df: schema.DetectorFile) -> dict[str, bytes]:
         wavelength_range_nm=list(df.wavelength_range),
         outside=df.outside,
         outside_surface=df.outside_surface,
-        build_options=df.build_options,
         provenance=df.provenance,
         report=list(df.report),
         manifest=manifest,
@@ -333,6 +332,9 @@ def read(path) -> schema.DetectorFile:
             f"{root} is schema {found!r}; this lumen reads {schema.SCHEMA}. Upgrade lumen, or open it "
             "with the version that wrote it."
         )
+    if head.get("build_options"):  # an empty one (files written before it was removed) is no choice at all
+        raise FormatError(f"{root}: build options {sorted(head['build_options'])} are no longer read (the build's "
+                          "rewrites are rules, lumen.build.import_rules): convert the detector again")  # fmt: skip
     man = head["manifest"]
 
     def doc(name):
@@ -437,7 +439,6 @@ def read(path) -> schema.DetectorFile:
         meshes=meshes,
         outside=head["outside"],
         outside_surface=head["outside_surface"],
-        build_options=head.get("build_options", {}),
         userinfo=tuple(_aux_back(a) for a in d["userinfo.json"]["userinfo"]),
         provenance=head["provenance"],
         report=tuple(head["report"]),

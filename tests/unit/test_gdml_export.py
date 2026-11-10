@@ -27,8 +27,7 @@ def write(tmp_path, text, name="toy.gdml"):
 def contents(df):
     """Every content file and the head fields the round trip compares."""
     f = io.to_files(df)
-    head = (df.world, df.detector_volume, tuple(df.wavelength_range), df.outside, df.outside_surface,
-            io.dumps(dict(b=df.build_options)))  # fmt: skip
+    head = (df.world, df.detector_volume, tuple(df.wavelength_range), df.outside, df.outside_surface)
     return {k: v for k, v in f.items() if k != "detector.json"}, head
 
 

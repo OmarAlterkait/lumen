@@ -146,7 +146,6 @@ OPTICS_SETTINGS = {
     "backing": "a name", "thickness_m": "a number", "local_axis": "a 3-vector",
     "scatter": "true or false", "absorb": "true or false",
 }  # fmt: skip
-BUILD_OPTIONS: dict = {}  # none: the build's rewrites are rules (lumen.build.lowering.split_unions by leaf count)
 
 
 def check_settings(what: str, settings: dict, known: dict) -> None:
@@ -271,8 +270,8 @@ class DetectorFile:
 
     ``detector_volume`` is the logical volume that is simulated (light leaving it is absorbed: ``outside``), and
     ``outside_surface`` the surface a photon meets on leaving it, when the recipe names one; ``wavelength_range``
-    (nm) is where every optical table must be defined. ``build_options`` holds the recipe's choices for building the
-    geometry, of ``BUILD_OPTIONS`` (none today). ``meshes`` holds the tessellated solids' triangle arrays by name.
+    (nm) is where every optical table must be defined. The build's rewrites are rules, not options
+    (``lumen.build.import_rules``). ``meshes`` holds the tessellated solids' triangle arrays by name.
     ``provenance`` records the source file, its sha256, the importer and recipe, and ``report`` every normalisation
     and decision, in words. ``tokens`` keeps, sparsely, the source
     text of the lengths and energies whose Geant4 reading the canonical writer would not reproduce
@@ -295,13 +294,8 @@ class DetectorFile:
     meshes: dict[str, np.ndarray] = field(default_factory=dict)
     outside: str = OUTSIDE_ABSORB
     outside_surface: str | None = None
-    build_options: dict = field(default_factory=dict)
     userinfo: tuple[Aux, ...] = ()
     provenance: dict = field(default_factory=dict)
     report: tuple[str, ...] = ()
     schema: str = SCHEMA
     tokens: dict = field(default_factory=dict)  # source tokens of lengths and energies (lumen.gdml.tokens), sparse
-
-    def __post_init__(self):
-        """Check the build options."""
-        check_settings(f"detector {self.name!r} build_options", self.build_options, BUILD_OPTIONS)

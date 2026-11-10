@@ -1165,7 +1165,6 @@ def _sidecar(run: _Run, gdml: Path, sha: str, args: list) -> dict:
         wavelength_range_nm=list(df.wavelength_range),
         outside=df.outside,
         outside_surface=df.outside_surface,
-        build_options=df.build_options,
         provenance=df.provenance,
         report=list(df.report),
         digest=run.digest,
@@ -1369,7 +1368,7 @@ def _restore(df: schema.DetectorFile, side: dict) -> schema.DetectorFile:
     return dataclasses.replace(
         df, name=h["name"], world=h["world"], detector_volume=h["detector_volume"],
         wavelength_range=tuple(h["wavelength_range_nm"]), outside=h["outside"], outside_surface=h["outside_surface"],
-        build_options=h["build_options"], provenance=h["provenance"], report=tuple(h["report"]), materials=mats,
+        provenance=h["provenance"], report=tuple(h["report"]), materials=mats,
         surfaces=surfs, skins=_merge(df.skins, side["skins"], schema.Skin), tokens={k: v for k, v in toks.items() if v},
         borders=_merge(df.borders, side["borders"], schema.Border))  # fmt: skip
 
