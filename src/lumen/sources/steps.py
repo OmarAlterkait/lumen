@@ -2,8 +2,11 @@
 
     src = Geant4Steps.of(det.params(), "Water", "cherenkov", start=a, end=b, t_start=t0, t_end=t1,
                          beta_start=b0, beta_end=b1, charge=q, edep=e)   # (n, 3) m, ns, c, e, eV
+    src = Geant4Steps.of(..., step_length=L)                             # (n,) m: Geant4's StepLength
 
-A step's speed is the mean of its ends (G4Cerenkov's), its length the chord. A photon draws step i with probability
+A step's speed is the mean of its ends (G4Cerenkov's). Its light counts over ``step_length`` when given (Geant4's
+G4Step::GetStepLength, the true path: G4Cerenkov's photon number and the Birks dE/dx use it), else over the chord;
+its photons are emitted along the chord. A photon draws step i with probability
 p_i proportional to a fixed reference light e_i (Cherenkov L q^2 (1 - 1 / (beta n_max)^2)_+; scintillation the
 visible energy) and is one photon of that step as the segment sources emit it, weighted by 1 / (samples p_i).
 """
@@ -18,7 +21,7 @@ import jax.numpy as jnp
 
 from lumen._core.safe import safe_div
 from lumen.sources import scintillation as sc
-from lumen.sources._base import F32, POSITION, TIME, WAVELENGTH, photon_uniforms
+from lumen.sources._base import F32, INF, POSITION, TIME, WAVELENGTH, photon_uniforms
 from lumen.sources.cherenkov import UNIFORMS, CherenkovSegment, cone
 from lumen.transport.state import Emission
 
@@ -38,12 +41,14 @@ class Geant4Steps(sc._Scintillation):
     beta_end: Any = None
     charge: Any = None
     edep: Any = None
+    step_length: Any = None
     birks: Any = 0.0
     lam_min: Any = 200.0
     lam_max: Any = 700.0
     light: str = dataclasses.field(default="cherenkov", kw_only=True)
     FIELDS = {"start": POSITION, "end": POSITION, "t_start": TIME, "t_end": TIME, "beta_start": SPEED,
               "beta_end": SPEED, "charge": CherenkovSegment.FIELDS["charge"], "edep": ("eV", *sc.ENERGY[1:]),
+              "step_length": ("m", (0.0, INF), "reweight"),  # the light count only
               "birks": sc.BIRKS, "lam_min": WAVELENGTH, "lam_max": WAVELENGTH}  # fmt: skip
     MOVING = ("start", "end", "beta_start", "beta_end")
 
@@ -69,14 +74,16 @@ class Geant4Steps(sc._Scintillation):
         """Return the Emission (see the module docstring)."""
         a, b, t0, t1, q = v["start"], v["end"], v["t_start"], v["t_end"], v["charge"]
         length, beta = jnp.linalg.norm(b - a, axis=1), 0.5 * (v["beta_start"] + v["beta_end"])
+        true = v.get("step_length")  # Geant4's step length: the light counts over it (None: the chord)
+        path = length if true is None else true
         cher = self.light == "cherenkov"
         if cher:
             index = v[self.reads()[0]]
             n_max = sg(jnp.max(index.value))
-            e = sg(length * q * q * jnp.maximum(1.0 - 1.0 / (beta * beta * n_max * n_max), 0.0))
+            e = sg(path * q * q * jnp.maximum(1.0 - 1.0 / (beta * beta * n_max * n_max), 0.0))
         else:
             y, light = self.light_of(v)
-            vis = sc.visible_energy(v["edep"] * 1e-6, length, v["birks"])
+            vis = sc.visible_energy(v["edep"] * 1e-6, path, v["birks"])
             e = sg(vis)
         u = photon_uniforms(key, 1 + (UNIFORMS if cher else 6), n, first_id)
         i = jnp.clip(jnp.searchsorted(jnp.cumsum(e) / jnp.sum(e), u[:, 0], side="right"), 0, e.shape[0] - 1)
@@ -87,6 +94,8 @@ class Geant4Steps(sc._Scintillation):
                                                               beta[j], q[j], v["lam_min"], v["lam_max"], 1.0))(
                 u[:, 1:], i)  # fmt: skip
             t, pol = t0[i] + u[:, 2] * (t1[i] - t0[i]), jnp.stack([er, jnp.zeros_like(er)], 1)
+            if true is not None:  # the cone counts over the chord it emits along: rescale to the true length
+                w = w * safe_div(true[i], length[i])
         else:
             x, d, t, lam, w = jax.vmap(lambda u_, j: sc.flash(u_, a[j], b[j], t0[j], t1[j], y * vis[j], light,
                                                               self.proposals, 1.0))(u[:, 1:], i)  # fmt: skip

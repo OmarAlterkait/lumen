@@ -4,6 +4,7 @@ The bitwise comparison with the baseline's emitted photons is tools/port/a9s_che
 here each source is checked against what it must be: yields, the cone angle, spectrum moments, time profiles.
 """
 
+import dataclasses
 import math
 
 import jax
@@ -269,6 +270,24 @@ def test_geant4_steps_scintillation_yield():
     want = np.sum(4000.0 * mev / (1 + 1e-4 * mev / length))
     assert float(np.asarray(e.w, np.float64).sum()) == pytest.approx(want, rel=1e-5)  # every photon carries tot / M
     assert bool(jnp.all(e.drawn_direction))
+
+
+def test_geant4_steps_count_light_over_the_true_step_length_when_given():
+    """Geant4's photon number and Birks dE/dx use G4Step::GetStepLength (the true path), not the chord."""
+    for light in ("cherenkov", "scintillation"):
+        src, p, f, _, _ = steps(light)
+        chord = np.linalg.norm(f["end"] - f["start"], axis=1)
+        true = chord * np.array([1.0, 1.3, 1.05, 2.0, 1.1])
+        e0 = src.emit(p, KEY, 1 << 16)
+        e1 = dataclasses.replace(src, step_length=true).emit(p, KEY, 1 << 16)
+        w0, w1 = (float(np.asarray(e.w, np.float64).sum()) for e in (e0, e1))
+        if light == "cherenkov":  # N proportional to the length
+            beta = 0.5 * (f["beta_start"] + f["beta_end"])
+            per = f["charge"] ** 2 * np.maximum(1 - 1 / (beta * 1.4) ** 2, 0)
+            assert w1 / w0 == pytest.approx(np.sum(per * true) / np.sum(per * chord), rel=1e-5)
+        else:  # Birks' dE/dx = edep / length
+            mev = f["edep"] * 1e-6
+            assert w1 == pytest.approx(np.sum(4000.0 * mev / (1 + 1e-4 * mev / true)), rel=1e-5)
 
 
 # ------------------------------------------------------------------------------------------------------- arrays
