@@ -56,9 +56,9 @@ def choose(q, rand):
     return jnp.where(c[-1] > 0.0, k, -1)
 
 
-def domain(tables, kind, name):
-    """Return the (lo, hi) domain of surface type ``kind``'s parameter ``name`` (its ``domain``), or None."""
-    kd = next((k for k in tables.surface_types if k.name == kind), None)
+def domain(tables, stype, name):
+    """Return the (lo, hi) domain of surface type ``stype``'s parameter ``name`` (its ``domain``), or None."""
+    kd = next((k for k in tables.surface_types if k.name == stype), None)
     return None if kd is None else kd.domain(name)
 
 

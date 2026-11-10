@@ -1,7 +1,7 @@
 """Geant4's boundary rule: the surface a photon meets crossing from one placed volume into the next.
 
-    kind, origin, reason, side = crossing(v, pre, post, rel)
-    kind, origin, reason, side = through(leg_pb, leg_bq, names)     # a coincident face across a pass
+    stype, origin, reason, side = crossing(v, pre, post, rel)
+    stype, origin, reason, side = through(leg_pb, leg_bq, names)     # a coincident face across a pass
 
 ``v`` (``lumen.build.surfaces.Volumes``) gives per placed volume (PV) its medium, material, skin surface and sensor,
 the border surfaces by ordered PV pair, the library entries and which media are opaque. For an ordered crossing
@@ -74,23 +74,23 @@ def crossing(v, pre, post, rel):
     """Return (type, origin, reason, side credited) of the crossing pre -> post (``rel``: post relative to pre)."""
     lib = v.library
     if v.enters_sensor(pre, post):
-        kind, origin, reason = lib.sensors[v.sensor[post]].surface_type, f"sensor:{v.sensor[post]}", "sensor"
+        stype, origin, reason = lib.sensors[v.sensor[post]].surface_type, f"sensor:{v.sensor[post]}", "sensor"
     elif v.borders.get((pre, post)) in lib.sensors:  # an exit sensor: pre is a sensor PV
         s = v.borders[(pre, post)]
         return lib.sensors[s].surface_type, f"sensor:{s}", f"border sensor {s} (credited to pre)", "pre"
     else:
-        kind, origin, reason = _surface(v, pre, post, rel)
-    if v.opaque[v.medium[post]] and not kind.stack and any(FAR_SIDE[o] for o in kind.outcomes):
-        if kind is legacy.DIELECTRIC:
-            kind, origin, reason = legacy.ABSORBER, None, f"{reason}: NoRINDEX"
-        elif legacy.is_painted(kind):
-            kind, reason = legacy.into_opaque(kind), f"{reason}: transmitted into {v.medium[post]!r}, absorbed"
+        stype, origin, reason = _surface(v, pre, post, rel)
+    if v.opaque[v.medium[post]] and not stype.stack and any(FAR_SIDE[o] for o in stype.outcomes):
+        if stype is legacy.DIELECTRIC:
+            stype, origin, reason = legacy.ABSORBER, None, f"{reason}: NoRINDEX"
+        elif legacy.is_painted(stype):
+            stype, reason = legacy.into_opaque(stype), f"{reason}: transmitted into {v.medium[post]!r}, absorbed"
         else:
-            raise BoundaryError(f"{pre!r} -> {post!r}: type {kind.name} ({reason}) would put the photon into the "
+            raise BoundaryError(f"{pre!r} -> {post!r}: type {stype.name} ({reason}) would put the photon into the "
                                 f"opaque medium {v.medium[post]!r}")  # fmt: skip
-    if not kind.params:
+    if not stype.params:
         origin = None
-    return kind, origin, reason, "post"
+    return stype, origin, reason, "post"
 
 
 def coincident(inside_pb, inside_qb, rp, rq):

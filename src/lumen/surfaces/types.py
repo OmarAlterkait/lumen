@@ -441,23 +441,23 @@ def _const(v):
     return tuple(float(x) for x in np.ravel(v)) if np.ndim(v) else float(v)
 
 
-def _probe_support(kind, consts):
-    """Return the outcomes of ``kind`` with ``consts`` held that are not identically zero (terminal ones kept).
+def _probe_support(stype, consts):
+    """Return the outcomes of ``stype`` with ``consts`` fixed that are not identically zero (terminal ones kept).
 
     Probed at every other parameter 0.5 and a generic incidence; a type whose probe needs more keeps its support.
     """
     try:
-        p = {k: 0.5 for k in kind.params if k not in consts} | {k: jnp.asarray(v) for k, v in consts.items()}
+        p = {k: 0.5 for k in stype.params if k not in consts} | {k: jnp.asarray(v) for k, v in consts.items()}
         ctx = dict(lam=jnp.asarray(400.0), wi=jnp.asarray([0.6, 0.0, -0.8]), n=jnp.asarray([0.0, 0.0, 1.0]),
                    n1=jnp.asarray(1.33), n2=jnp.asarray(1.5), layer=0)  # fmt: skip
-        pr = [float(x) for x in kind.probs(p, ctx)]
+        pr = [float(x) for x in stype.probs(p, ctx)]
     except Exception:
-        return kind.outcomes
-    return tuple(o for o in kind.outcomes if TERMINAL[o] or pr[o] != 0.0)
+        return stype.outcomes
+    return tuple(o for o in stype.outcomes if TERMINAL[o] or pr[o] != 0.0)
 
 
-def fixed(kind, consts):
-    """Return ``kind`` with the parameters in ``consts`` held at those values: a type whose parameters are the rest.
+def fixed(stype, consts):
+    """Return ``stype`` with the parameters in ``consts`` fixed at those values: a type whose parameters are the rest.
 
     A value the model never reads is not a parameter (the edge rule's OUT, decided by structure, never by the value:
     docs/explanation/parameters.md): a frontpainted finish's f_spec, LArSoft's reflector's f_glossy and sigma_alpha,
@@ -467,8 +467,8 @@ def fixed(kind, consts):
     """
     consts = {k: _const(v) for k, v in consts.items()}
     if not consts:
-        return kind
-    key = (id(kind), tuple(sorted(consts.items())))
+        return stype
+    key = (id(stype), tuple(sorted(consts.items())))
     if key not in _FIXED:
 
         def full(p):
@@ -477,41 +477,41 @@ def fixed(kind, consts):
 
         tag = ",".join(f"{k}={v:g}" if isinstance(v, float) else f"{k}=({','.join(f'{x:g}' for x in v)})"
                        for k, v in sorted(consts.items()))  # fmt: skip
-        amps = None if kind.amps is None else (lambda p, ctx: kind.amps(full(p), ctx))
-        derived = SurfaceType(f"{kind.name}{{{tag}}}", tuple(q for q in kind.params if q not in consts),
-                              _probe_support(kind, consts), lambda p, ctx: kind.probs(full(p), ctx),
-                              lambda p, ctx: kind.lobe_params(full(p), ctx), kind.reemit, kind.glossy,
-                              kind.reemit_lobe, kind.stack, amps)  # fmt: skip
-        _FIXED[key] = (kind, derived)  # the base kept alive: its id stays unique
+        amps = None if stype.amps is None else (lambda p, ctx: stype.amps(full(p), ctx))
+        derived = SurfaceType(f"{stype.name}{{{tag}}}", tuple(q for q in stype.params if q not in consts),
+                              _probe_support(stype, consts), lambda p, ctx: stype.probs(full(p), ctx),
+                              lambda p, ctx: stype.lobe_params(full(p), ctx), stype.reemit, stype.glossy,
+                              stype.reemit_lobe, stype.stack, amps)  # fmt: skip
+        _FIXED[key] = (stype, derived)  # the base kept alive: its id stays unique
     return _FIXED[key][1]
 
 
 _INTO_OPAQUE = {}  # base type -> its form ending in an opaque medium: one object per base
 
 
-def is_painted(kind):
+def is_painted(stype):
     """Return whether a type is a frontpainted surface (PAINTED_T, or one derived from it by ``fixed``)."""
-    return kind.name.split("{")[0] == PAINTED_T.name
+    return stype.name.split("{")[0] == PAINTED_T.name
 
 
-def into_opaque(kind):
-    """Return ``kind`` with its far-side outcomes absorbed: a frontpainted transmission into a medium without RINDEX.
+def into_opaque(stype):
+    """Return ``stype`` with its far-side outcomes absorbed: a frontpainted transmission into a medium without RINDEX.
 
     Geant4's frontpainted finishes skip the RINDEX check, so the photon is transmitted and killed at its next step
     (NoRINDEX): for the light it is an absorption where it lands. The parameters stay (T is read; its derivative is 0).
     """
-    if id(kind) not in _INTO_OPAQUE:
+    if id(stype) not in _INTO_OPAQUE:
 
         def probs(p, ctx):
-            pr = kind.probs(p, ctx)
+            pr = stype.probs(p, ctx)
             far = jnp.asarray(FAR_SIDE)
             return jnp.where(far, 0.0, pr).at[..., ABSORB].add(jnp.sum(jnp.where(far, pr, 0.0), -1))
 
-        outs = tuple(o for o in kind.outcomes if not FAR_SIDE[o]) + (() if ABSORB in kind.outcomes else (ABSORB,))
-        derived = SurfaceType(f"{kind.name}|into_opaque", kind.params, outs, probs, kind.lobe_params, kind.reemit,
-                              kind.glossy, kind.reemit_lobe, kind.stack, kind.amps)  # fmt: skip
-        _INTO_OPAQUE[id(kind)] = (kind, derived)
-    return _INTO_OPAQUE[id(kind)][1]
+        outs = tuple(o for o in stype.outcomes if not FAR_SIDE[o]) + (() if ABSORB in stype.outcomes else (ABSORB,))
+        derived = SurfaceType(f"{stype.name}|into_opaque", stype.params, outs, probs, stype.lobe_params, stype.reemit,
+                              stype.glossy, stype.reemit_lobe, stype.stack, stype.amps)  # fmt: skip
+        _INTO_OPAQUE[id(stype)] = (stype, derived)
+    return _INTO_OPAQUE[id(stype)][1]
 
 
 TYPES = (

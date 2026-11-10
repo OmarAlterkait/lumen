@@ -306,10 +306,10 @@ def fold_fixed(library, sources):
         consts = {k: v for k, v in e.params.items() if not isinstance(v, tuple) and _fixed(sources, section, name, k)}
         if not consts:
             return e
-        kind, rest = legacy.fixed(e.surface_type, consts), {k: v for k, v in e.params.items() if k not in consts}
+        stype, rest = legacy.fixed(e.surface_type, consts), {k: v for k, v in e.params.items() if k not in consts}
         if section == "sensors":
-            return regions.SensorEntry(kind, rest)
-        return regions.SurfaceEntry(kind, rest, e.ignored_between_same_material)
+            return regions.SensorEntry(stype, rest)
+        return regions.SurfaceEntry(stype, rest, e.ignored_between_same_material)
 
     return regions.Library(media=library.media,
                            surfaces={n: one("surfaces", n, e) for n, e in library.surfaces.items()},

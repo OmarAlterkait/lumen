@@ -45,8 +45,8 @@ class TypeEval(NamedTuple):
     amps8: jax.Array
 
 
-def _amps8(kind, p, ctx):
-    a = kind.amps(p, ctx) if kind.amps is not None else (*polar.MIRROR, 1.0 + 0.0j, 1.0 + 0.0j)
+def _amps8(stype, p, ctx):
+    a = stype.amps(p, ctx) if stype.amps is not None else (*polar.MIRROR, 1.0 + 0.0j, 1.0 + 0.0j)
     a = [jnp.asarray(z, jnp.complex64) for z in a]
     return jnp.stack([f(z) for z in a for f in (jnp.real, jnp.imag)]).astype(F32)
 
@@ -54,18 +54,18 @@ def _amps8(kind, p, ctx):
 def type_probs(tables, pk, k, row, ctx):
     """Return the TypeEval of surface type k (row ``row`` of its parameters) at ctx; k < 0 (never crossed): zeros."""
 
-    def one(kind):
+    def one(stype):
         def f(_):
             p = {}
-            for name in kind.params:
-                law = (tables.type_laws or {}).get((kind.name, name))
-                v = pk[kind.name][name]
+            for name in stype.params:
+                law = (tables.type_laws or {}).get((stype.name, name))
+                v = pk[stype.name][name]
                 r = jnp.maximum(row, 0)
                 p[name] = v[r] if law is None else law({q: x[r] for q, x in v.items()}, ctx["lam"])
-            lp = kind.lobe_params(p, ctx)
-            return TypeEval(kind.probs(p, ctx).astype(F32), jnp.asarray(lp.get("sigma_alpha", DEFAULT_WIDTH), F32),
+            lp = stype.lobe_params(p, ctx)
+            return TypeEval(stype.probs(p, ctx).astype(F32), jnp.asarray(lp.get("sigma_alpha", DEFAULT_WIDTH), F32),
                             jnp.asarray(lp.get("tau", 0.0), F32), jnp.asarray(lp.get("film", False), jnp.bool_),
-                            jnp.asarray(lp.get("coated", False), jnp.bool_), _amps8(kind, p, ctx))  # fmt: skip
+                            jnp.asarray(lp.get("coated", False), jnp.bool_), _amps8(stype, p, ctx))  # fmt: skip
 
         return f
 

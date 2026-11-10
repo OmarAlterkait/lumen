@@ -107,10 +107,10 @@ class Library:
     sensors: Mapping[str, SensorEntry] = field(default_factory=dict)
 
 
-def _check_params(what, kind, params):
-    have, want = set(params), set(kind.params)
+def _check_params(what, stype, params):
+    have, want = set(params), set(stype.params)
     if have != want:
-        raise DescriptionError(f"{what}: surface type {kind.name} takes parameters {sorted(want)}, got {sorted(have)} "
+        raise DescriptionError(f"{what}: surface type {stype.name} takes parameters {sorted(want)}, got {sorted(have)} "
                                f"(missing {sorted(want - have)}, unknown {sorted(have - want)})")  # fmt: skip
 
 
@@ -369,7 +369,7 @@ class Optics:
     class_pvs: tuple[tuple[str, ...], ...]
     surface_types: tuple[legacy.SurfaceType, ...]
     type_of: np.ndarray  # (C, C) int32 index into surface_types, -1: never crossed
-    row_of: np.ndarray  # (C, C) int32 row in params["surface_types"][kind.name], -1: never crossed
+    row_of: np.ndarray  # (C, C) int32 row in params["surface_types"][stype.name], -1: never crossed
     medium_of: np.ndarray  # (C,) int32 index into media
     media: tuple[bulk.Medium, ...]
     media_names: tuple[str, ...]  # library names, keys of params["media"]
@@ -405,8 +405,8 @@ def named_params(optics: Optics, library: Library) -> dict:
         return {k: (v[1] if isinstance(v, tuple) else v) for k, v in p.items()}
 
     out = {"media": {n: library.media[n].params for n in optics.media_names}, "surfaces": {}, "sensors": {}}
-    for kind in optics.surface_types:
-        for origin in optics.rows[kind.name]:
+    for stype in optics.surface_types:
+        for origin in optics.rows[stype.name]:
             if origin is not None:
                 what, name = origin.split(":", 1)
                 out["surfaces" if what == "surface" else "sensors"][name] = values(_entry(library, origin).params)
@@ -454,18 +454,18 @@ def pack(optics: Optics, named: dict) -> dict:
     def f32(t):
         return jax.tree_util.tree_map(lambda v: jnp.asarray(v, jnp.float32), t)
 
-    kernel = {}
-    for kind in optics.surface_types:
+    by_type = {}
+    for stype in optics.surface_types:
         ents = [named["surfaces" if o.split(":", 1)[0] == "surface" else "sensors"][o.split(":", 1)[1]]
-                if o is not None else None for o in optics.rows[kind.name]]  # fmt: skip
+                if o is not None else None for o in optics.rows[stype.name]]  # fmt: skip
         kp = {}
-        for name in kind.params:
-            if (kind.name, name) in optics.type_laws:  # spectral: (energy, value) tables per row
+        for name in stype.params:
+            if (stype.name, name) in optics.type_laws:  # spectral: (energy, value) tables per row
                 kp[name] = _packed_table(name, ents)
             else:
                 kp[name] = jnp.stack([jnp.asarray(e[name], jnp.float32) for e in ents])
-        kernel[kind.name] = kp
-    return {"surface_types": kernel, "media": {n: f32(named["media"][n]) for n in optics.media_names}}
+        by_type[stype.name] = kp
+    return {"surface_types": by_type, "media": {n: f32(named["media"][n]) for n in optics.media_names}}
 
 
 # ------------------------------------------------------------------------------------------------- the compiler
@@ -559,27 +559,27 @@ class _Regions:
             self.legs.setdefault((c[pre], c[post]), [set(), (pre, post)])[0].add(rel)
         if self.opaque[self.d.medium[pre]]:
             return
-        kind, origin, reason, side = self.surface_of(pre, post, rel)
+        stype, origin, reason, side = self.surface_of(pre, post, rel)
         key = (c[pre], c[post])
         if key[0] == key[1]:
-            if kind is not legacy.PASS:
+            if stype is not legacy.PASS:
                 raise OpticsError(
-                    f"volume group {self.class_names[key[0]]!r} touches itself across a {kind.name} surface ({reason}; "
-                    f"e.g. {pre!r} -> {post!r}): the crossing would be invisible. Declare the placements disjoint "
-                    "(bindings.disjoint) if they do not touch, or give them distinct signatures"
+                    f"volume group {self.class_names[key[0]]!r} touches itself across a {stype.name} surface "
+                    f"({reason}; e.g. {pre!r} -> {post!r}): the crossing would be invisible. Declare the placements "
+                    "disjoint (bindings.disjoint) if they do not touch, or give them distinct signatures"
                 )
             return
         self.rels.setdefault(key, set()).add(rel)
         f = self.found.get(key)
         if f is None:
-            self.found[key] = [kind, origin, [reason], [(pre, post)], count, side]
+            self.found[key] = [stype, origin, [reason], [(pre, post)], count, side]
             return
-        if (f[0], f[1], f[5]) != (kind, origin, side):
+        if (f[0], f[1], f[5]) != (stype, origin, side):
             a, b = f[3][0]
             raise OpticsError(
                 f"volume groups {self.class_names[key[0]]!r} -> {self.class_names[key[1]]!r} resolve to two surface "
                 "types: "
-                f"{a!r} -> {b!r}: {f[0].name} {f[1] or ''} ({f[2][0]}), {pre!r} -> {post!r}: {kind.name} "
+                f"{a!r} -> {b!r}: {f[0].name} {f[1] or ''} ({f[2][0]}), {pre!r} -> {post!r}: {stype.name} "
                 f"{origin or ''} ({reason}). The signature missed a distinction"
             )
         if reason not in f[2]:
@@ -694,11 +694,11 @@ class _Coincident:
     def _through_pass(self, p, b, q, fb, fq):
         names = self.r.class_names
         leg = (b, q) if fb[0] is legacy.PASS else (p, b)
-        kind, origin, reason, side = boundary.through(fb, fq, names[b], (names[leg[0]], names[leg[1]]))
+        stype, origin, reason, side = boundary.through(fb, fq, names[b], (names[leg[0]], names[leg[1]]))
         if side == "pre":
-            self.prenote.append(f"  {p} -> {q} via {b}: {kind.name} {origin or ''} is credited to the region "
+            self.prenote.append(f"  {p} -> {q} via {b}: {stype.name} {origin or ''} is credited to the region "
                                 f"before, {names[p]} where b is merged (a float32-thin b), not {b}")  # fmt: skip
-        return kind, origin, reason, side
+        return stype, origin, reason, side
 
     def _candidate(self, p, b, q, pvs, rel):
         """Resolve one candidate p -> q via b; return whether a new class pair was added."""
@@ -708,10 +708,10 @@ class _Coincident:
         pre_pv, post_pv = pvs
         fb, fq = r.found.get((p, b)), r.found.get((b, q))
         if fb is not None and fq is not None and (fb[0] is legacy.PASS or fq[0] is legacy.PASS):
-            kind, origin, reason, side = self._through_pass(p, b, q, fb, fq)
+            stype, origin, reason, side = self._through_pass(p, b, q, fb, fq)
         else:
             try:
-                kind, origin, reason, side = r.surface_of(pre_pv, post_pv, rel)
+                stype, origin, reason, side = r.surface_of(pre_pv, post_pv, rel)
             except OpticsError as err:
                 if (p, q) not in r.found:
                     self.unresolved[(p, q)] = f"via {r.class_names[b]}: {err}"
@@ -719,13 +719,13 @@ class _Coincident:
             reason = f"coincident via {r.class_names[b]}: {reason}"
         if (p, q) in r.found:
             f = r.found[(p, q)]
-            if (p, q) not in self.via and (f[0], f[1], f[5]) != (kind, origin, side):
+            if (p, q) not in self.via and (f[0], f[1], f[5]) != (stype, origin, side):
                 self.shadowed.append(f"  {p} -> {q} via {b}: direct {f[0].name} kept (the coincident face would be "
-                                     f"{kind.name} {origin or ''})")  # fmt: skip
+                                     f"{stype.name} {origin or ''})")  # fmt: skip
             r.rels[(p, q)].add(rel)
             r.legs[(p, q)][0].add(rel)
             return False
-        r.found[(p, q)] = [kind, origin, [reason], [(pre_pv, post_pv)], 0, side]
+        r.found[(p, q)] = [stype, origin, [reason], [(pre_pv, post_pv)], 0, side]
         r.rels[(p, q)] = {rel}
         r.legs.setdefault((p, q), [set(), (pre_pv, post_pv)])[0].add(rel)
         self.via[(p, q)] = b
@@ -759,10 +759,10 @@ def _tables(found, n_classes):
     deposit_pre = np.zeros((n_classes, n_classes), bool)
     pairs = {}
     for a, b in sorted(found):
-        kind, origin, reasons, examples, count, side = found[(a, b)]
-        r = rows[kind.name].index(origin)
-        type_of[a, b], row_of[a, b], deposit_pre[a, b] = surface_types.index(kind), r, side == "pre"
-        pairs[(a, b)] = Pair(kind, origin, r, tuple(reasons), tuple(examples), count)
+        stype, origin, reasons, examples, count, side = found[(a, b)]
+        r = rows[stype.name].index(origin)
+        type_of[a, b], row_of[a, b], deposit_pre[a, b] = surface_types.index(stype), r, side == "pre"
+        pairs[(a, b)] = Pair(stype, origin, r, tuple(reasons), tuple(examples), count)
     return surface_types, rows, type_of, row_of, deposit_pre, pairs
 
 
@@ -846,21 +846,21 @@ def _spectral_laws(library, optics):
     """
     lo, hi = optics.lam_domain
     found = {}
-    for kind in optics.surface_types:
-        for pname in kind.params:
-            vals = [(o, _entry(library, o).params[pname]) for o in optics.rows[kind.name]]
+    for stype in optics.surface_types:
+        for pname in stype.params:
+            vals = [(o, _entry(library, o).params[pname]) for o in optics.rows[stype.name]]
             used = {id(v[0]): v[0] for _, v in vals if isinstance(v, tuple)}
             if not used:
                 continue
             if len(used) != 1:
-                raise OpticsError(f"{kind.name}.{pname}: rows use different Laws")
+                raise OpticsError(f"{stype.name}.{pname}: rows use different Laws")
             law = next(iter(used.values()))
             if law.params != ("energy", "value"):
-                raise OpticsError(f"{kind.name}.{pname}: only (energy, value) tables are packed")
+                raise OpticsError(f"{stype.name}.{pname}: only (energy, value) tables are packed")
             for o, v in vals:
                 lp = v[1] if isinstance(v, tuple) else {"energy": np.array([1.0, 2.0]), "value": np.array([v, v])}
                 laws.validate(law, lp, lo, hi, name=f"{o}.{pname}")
-            found[(kind.name, pname)] = law
+            found[(stype.name, pname)] = law
     return found
 
 
