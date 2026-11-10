@@ -1,6 +1,6 @@
 """Scintillation light: a flash at a point, or along a charged segment (G4Scintillation's step model).
 
-    src = ScintillationPoint.of(det.params(), "LAr", x=(0, 0, 0), energy=1.0)  # 1 MeV at t = 0
+    src = ScintillationPoint.of(det.params(), "LAr", position=(0, 0, 0), energy=1.0)  # 1 MeV at t = 0
 
 The material's light from its GDML values: SCINTILLATIONYIELD (per MeV) and two components, each a spectrum, decay
 time and share (Geant4 11's SCINTILLATIONCOMPONENTi, ...TIMECONSTANTi, ...YIELDi; ``geant4="10.7"``: FAST/SLOW
@@ -98,7 +98,7 @@ class _Scintillation(Source):
             x0, x1, t0, t1 = v["start"], v["end"], v["t_start"], v["t_end"]
             n_ph = y * visible_energy(v["energy"], jnp.linalg.norm(x1 - x0), v["birks"])
         else:
-            x0, x1, t0, t1, n_ph = v["x"], None, v["time"], None, y * v["energy"]
+            x0, x1, t0, t1, n_ph = v["position"], None, v["time"], None, y * v["energy"]
         x, d, t, lam, w = jax.vmap(lambda rand: flash(rand, x0, x1, t0, t1, n_ph, light, self.proposals, samples))(
             photon_uniforms(key, 6 if self.SEGMENT else 5, n, first_id))  # fmt: skip
         return Emission(x, d, t, lam, w, jnp.zeros((n, 2, 3), F32), jnp.ones(n, bool))
@@ -106,13 +106,13 @@ class _Scintillation(Source):
 
 @dataclasses.dataclass(frozen=True)
 class ScintillationPoint(_Scintillation):
-    """``energy`` (MeV) deposited at ``x`` (m) at ``time`` (ns) in ``material``; build it with ``of``."""
+    """``energy`` (MeV) deposited at ``position`` (m) at ``time`` (ns) in ``material``; build it with ``of``."""
 
-    x: Any = (0.0, 0.0, 0.0)
+    position: Any = (0.0, 0.0, 0.0)
     energy: Any = 1.0
     time: Any = 0.0
-    FIELDS = {"x": POSITION, "energy": ENERGY, "time": TIME}
-    MOVING = ("x",)
+    FIELDS = {"position": POSITION, "energy": ENERGY, "time": TIME}
+    MOVING = ("position",)
 
 
 @dataclasses.dataclass(frozen=True)

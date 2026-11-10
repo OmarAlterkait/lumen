@@ -205,7 +205,7 @@ def _moving(source, params, wrt) -> tuple:
                                            "not drawn from a density (drawn_direction False)")  # fmt: skip
     v = source.values(params)
     try:
-        pts = [np.asarray(v[f], np.float32).reshape(-1, 3) for f in ("x", "start", "end") if f in v]
+        pts = [np.asarray(v[f], np.float32).reshape(-1, 3) for f in ("position", "x", "start", "end") if f in v]
     except jax.errors.TracerArrayConversionError:  # traced origins: no co-moving radius (exact, without the field)
         return True, None
     return True, np.unique(np.concatenate(pts), axis=0)

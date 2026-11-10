@@ -23,3 +23,10 @@ An `any_entry` (`lumen:counting`) group's setting `eff` is now `efficiency`, so 
 `sensors/<group>/efficiency` (it was `sensors/<group>/eff`). A sensor set (`sensors/<set>.json`) with the old setting
 is refused, naming the new one. To do: convert the detector again (the shipped recipes write `efficiency`), or rename
 the setting in the sensor set's JSON and the key in calibrations.
+
+## Sources: a point's `x` is `position`
+
+`Point` and `ScintillationPoint` take `position` (m) instead of `x`, so the parameter key is `source/position` (it
+was `source/x`), as in `simulate(..., wrt=["source/position"])`. Positional use (`Point((0, 0, 0), ...)`) is
+unchanged. `FromArrays` keeps the field names of the photons it is given (`x`, `d`, `t`, `lam`, `w`). Nothing on disk
+changes. To do: rename `x=` and `source/x` in scripts.

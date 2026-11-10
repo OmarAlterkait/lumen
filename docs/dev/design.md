@@ -190,7 +190,7 @@ array, its sha256 in the manifest. The full GDML world is kept; the detector vol
 | `materials/<Material>/<PROPERTY>` | a Geant4 material property (table `{energy, value}` or constant) |
 | `surfaces/<Surface>/<PROPERTY>` | a surface property; the opticalsurface's `value` is `surfaces/<Surface>/sigma_alpha` (unified) or `surfaces/<Surface>/polish` (glisur) |
 | `sensors/<group>/<field>` | an array over the group's sensors in id order |
-| `source/<field>` | a field of the source passed to `simulate` (`x`, `direction`, `time`, `n_photons`, `lam`, `spectrum`, …) |
+| `source/<field>` | a field of the source passed to `simulate` (`position`, `direction`, `time`, `n_photons`, `lam`, `spectrum`, …) |
 
 Group names match `[A-Za-z_]\w*`, so they are never ids.
 

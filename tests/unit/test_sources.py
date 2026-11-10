@@ -81,7 +81,11 @@ def test_a_new_value_or_a_new_source_of_the_same_structure_never_recompiles():
     S.Point((0.0, 0.0, 0.0), n_photons=1.0, lam=400.0).emit(None, KEY, 96)
     size = _EMIT._cache_size()
     S.Point((1.0, 2.0, 3.0), n_photons=7.0, lam=450.0, time=3.0).emit(None, KEY, 96, 1000)
-    p = S.Point((0.0, 0.0, 0.0), n_photons=1.0, lam=400.0).parameters().set("source/x", np.array([4.0, 0.0, 0.0]))
+    p = (
+        S.Point((0.0, 0.0, 0.0), n_photons=1.0, lam=400.0)
+        .parameters()
+        .set("source/position", np.array([4.0, 0.0, 0.0]))
+    )
     S.Point((0.0, 0.0, 0.0), n_photons=1.0, lam=400.0).emit(p, jax.random.PRNGKey(9), 96)
     assert _EMIT._cache_size() == size
 
@@ -122,12 +126,12 @@ def test_point_spectrum_moments_and_its_derivative():
 def test_point_parameters_and_values():
     src = S.Point((0.0, 0.0, 1.0), n_photons=5.0, lam=400.0)
     p = src.parameters()
-    assert p.info("source/x").method == "moving_paths" and p.info("source/x").available
+    assert p.info("source/position").method == "moving_paths" and p.info("source/position").available
     assert p.info("source/n_photons").unit == "" and p.explain("source/time") == "source Point"
     p2 = p.set("source/n_photons", 8.0)
     assert float(src.emit(p2, KEY, 100).w.sum()) == pytest.approx(8.0, rel=1e-6)
     beam = S.Point((0.0, 0.0, 0.0), lam=400.0, direction=(0.0, 0.0, 1.0)).parameters()
-    assert not beam.info("source/x").available  # a beam's position has no derivative
+    assert not beam.info("source/position").available  # a beam's position has no derivative
     with pytest.raises(ValueError):
         S.Point((0.0, 0.0, 0.0))
 
@@ -197,7 +201,7 @@ def test_cherenkov_derivatives():
 # ------------------------------------------------------------------------------------------------ scintillation
 def test_scintillation_point_yield_shares_times_and_spectra():
     p = scint_params()
-    src = S.ScintillationPoint.of(p, "LS", x=(0.1, 0.2, 0.3), energy=0.5, time=2.0)
+    src = S.ScintillationPoint.of(p, "LS", position=(0.1, 0.2, 0.3), energy=0.5, time=2.0)
     e = src.emit(p, KEY, 1 << 16)
     assert float(np.asarray(e.w, np.float64).sum()) == pytest.approx(4000.0 * 0.5, rel=1e-5)  # exact per photon
     t = np.asarray(e.t, np.float64) - 2.0

@@ -2,7 +2,7 @@
 
 - the arrivals per emitted photon against the closed form (1/2) int exp(-r(mu) / L) dmu of a source at z0 on the
   axis (every photon detected with weight exp(-r / L));
-- the source-position derivative through ``wrt=("source/x",)`` (the moving-source method) against its quadrature,
+- the source-position derivative through ``wrt=("source/position",)`` (the moving-source method) against its quadrature,
   per replica of the charge histogram;
 - the run is the same in any chunks; a beam's position is refused;
 - the Point's rows moved by the source's own position parameter are the moving-source test's rows moved by dz.
@@ -75,7 +75,7 @@ def test_the_source_position_derivative_through_simulate(pmt_sphere):
     k = 16
 
     def charge(z):  # per replica, per emitted photon (each replica holds 1/k of the photons)
-        light = lumen.simulate(pmt_sphere, point(z), samples=k * 8192, seed=5, replicas=k, wrt=("source/x",))
+        light = lumen.simulate(pmt_sphere, point(z), samples=k * 8192, seed=5, replicas=k, wrt=("source/position",))
         return light.histograms.charge.sum((1, 2, 3)) * k
 
     q, dq = jax.jvp(charge, (F32(Z0),), (F32(1.0),))
@@ -84,7 +84,7 @@ def test_the_source_position_derivative_through_simulate(pmt_sphere):
     assert abs((dq.mean() - want) / (dq.std(ddof=1) / math.sqrt(k))) < Z_MAX, (dq.mean(), want)
     beam = sources.Point((0.0, 0.0, Z0), lam=400.0, direction=(0.0, 0.0, 1.0))
     with pytest.raises(sources.GradientNotAvailable):
-        lumen.simulate(pmt_sphere, beam, samples=1024, seed=1, replicas=2, wrt=("source/x",))
+        lumen.simulate(pmt_sphere, beam, samples=1024, seed=1, replicas=2, wrt=("source/position",))
 
 
 def test_the_points_rows_move_with_its_position_parameter():
@@ -97,7 +97,9 @@ def test_the_points_rows_move_with_its_position_parameter():
         return r._replace(x=r.x + jnp.asarray([0.0, 0.0, 1.0], F32) * dz)
 
     def through(dz):  # the same move as the source's own parameter
-        return src.emit({"source/x": jnp.asarray([0.0, 0.0, Z0], F32) + jnp.asarray([0.0, 0.0, 1.0], F32) * dz}, key, n)
+        return src.emit(
+            {"source/position": jnp.asarray([0.0, 0.0, Z0], F32) + jnp.asarray([0.0, 0.0, 1.0], F32) * dz}, key, n
+        )
 
     a, b = (jax.jvp(f, (F32(0.0),), (F32(1.0),)) for f in (moved, through))
     for u, v in zip(jax.tree_util.tree_leaves(a), jax.tree_util.tree_leaves(b), strict=True):

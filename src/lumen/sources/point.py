@@ -1,7 +1,7 @@
 """A point source: isotropic or a beam, one wavelength or a spectrum, emitted at ``time``.
 
     src = Point((0.0, 0.0, 0.0), n_photons=1e6, lam=400.0)  # isotropic, monochromatic
-    src = Point(x, n_photons=1e4, spectrum=Table(e_ev, s), direction=(0.0, 0.0, 1.0))  # a beam with a spectrum
+    src = Point(position, n_photons=1e4, spectrum=Table(e_ev, s), direction=(0.0, 0.0, 1.0))  # a beam, a spectrum
 
 ``Point.draw`` builds the photons ``emit`` returns (``lumen.sources``).
 """
@@ -23,24 +23,24 @@ LAM_STREAM = 1  # a spectrum's uniforms come from fold_in(key, LAM_STREAM)
 
 @dataclasses.dataclass(frozen=True)
 class Point(Source):
-    """Photons from ``x`` (m) at ``time`` (ns), weights summing in expectation to ``n_photons``.
+    """Photons from ``position`` (m) at ``time`` (ns), weights summing in expectation to ``n_photons``.
 
     ``lam`` (nm), or ``spectrum``: a Table (energies eV, intensities) drawn by Geant4's sampler from the nominal
     table and reweighted to the live one. ``direction`` None: isotropic (a normal triple per photon,
-    normalised); else a unit vector, a beam. ``x`` (N, 3), and ``lam``, ``time`` or ``direction``
+    normalised); else a unit vector, a beam. ``position`` (N, 3), and ``lam``, ``time`` or ``direction``
     with a photon axis, give photon i of a run its own row (a check's several sources).
     """
 
-    x: Any
+    position: Any
     n_photons: Any = 1.0
     lam: Any = None
     spectrum: Any = None
     direction: Any = None
     time: Any = 0.0
     structure: Any = dataclasses.field(init=False, default=None)  # (the spectrum's proposal, a beam)
-    FIELDS = {"x": POSITION, "direction": DIRECTION, "n_photons": COUNT, "lam": ("nm", (0.0, float("inf")),
+    FIELDS = {"position": POSITION, "direction": DIRECTION, "n_photons": COUNT, "lam": ("nm", (0.0, float("inf")),
               "moving_paths+reweight"), "spectrum": COUNT, "time": TIME}  # fmt: skip
-    MOVING = ("x", "direction", "lam")
+    MOVING = ("position", "direction", "lam")
 
     def __post_init__(self):  # noqa: D105
         if (self.lam is None) == (self.spectrum is None):
@@ -64,5 +64,5 @@ class Point(Source):
             rand = uniforms(jax.random.fold_in(key, LAM_STREAM), 1, n, first_id)[:, 0]
             lam, f = jax.vmap(lambda r_: draw_wavelength(prop, v["spectrum"], r_))(rand)
             w = w * f
-        return Emission(rows(v["x"], n, first_id, 1), d, rows(v["time"], n, first_id, 0), lam,
+        return Emission(rows(v["position"], n, first_id, 1), d, rows(v["time"], n, first_id, 0), lam,
                         jnp.broadcast_to(w, (n,)), jnp.zeros((n, 2, 3), F32), jnp.full(n, not beam))  # fmt: skip
