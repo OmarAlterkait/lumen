@@ -58,11 +58,42 @@ class Detector:
         """Return the resolved parameters (``lumen.Params``)."""
         return self._params
 
+    @property
+    def digest(self) -> str:
+        """Return the detector file's content digest (a calibration records it as ``detector_digest``)."""
+        return io.content_digest(io.to_files(self.file))
+
+    def save_calibration(self, params, name: str, directory=None, *, note: str = "") -> Path:
+        """Write the values of ``params`` that differ from this detector's as calibration ``name``; return its path.
+
+        Written to ``directory`` (default: the first directory of the detector search path, ``LUMEN_DETECTORS``),
+        never inside the detector file; it records this file's digest, checked when it is loaded
+        (``lumen.load(..., calibration=name)``), and this detector's calibration as its parent.
+        """
+        base = self._params
+        changed = {k: params[k] for k in params if not _same(params[k], base[k])}
+        d = Path(directory) if directory is not None else next(iter(_env.detector_path()), None)
+        if d is None:
+            raise ValueError("save_calibration: give a directory (LUMEN_DETECTORS is not set)")
+        c = cal.Calibration(name, self.name, self.digest, changed, self.calibration, self.sensor_set.name, note)
+        return cal.save(c, d)
+
     def pack(self, params=None):
         """Return the engine's packed parameter arrays for ``params`` (default: this detector's)."""
         from lumen.build import pack
 
         return pack.pack(self, self._params if params is None else params)
+
+    def sensor_table(self) -> dict:
+        """Return the sensors in the order of ``Light.arrivals``, as {"name", "sensor", "position", "axis"}.
+
+        Per sensor: its placed volume, its sensor entry, its world position (m) and its axis (the placement's local z).
+        """
+        o = self.parts.optics
+        pose = {x.pv: x for x in self.parts.instances}
+        pvs = list(o.sensor_pvs)
+        return dict(name=pvs, sensor=list(o.sensor_entries), position=np.array([pose[p].t for p in pvs], np.float64),
+                    axis=np.array([np.asarray(pose[p].R)[:, 2] for p in pvs], np.float64))  # fmt: skip
 
     def __repr__(self):
         """Summarise the detector: name, detector volume, counts of volumes, materials, surfaces and sensors."""
@@ -73,6 +104,13 @@ class Detector:
                 f"  sensors          {len(self.sensor_set.ids)} in {len(self.sensor_set.groups)} group(s): "
                 f"{', '.join(g.name for g in self.sensor_set.groups)}\n"
                 f"  calibration      {self.calibration}")  # fmt: skip
+
+
+def _same(a, b) -> bool:
+    if isinstance(a, cal.Table) or isinstance(b, cal.Table):
+        return isinstance(a, cal.Table) and isinstance(b, cal.Table) and _same(a.energy, b.energy) and \
+            _same(a.value, b.value)  # fmt: skip
+    return bool(np.array_equal(np.asarray(a), np.asarray(b)))
 
 
 def convert(source, recipe, out, *, inputs: dict | None = None, overwrite: bool = False) -> Path:
@@ -131,6 +169,9 @@ def load(name_or_path, *, sensors: str = "default", calibration: str = cal.NOMIN
     columns = json.loads((path / "sensors" / f"{sensors}.ids.json").read_text())
     search = [path / "calibrations", *_env.detector_path()]
     parents = cal.lineage(calibration, search) if calibration != cal.NOMINAL else []
+    digest = io.content_digest(io.to_files(df)) if parents else None
+    for c in parents:
+        cal.check_digest(c, digest, path)
     parts = build.build(df, sset)
     params = build.parameters(df, sset, parts, parents)
     return Detector(df.name, path, df, sset, parts, columns, calibration, params)
@@ -177,17 +218,17 @@ def _sensor_group(det):
     return groups[0], plugins.sensor_models.get(groups[0].model)(groups[0].defaults)
 
 
-def _model(det, hit_angle: bool, moving=False, origins=None):
+def _model(det, hit_angle: bool, moving=False, origins=None, edge=()):
     from lumen.geometry import clearance as ray_clear
     from lumen.geometry import tracked
     from lumen.transport import step as steps
 
-    k = (id(det), hit_angle, moving, None if origins is None else origins.tobytes())
+    k = (id(det), hit_angle, moving, None if origins is None else origins.tobytes(), edge)
     if k not in _MODELS:
         geom = tracked.from_parts(det.parts, cache=True)
         field = None if origins is None else ray_clear.Clearance(origins, ray_clear.ray_clearance(geom.nav, origins))
-        _MODELS[k] = (det, steps.Model(geom, det.parts.optics, steps.StepConfig(moving_source=moving), field,
-                                       hit_angle=hit_angle))  # fmt: skip
+        cfg = steps.StepConfig(moving_source=moving, edge_rows=edge)
+        _MODELS[k] = (det, steps.Model(geom, det.parts.optics, cfg, field, hit_angle=hit_angle))
     return _MODELS[k][1]
 
 
@@ -195,9 +236,8 @@ def _moving(source, params, wrt) -> tuple:
     """Return (the moving-source method is on, the source's origins (m) for its clearance, None when traced)."""
     from lumen import sources
 
-    if any(not k.startswith(sources.PREFIX) for k in wrt):
-        raise ValueError(f"simulate: wrt takes the source's keys ({sources.PREFIX}<field>), got {list(wrt)}")
-    moved = [k for k in wrt if k.removeprefix(sources.PREFIX) in getattr(source, "MOVING", ())]
+    moved = [k for k in wrt if k.startswith(sources.PREFIX)
+             and k.removeprefix(sources.PREFIX) in getattr(source, "MOVING", ())]  # fmt: skip
     if not moved:
         return False, None
     if not source.drawn_direction:
@@ -209,6 +249,37 @@ def _moving(source, params, wrt) -> tuple:
     except jax.errors.TracerArrayConversionError:  # traced origins: no co-moving radius (exact, without the field)
         return True, None
     return True, np.unique(np.concatenate(pts), axis=0)
+
+
+def _edge_rows(det, params, wrt) -> tuple:
+    """Return the edge rows of the parameter keys in ``wrt``: their packed rows at an edge of their domain.
+
+    A key maps to the packed rows it is read into (``parts.sources``): a surface or sensor parameter to its type's row
+    of that surface, a medium's to its own entry; ``lumen.transport.estimator.edge_rows`` keeps those at an edge.
+    """
+    from lumen import sources
+    from lumen.transport import estimator
+
+    keys = [k for k in wrt if not k.startswith(sources.PREFIX)]
+    for k in keys:
+        params[k]  # an unknown key names the nearest known ones
+    o, paths = det.parts.optics, []
+    for (section, entry, *leaf), src in det.parts.sources.items():
+        if src.key not in keys or src.column == "energy":
+            continue
+        if section == "media":
+            paths.append(("media", entry, *leaf))
+            continue
+        origin = f"{'surface' if section == 'surfaces' else 'sensor'}:{entry}"
+        for name, rows in o.rows.items():
+            if origin in rows:
+                paths.append(("surface_types", name, leaf[0], rows.index(origin)))
+    if not paths:
+        return ()
+    from lumen.build import pack
+
+    packed = jax.tree_util.tree_map(np.asarray, det.pack(pack.host_params(det, params)[1]))
+    return estimator.edge_rows(o, packed, paths)
 
 
 def _budget() -> float:
@@ -225,13 +296,16 @@ def simulate(det, source, params=None, *, samples: int, seed: int, replicas: int
 
     ``source``: a ``lumen.sources`` source, its fields from ``params``' ``source/`` keys where given (its random numbers
     under ``fold_in(key(seed), SOURCE_STREAM)``), or an Emission batch of at least ``samples`` rows, or a function
-    ``(first_id, count) -> Emission``. ``wrt``: the source keys a derivative is taken in; one that moves the photons (a
-    position) turns on the moving-source method, with the clearance about the source's origins (none when they are
-    traced), and needs a source whose directions are drawn. The photons run in chunks of ``chunk``
-    (``lumen.readout.photon_chunks``), photon i under ``fold_in(key(seed), i)``. The histograms are those of the sensor
-    set's group with a sensor model (``lumen:pmt``), on its static grid (``lumen.readout.make_grid`` with ``gate`` (ns),
-    default the group's ``readout["gate"]``); ``simulate`` refuses before launch (MemoryError) when they exceed the
-    device's budget.
+    ``(first_id, count) -> Emission``. ``wrt``: the parameter keys a derivative is taken in, any of them (optics,
+    sensors, the source's ``source/<field>``). ``params`` may contain traced values (``jax.jvp``, ``jax.grad`` over a
+    ``Params`` or a factor of ``Params.scale``): they pack differentiably (``lumen.build.pack``) and never recompile.
+    A key at an edge of its domain (a reflectivity of exactly 0) turns on its edge rows, so its one-sided derivative is
+    right; a source key that moves the photons (a position) turns on the moving-source method, with the clearance
+    about the source's origins (none when they are traced), and needs a source whose directions are drawn. The photons
+    run in chunks of ``chunk`` (``lumen.readout.photon_chunks``), photon i under ``fold_in(key(seed), i)``. The
+    histograms are those of the sensor set's group with a sensor model (``lumen:pmt``), on its static grid
+    (``lumen.readout.make_grid`` with ``gate`` (ns), default the group's ``readout["gate"]``); ``simulate`` refuses
+    before launch (MemoryError) when they exceed the device's budget.
     """
     from lumen import readout as ro
     from lumen import run as runner
@@ -249,7 +323,7 @@ def simulate(det, source, params=None, *, samples: int, seed: int, replicas: int
     ro.check_memory(grid, n, int(replicas), 0, _budget())
     params = det.params() if params is None else params
     moving, origins = _moving(source, params, wrt) if hasattr(source, "emit") else (False, None)
-    model = _model(det, grid.theta_knots is not None, moving, origins)
+    model = _model(det, grid.theta_knots is not None, moving, origins, _edge_rows(det, params, wrt))
     packed = jax.tree_util.tree_map(jnp.asarray, det.pack(params))
     ops = steps.operands(model, packed, None, steps.Controls(), None)
     key = jax.random.key_data(jax.random.PRNGKey(int(seed)))

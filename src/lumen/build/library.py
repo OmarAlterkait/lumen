@@ -318,8 +318,8 @@ def fold_fixed(library, sources):
 
 # ----------------------------------------------------------------------------------------------------- the sources
 def _table_or_constant(key, p: schema.Property | None, default_note, absent="fixed"):
-    if p is None:
-        return {(): Source(None, absent, default_note)}
+    if p is None:  # Geant4's default of an omitted property is a parameter under its key; anything else has none
+        return {(): Source(key if absent == "default" else None, absent, default_note)}
     if rules.is_table(p):
         return {("energy",): Source(key, "energy"), ("value",): Source(key, "value")}
     return {(): Source(key, "constant")}

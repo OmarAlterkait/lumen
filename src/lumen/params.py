@@ -95,11 +95,14 @@ class Params(Mapping):
         return Params({**self._values, key: new}, self._spec, {**self._layers, key: layer})
 
     def scale(self, key, factor) -> Params:
-        """Return a copy with a key's values multiplied by ``factor`` (a table's values, not its energies)."""
+        """Return a copy with a key's values multiplied by ``factor`` (a table's values, not its energies).
+
+        ``factor`` may be traced (``jax.jvp``, ``jax.grad``): the scaled value is then traced too.
+        """
         v = self[key]
         if isinstance(v, Table):
-            return self.set(key, Table(v.energy, np.asarray(v.value) * factor))
-        return self.set(key, np.asarray(v) * factor)
+            return self.set(key, Table(v.energy, _values(v.value) * factor))
+        return self.set(key, _values(v) * factor)
 
     def merged(self, values: dict, spec: Mapping, layer: str) -> Params:
         """Return a copy with new keys (their values and ParamInfo) from one layer; a key already here keeps its own."""
@@ -115,16 +118,29 @@ class Params(Mapping):
         return out
 
 
+def _values(v):
+    """Return a value as an array: numpy when concrete, as it is when traced."""
+    return v if _is_traced(v) else np.asarray(v)
+
+
+def _is_traced(v) -> bool:
+    return any(isinstance(x, jax.core.Tracer) for x in jax.tree_util.tree_leaves(v))
+
+
 def _checked(info: ParamInfo, old, value):
+    """Return ``value`` after the shape check and, for a concrete value, the range check (a traced value has none)."""
     lo, hi = info.range
     if isinstance(old, Table):
         check(info.key, old, value)  # a table keeps its knot count
-        vals = np.asarray(value.value)
+        vals = value.value
     else:
-        vals = np.asarray(value)
-        if vals.shape != np.shape(old):
-            raise ValueError(f"{info.key}: shape {np.shape(old)} expected, got {vals.shape}")
-    if not isinstance(vals, np.ndarray) or vals.dtype.kind in "fiu":
+        vals = value
+        if np.shape(vals) != np.shape(old):
+            raise ValueError(f"{info.key}: shape {np.shape(old)} expected, got {np.shape(vals)}")
+    if _is_traced(vals):
+        return value
+    vals = np.asarray(vals)
+    if vals.dtype.kind in "fiu":
         v = np.asarray(vals, np.float64)
         if np.any(v < lo) or np.any(v > hi):
             raise ValueError(f"{info.key} has a value outside [{lo}, {hi}] {info.unit}".rstrip())

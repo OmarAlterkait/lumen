@@ -118,7 +118,9 @@ def test_border_sensors(toy):
     e = lib.sensors["tube:pdieR"]
     # Geant4 reads T (its default 0 when the surface gives none): a parameter, not folded (structure decides)
     assert e.surface_type.name == "dielectric_rt_sensor" and e.params["eff"] == 1.0 and e.params["T"] == 0.0
-    assert src[("sensors", "tube:pdieR", "T")] == glue.Source(None, "default", "Geant4's default")
+    assert src[("sensors", "tube:pdieR", "T")] == glue.Source(
+        "surfaces/pdieR/TRANSMITTANCE", "default", "Geant4's default"
+    )
     assert b.borders == {("w/blk1/Blk", "w/other/X"): "tube:pdieR"}
     assert regions.SensorBinding("tube:pdieR", 1, lv="X", entry="border") in b.sensors
     assert src[("sensors", "tube:pdieR", "eff")] == glue.Source("sensors/pmt/efficiency_on_entry", "setting")

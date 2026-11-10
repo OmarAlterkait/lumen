@@ -82,7 +82,7 @@ def test_a_calibration_changes_values_never_the_file(converted):
         cal.Calibration(
             "abs_x2",
             "toy",
-            "sha256:-",
+            det.digest,
             {"materials/Water/ABSLENGTH": Table(np.array([2.0, 4.5]), np.array([2.0, 40.0]))},
         ),
         converted / "calibrations",
@@ -94,3 +94,37 @@ def test_a_calibration_changes_values_never_the_file(converted):
     water = [k for k in a["media"] if "Water" in k][0]
     np.testing.assert_allclose(b["media"][water]["absorption"]["value"], 2 * a["media"][water]["absorption"]["value"])
     assert lumen.load(converted).params()["materials/Water/ABSLENGTH"].value.tolist() == [1.0, 20.0]
+
+
+def test_save_calibration_and_its_digest_check(converted, tmp_path):
+    """save_calibration writes only the changed values with the file's digest; another file's calibration is refused."""
+    det = lumen.load(converted)
+    p = det.params().scale("materials/Water/ABSLENGTH", 0.5)
+    path = det.save_calibration(p, "half", converted / "calibrations", note="ABSLENGTH x 0.5")
+    c = cal.read(path)
+    assert set(c.values) == {"materials/Water/ABSLENGTH"} and c.detector_digest == det.digest
+    det2 = lumen.load(converted, calibration="half")
+    assert det2.params().explain("materials/Water/ABSLENGTH") == "calibration half"
+    cal.save(cal.Calibration("other", "toy", "sha256:another-file", {}), converted / "calibrations")
+    with pytest.raises(cal.CalibrationMismatch, match="made for detector file"):
+        lumen.load(converted, calibration="other")
+
+
+def test_sensor_table_follows_the_arrivals_order(converted):
+    det = lumen.load(converted)
+    t = det.sensor_table()
+    n = len(det.parts.optics.sensor_pvs)
+    assert t["name"] == list(det.parts.optics.sensor_pvs) and t["position"].shape == (n, 3)
+    np.testing.assert_allclose(np.linalg.norm(t["axis"], axis=1), 1.0, rtol=1e-6)
+
+
+def test_params_set_and_scale_take_traced_values(converted):
+    """A traced factor passes through Params (no range check under tracing); the concrete check still holds."""
+    import jax
+
+    p0 = lumen.load(converted).params()
+    key = "materials/Water/ABSLENGTH"
+    v = jax.jit(lambda s: p0.scale(key, s)[key].value)(2.0)
+    np.testing.assert_allclose(np.asarray(v), 2.0 * np.asarray(p0[key].value))
+    with pytest.raises(ValueError, match="outside"):
+        p0.scale(key, -1.0)

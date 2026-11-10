@@ -96,6 +96,18 @@ def read(path) -> Calibration:
                        head["sensor_set"], head["note"])  # fmt: skip
 
 
+class CalibrationMismatch(ValueError):  # noqa: N818 -- the documented error catalogue's name
+    """A calibration made for another detector file (its ``detector_digest`` is not the detector's)."""
+
+
+def check_digest(c: Calibration, digest: str, path) -> None:
+    """Refuse a calibration whose ``detector_digest`` is not ``digest`` (the detector file's content digest)."""
+    if c.detector_digest != digest:
+        raise CalibrationMismatch(f"calibration {c.name!r} was made for detector file {c.detector_digest}, but "
+                                  f"{path} is {digest}: its values may name keys or knots this file does not have. "
+                                  "Remake the calibration on this file")  # fmt: skip
+
+
 def find(name: str, search) -> Path:
     """Return the path of calibration ``name`` on a search path of directories."""
     for d in search:

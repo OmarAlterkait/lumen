@@ -416,20 +416,34 @@ def named_params(optics: Optics, library: Library) -> dict:
 def pad_table(e, v, n):
     """Return an (energy, value) table padded to n knots past its end (flat, clamped), as float32.
 
-    numpy in float64 for concrete values (bit-identical to the compiled tables), jnp for traced ones.
+    Concrete values in float64 with numpy (bit-identical to the compiled tables); a traced one with jnp, each column on
+    its own, so a traced value column keeps the host's padded energies.
     """
     import jax
     import jax.numpy as jnp
 
-    traced = isinstance(e, jax.core.Tracer) or isinstance(v, jax.core.Tracer)
-    xp = jnp if traced else np
-    e, v = xp.asarray(e, xp.float32 if traced else np.float64), xp.asarray(v, xp.float32 if traced else np.float64)
-    k = n - e.shape[0]
-    if k > 0:
-        step = xp.maximum(PAD_STEP * xp.abs(e[-1]), PAD_STEP)
-        e = xp.concatenate([e, e[-1] + step * xp.arange(1, k + 1)])
-        v = xp.concatenate([v, xp.full(k, v[-1])])
-    return jnp.asarray(e, jnp.float32), jnp.asarray(v, jnp.float32)
+    def concrete(a):
+        return not isinstance(a, jax.core.Tracer)
+
+    e64 = np.asarray(e, np.float64) if concrete(e) else None
+    k = n - (e64.shape[0] if e64 is not None else e.shape[0])
+    if e64 is not None:
+        if k > 0:
+            step = max(PAD_STEP * abs(e64[-1]), PAD_STEP)
+            e64 = np.concatenate([e64, e64[-1] + step * np.arange(1, k + 1)])
+        e_out = jnp.asarray(e64, jnp.float32)
+    else:
+        e_out = jnp.asarray(e, jnp.float32)
+        if k > 0:
+            step = jnp.maximum(PAD_STEP * jnp.abs(e_out[-1]), PAD_STEP)
+            e_out = jnp.concatenate([e_out, e_out[-1] + step * jnp.arange(1, k + 1)])
+    if concrete(v):
+        v64 = np.asarray(v, np.float64)
+        v_out = jnp.asarray(np.concatenate([v64, np.full(max(k, 0), v64[-1])]), jnp.float32)
+    else:
+        v32 = jnp.asarray(v, jnp.float32)
+        v_out = jnp.concatenate([v32, jnp.repeat(v32[-1:], max(k, 0))])
+    return e_out, v_out
 
 
 def _packed_table(name, ents):

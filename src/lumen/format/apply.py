@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import dataclasses
 
+import jax
 import numpy as np
 
 from lumen.format import schema
@@ -38,11 +39,12 @@ def check(key: str, old, new) -> None:
         raise ValueError(f"{key}: a {'table' if old_e is not None else 'constant'} property needs a "
                          f"{'Table' if old_e is not None else 'number'}")  # fmt: skip
     if old_e is not None:
-        e, v = np.asarray(new.energy), np.asarray(new.value)
-        if e.shape != np.shape(old_e) or v.shape != e.shape:
-            raise ValueError(f"{key}: {len(old_e)} knots expected, got {v.shape} values at {e.shape} energies; a new "
+        es, vs = np.shape(new.energy), np.shape(new.value)
+        if es != np.shape(old_e) or vs != es:
+            raise ValueError(f"{key}: {len(old_e)} knots expected, got {vs} values at {es} energies; a new "
                              "knot count is a new detector file")  # fmt: skip
-        if np.any(np.diff(e) <= 0.0):
+        traced = isinstance(new.energy, jax.core.Tracer)  # a traced value is checked where it is concrete
+        if not traced and np.any(np.diff(np.asarray(new.energy)) <= 0.0):
             raise ValueError(f"{key}: the energies must be strictly ascending")
     elif np.ndim(new):
         raise ValueError(f"{key}: a constant property needs a number")
