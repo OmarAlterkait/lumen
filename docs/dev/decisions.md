@@ -143,3 +143,12 @@ check gives Geant4 the same repaired copy.
 **Decision.** The environment holds paths, caches and the device expectation, never a physics or behaviour switch.
 **Why.** A result must not depend on a variable nobody recorded.
 **Where.** `_env.py`; style rule 8 (ruff's banned API).
+
+## 19. One opaque medium for every material without a refractive index
+
+**Decision.** Every material the build reads as opaque (no RINDEX, or bound `lumen:opaque`) shares one medium,
+"opaque"; the outside keeps its own. No recipe binds opaque materials itself.
+**Why.** Geant4 kills a photon at any material without RINDEX, so which opaque material it is never changes the light;
+separate media only split the surface lookup's classes. The SBND and MicroBooNE recipes bound their opaque materials
+to one medium by hand; the general rule does it for every detector.
+**Where.** `build/library.py` (`OPAQUE_MEDIUM`).

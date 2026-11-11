@@ -7,16 +7,15 @@ optical simulation gives Geant4. The recipe's decisions, each checked against th
   (``lumen.build.import_rules``): TPB bound to LAr, the foil's skin a ``lumen:wls_film`` on the film's face.
 - The outside: the detector volume (volCryostat) is exactly the inner box of volCryoMembrane (steel), placed at the
   same position, so the outside carries the membrane's skin (checked).
-- Every material without RINDEX is one opaque medium (Geant4 kills a photon there).
 - The sensors are the volumes with the SensDet aux value PhotonDetector: 120 PMTs (volOpDetSensitive) and 192
   X-ARAPUCA windows (volOpDetSensitiveXArapucaFilter), counted on entry; their physvol copy number is the OpDet channel,
   typed by sbndcode's sbnd_pds_mapping.json (input ``pds_mapping``).
 
-MicroBooNE (microboone.gdml): only LAr carries optical properties in LArSoft's MicroBooNE simulation (LArSoft's
-tables, ``lumen.detectors.larsoft_optics``); every other material kills a photon at its boundary, except the
-stainless steel, which carries LArSoft's reflector table. Photons are counted on entering the volOpDetSensitive
-discs. The tables keep their source tokens (the numbers in eV and cm, as LArSoft hands them to Geant4), so a GDML
-export makes Geant4 read the doubles LArSoft's Geant4 reads.
+MicroBooNE (microboone.gdml): only LAr carries optical properties in LArSoft's MicroBooNE simulation (LArSoft's tables,
+``lumen.detectors.larsoft_optics``); every other material has no RINDEX in the GDML, so it kills a photon at its
+boundary, except the stainless steel, which carries LArSoft's reflector table. Photons are counted on entering the
+volOpDetSensitive discs. The tables keep their source tokens (the numbers in eV and cm, as LArSoft hands them to
+Geant4), so a GDML export makes Geant4 read the doubles LArSoft's Geant4 reads.
 """
 
 from __future__ import annotations
@@ -55,15 +54,8 @@ def membrane_skin(df: schema.DetectorFile) -> str:
 def sbnd_optics(df: schema.DetectorFile, inputs: dict) -> schema.DetectorFile:
     """SBND's optics decisions (see the module docstring), each recorded with origin "recipe"."""
     outside = membrane_skin(df)
-    mats, rep = {}, list(df.report)
-    for name, m in df.materials.items():
-        if "RINDEX" not in m.properties:
-            o = schema.OpticsModel("lumen:opaque", 1, {"medium": "opaque"}, "recipe", "no RINDEX: one opaque medium")
-        else:
-            o = m.optics
-        mats[name] = dataclasses.replace(m, optics=o)
-    rep.append(f"recipe: the outside carries {MEMBRANE_LV}'s skin {outside}")
-    return dataclasses.replace(df, materials=mats, outside_surface=outside, report=tuple(rep))
+    rep = (*df.report, f"recipe: the outside carries {MEMBRANE_LV}'s skin {outside}")
+    return dataclasses.replace(df, outside_surface=outside, report=rep)
 
 
 def channel_of(df: schema.DetectorFile, mother_lv: str, child_lv: str) -> int:
@@ -110,19 +102,14 @@ MICROBOONE_WAVELENGTHS = (100.0, 180.0)  # nm: the LAr emission spectrum (7.2-11
 
 
 def microboone_optics(df: schema.DetectorFile, inputs: dict) -> schema.DetectorFile:
-    """MicroBooNE's optics: LArSoft's LAr tables, LArSoft's steel reflector, every other material opaque."""
+    """MicroBooNE's optics: LArSoft's LAr tables and LArSoft's steel reflector."""
     from lumen.detectors import larsoft_optics
 
-    mats = {}
-    for name, m in df.materials.items():
-        if name == LAR:
-            o = schema.OpticsModel("lumen:larsoft_lar", 1, {"medium": "lar"}, "recipe", "LArSoft's LAr tables")
-            mats[name] = dataclasses.replace(m, properties=larsoft_optics.lar_tables(), optics=o)
-        else:
-            o = schema.OpticsModel(
-                "lumen:opaque", 1, {"medium": "opaque"}, "recipe", "no optical properties in LArSoft"
-            )
-            mats[name] = dataclasses.replace(m, optics=o)
+    o = schema.OpticsModel("lumen:larsoft_lar", 1, {"medium": "lar"}, "recipe", "LArSoft's LAr tables")
+    mats = {
+        **df.materials,
+        LAR: dataclasses.replace(df.materials[LAR], properties=larsoft_optics.lar_tables(), optics=o),
+    }
     o = schema.OpticsModel("lumen:larsoft_reflector", 1, {}, "recipe", "LArSoft's ReflectiveSurfaces")
     steel = schema.Surface(STEEL_SURFACE, "dielectric_metal", "unified", "ground", 0.0,
                       larsoft_optics.reflector_tables(STEEL), o)  # fmt: skip

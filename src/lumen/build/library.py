@@ -8,8 +8,8 @@ Each material, surface and sensor group names the optics model that reads it (``
 Materials
     ``geant4`` (the default)  Geant4's reading (``lumen.rules.optics.medium``); the medium is named
                               ``settings["medium"]`` (default the material's name); without RINDEX it is opaque.
-    ``lumen:opaque``          an opaque medium named ``settings["medium"]`` (default the material's name); several
-                              materials may share one.
+    ``lumen:opaque``          an opaque medium.
+    Every opaque material shares one medium, ``OPAQUE_MEDIUM`` (docs/dev/decisions.md, 19).
     ``lumen:same_as``         bound to the medium of material ``settings["material"]`` (an index-matched film lowered
                               onto a surface).
     ``lumen:larsoft_lar``     LArSoft's LAr from the material's RINDEX, RAYLEIGH and ABSLENGTH tables
@@ -59,6 +59,7 @@ from lumen.surfaces import types as legacy
 
 AXIS_DECIMALS = 6  # a film axis is rounded to this many decimals to name its side
 OUTSIDE_MEDIUM = "outside"
+OPAQUE_MEDIUM = "opaque"  # every opaque material's medium: one entry, so opaque materials never split a class
 LAR_MEDIUM = "lar"  # lumen:larsoft_lar's default medium name
 
 
@@ -172,6 +173,8 @@ def _media(df, tree):
         if entry is None:
             same[m] = name
             continue
+        if entry.medium.opaque:  # one opaque medium for every material without a refractive index
+            name, entry = OPAQUE_MEDIUM, _opaque(OPAQUE_MEDIUM)
         _add_medium(media, name, entry, m)
         bind[m] = name
         sources.setdefault(name, src)

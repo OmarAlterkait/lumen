@@ -15,6 +15,14 @@ now, and what to do.
 - The geometry lowering's `dissolve` and `keep` options are removed: no build used them. The geometry check
   (`python -m lumen.validate.geometry`) now checks the geometry as simulated instead of a dissolved one.
 
+Changed:
+
+- Every material without a refractive index shares one opaque medium, by a general rule; the SBND and MicroBooNE
+  recipes no longer bind theirs. The light is unchanged bit for bit on the five shipped detectors and no parameter key
+  changes. A detector file converted again from SBND's or MicroBooNE's GDML differs in `materials.json` (those
+  materials name the `geant4` optics model, not `lumen:opaque`), so a calibration saved against an earlier conversion
+  of them is refused as made for another detector file: convert again and recalibrate, or keep the earlier file.
+
 Fixed:
 
 - A surface type with a value fixed by its model kept only the outcomes it had with every other parameter at 0.5, so
