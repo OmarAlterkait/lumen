@@ -10,12 +10,22 @@ from lumen.readout import response
 from lumen.recipe import Recipe
 from lumen.sources import Photons, concat, source
 
+
+def __getattr__(name):  # lazily: the step's module loads the transport
+    if name == "Controls":
+        from lumen.transport.step import Controls
+
+        return Controls
+    raise AttributeError(f"module 'lumen' has no attribute {name!r}")
+
+
 try:
     __version__ = version("lumen")
 except PackageNotFoundError:  # running from a source tree that is not installed
     __version__ = "0.0.0"
 
 __all__ = [
+    "Controls",
     "Detector",
     "Light",
     "Param",

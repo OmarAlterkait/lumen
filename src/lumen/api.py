@@ -232,7 +232,8 @@ SOURCE_STREAM = np.uint32(0xFFFFFFFF)  # the source's key: fold_in(key, SOURCE_S
 class Light:
     """What ``simulate`` returns: per sensor the expected photon arrivals at the sensor (before its model), their
     Monte Carlo error (over the replicas), the mean arrival time (ns), the group's histograms (``lumen.readout``) and
-    the run's health; ``provenance`` (static) says how it was made. Readout functions take ``(light, params)``."""  # noqa: D205, D209
+    the run's health; ``provenance`` (static) says how it was made. Readout functions take ``(light, params)``.
+    ``diagnostics``: the cells of ``simulate(..., diagnostics=)`` by output name, and "weight_scale" (None without)."""  # noqa: D205, D209
 
     arrivals: Any
     arrivals_error: Any
@@ -240,16 +241,17 @@ class Light:
     histograms: Any
     health: Any
     provenance: tuple = ()
+    diagnostics: Any = None
 
     def tree_flatten(self):
         """Return the arrays and the provenance."""
-        return (self.arrivals, self.arrivals_error, self.mean_arrival_time, self.histograms, self.health), \
-            self.provenance  # fmt: skip
+        return (self.arrivals, self.arrivals_error, self.mean_arrival_time, self.histograms, self.health,
+                self.diagnostics), self.provenance  # fmt: skip
 
     @classmethod
     def tree_unflatten(cls, aux, children):
         """Rebuild from the arrays and the provenance."""
-        return cls(*children, aux)
+        return cls(*children[:5], aux, children[5])
 
 
 def _sensor_group(det):
@@ -393,6 +395,19 @@ def _emitter(src, params, skey, samples, moving):
     return lambda first, count: src.emit(params, skey, count, first, samples, **kw)
 
 
+def _diagnostics(diagnostics, samples, chunk) -> tuple:
+    """Return (the diagnostics as a tuple, their output names); refuse them over several chunks."""
+    diagnostics = tuple(diagnostics)
+    if diagnostics and int(samples) > int(chunk):
+        raise ValueError(f"simulate: diagnostics run in one chunk (their cells are indexed by the photon); samples "
+                         f"{samples} > chunk {chunk}")  # fmt: skip
+    names = tuple(k for dg in diagnostics for k in dg.outputs())
+    clash = [k for k in names if k in ("arrival", "arrival_t", "lost", "abandoned", "escaped", "retired")]
+    if clash:
+        raise ValueError(f"simulate: diagnostic outputs {clash} are names of the loop's own outputs")
+    return diagnostics, names
+
+
 def _budget() -> float:
     try:
         limit = float(jax.devices()[0].memory_stats()["bytes_limit"])
@@ -402,7 +417,7 @@ def _budget() -> float:
 
 
 def simulate(det, source, params=None, *, samples: int, seed: int, replicas: int = 16, gate=None,  # noqa: PLR0913
-             chunk: int = 1 << 20, backend: str = "auto", wrt=()) -> Light:  # fmt: skip
+             chunk: int = 1 << 20, backend: str = "auto", wrt=(), controls=None, diagnostics=()) -> Light:  # fmt: skip
     """Return the Light of ``samples`` photons of ``source`` through ``det`` at ``params`` (default: its own).
 
     ``source``: a ``lumen.sources`` source, its fields from ``params``' ``source/`` keys where given (its random numbers
@@ -420,6 +435,11 @@ def simulate(det, source, params=None, *, samples: int, seed: int, replicas: int
     before launch (MemoryError) when they exceed the device's budget. The other sensors (a counting group) give
     arrivals only, and a detector without a modelled group gives no histograms (``histograms`` None); ``arrivals``
     and its error and mean time cover every sensor of the detector.
+
+    ``controls``: the step's values (``lumen.Controls``: ``max_distance``, ``t_end``, ``roulette``; default as
+    ``Controls()``). ``diagnostics``: probes run alongside the loop (``lumen.diagnostics``, e.g. ``Trace``), in one
+    chunk (``samples`` <= ``chunk``: their cells are indexed by the photon); ``Light.diagnostics`` holds their cells as
+    the loop wrote them, and "weight_scale", the factor the loop's weights carried (1 for weights of order 1).
     """
     from lumen import readout as ro
     from lumen import run as runner
@@ -443,7 +463,8 @@ def simulate(det, source, params=None, *, samples: int, seed: int, replicas: int
     moving, origins = _moving(source, params, wrt) if hasattr(source, "emit") else (False, None)
     model = _model(det, grid.theta_knots is not None, moving, origins, _edge_rows(det, params, wrt))
     packed = jax.tree_util.tree_map(jnp.asarray, det.pack(params))
-    ops = steps.operands(model, packed, None, steps.Controls(), None)
+    ops = steps.operands(model, packed, None, steps.Controls() if controls is None else controls, None)
+    diagnostics, dnames = _diagnostics(diagnostics, samples, chunk)
     key = jax.random.key_data(jax.random.PRNGKey(int(seed)))
     emitted = hasattr(source, "emit")
     if emitted:
@@ -459,8 +480,8 @@ def simulate(det, source, params=None, *, samples: int, seed: int, replicas: int
             pad = lambda a, c=count: jnp.concatenate([a, jnp.repeat(a[-1:], size - c, 0)])  # noqa: E731
             rows = jax.tree_util.tree_map(pad, rows)
         t = runner.run(item.readout(r), model, ops, rows, key, replicas=int(replicas), first_id=first, backend=backend,
-                       n_active=count)  # fmt: skip
-        out = {k: jnp.asarray(v, jnp.float32) * (1.0 if k in COUNTS else unit) for k, v in t.outputs.items()}
+                       n_active=count, **({"diagnostics": diagnostics} if diagnostics else {}))  # fmt: skip
+        out = {k: jnp.asarray(v, jnp.float32) * (1.0 if k in COUNTS + dnames else unit) for k, v in t.outputs.items()}
         overflow = overflow + jnp.asarray(t.overflow, jnp.int32)
         acc = out if acc is None else {k: acc[k] + v for k, v in out.items()}
     per = acc["arrival"].reshape(int(replicas), n)
@@ -474,7 +495,8 @@ def simulate(det, source, params=None, *, samples: int, seed: int, replicas: int
             ("backend", backend), ("detector", det.name), ("calibration", det.calibration),
             ("wrt", tuple(wrt)))  # fmt: skip
     hist = None if group is None else item.histograms(r, acc, sensor_model, group.name, gate)
-    return Light(arrivals, err, mean_t, hist, health, prov)
+    diag = {k: acc[k] for k in dnames} | {"weight_scale": 1.0 / unit} if diagnostics else None
+    return Light(arrivals, err, mean_t, hist, health, prov, diag)
 
 
 __all__ = ["Detector", "Light", "convert", "load", "simulate"]

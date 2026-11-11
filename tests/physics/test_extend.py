@@ -12,7 +12,9 @@ import sys
 from pathlib import Path
 
 import jax.numpy as jnp
+import numpy as np
 import pytest
+from toys import GPU
 
 import lumen
 from lumen import sources
@@ -176,3 +178,27 @@ def test_a_registered_model_parameter(lined, ex, models, key, theta0):
     assert r.passes, r
     assert abs(r.ad[-1]) > 3 * r.ad_sem[-1], r  # resolved: the parameter moves the light
 
+
+# --------------------------------------------------------------------------------------------- controls, diagnostics
+def test_simulate_takes_controls_and_diagnostics(tank):
+    from lumen.diagnostics import TRACE_FIELDS, Trace
+
+    src = sources.Point((0.05, 0.02, 0.1), n_photons=4096.0, lam=420.0)
+    n = 4096
+    plain = lumen.simulate(tank, src, samples=n, seed=2)
+    same = lumen.simulate(tank, src, samples=n, seed=2, controls=lumen.Controls())
+    assert np.asarray(plain.arrivals).tobytes() == np.asarray(same.arrivals).tobytes() and plain.diagnostics is None
+    early = lumen.simulate(tank, src, samples=n, seed=2, controls=lumen.Controls(t_end=0.1))
+    assert float(np.asarray(early.arrivals).sum()) == 0.0  # no PMT within 0.1 ns of light
+    tr = Trace(steps=4, n_traced=n)
+    seen = lumen.simulate(tank, src, samples=n, seed=2, diagnostics=(tr,))
+    if GPU:  # exact sums: a probe changes nothing (the CPU's sums may round a last bit differently)
+        assert np.asarray(seen.arrivals).tobytes() == np.asarray(plain.arrivals).tobytes()
+    cells = tr.read(seen.diagnostics["trace"])
+    assert cells.shape == (n, 4, len(TRACE_FIELDS)) and float(seen.diagnostics["weight_scale"]) == 1.0
+    first = cells[:, 0]
+    assert np.all(first[:, TRACE_FIELDS.index("alive")] == 1.0)
+    x = first[:, [TRACE_FIELDS.index(k) for k in ("x0", "x1", "x2")]]
+    assert np.all(np.abs(x) <= 0.5 + 1e-4)  # the first vertex is in the 1 m cube
+    with pytest.raises(ValueError, match="one chunk"):
+        lumen.simulate(tank, src, samples=n, seed=2, chunk=1024, diagnostics=(tr,))
