@@ -69,6 +69,9 @@ def test_a_run_is_the_same_in_any_chunks(make):
     whole = src.emit(p, KEY, 320, 0, 320)
     part = src.emit(p, KEY, 128, 128, 320)
     for a, b in zip(whole, part, strict=True):
+        if a is None:  # Emission.dlogp: None for lumen's own sources
+            assert b is None
+            continue
         if jax.default_backend() == "gpu" or a.dtype == bool:
             assert bool(jnp.all(a[128:256] == b)), make
         else:

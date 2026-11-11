@@ -20,6 +20,7 @@ import jax.numpy as jnp
 from lumen._core import frames
 from lumen._core.safe import safe_sqrt
 from lumen.media import laws
+from lumen.params import Param
 from lumen.sources._base import DIRECTION, INF, POSITION, TIME, WAVELENGTH, Source, photon_uniforms
 from lumen.surfaces import polar
 from lumen.transport.state import Emission
@@ -62,8 +63,10 @@ class CherenkovSegment(Source):
     time: Any = 0.0
     lam_min: Any = 200.0
     lam_max: Any = 700.0
-    FIELDS = {"start": POSITION, "direction": DIRECTION, "length": ("m", (0.0, INF), "moving_paths"),
-              "beta": ("", (0.0, 1.0), "moving_paths"), "charge": ("e", (-INF, INF), "reweight"), "time": TIME,
+    FIELDS = {"start": POSITION, "direction": DIRECTION, "length": Param("m", (0.0, INF), method="moving_paths"),
+              "beta": Param("", (0.0, 1.0), method="moving_paths"),
+              "charge": Param("e", (-INF, INF), method="reweight"),
+              "time": TIME,
               "lam_min": WAVELENGTH, "lam_max": WAVELENGTH}  # fmt: skip
     MOVING = ("start", "direction", "length", "beta")
 

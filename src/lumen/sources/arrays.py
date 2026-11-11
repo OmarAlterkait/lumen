@@ -14,8 +14,8 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from lumen.sources._base import COUNT, DIRECTION, POSITION, TIME, WAVELENGTH, Source, rows
-from lumen.transport.state import DensityEmission, Emission
+from lumen.sources._base import COUNT, DIRECTION, POSITION, TIME, WAVELENGTH, GradientNotAvailable, Source, rows
+from lumen.transport.state import Emission
 
 
 @dataclasses.dataclass(frozen=True)
@@ -42,6 +42,14 @@ class FromArrays(Source):
     def draw(self, v, key, n, first_id, samples):
         """Return the rows (``key`` and ``samples`` are not used)."""
         pol = v.get("polarisation", jnp.zeros((v["x"].shape[0], 2, 3), jnp.float32))
-        e = Emission(*(rows(v[k], n, first_id, r) for k, r in (("x", 1), ("d", 1), ("t", 0), ("lam", 0), ("w", 0))),
-                     rows(pol, n, first_id, 2), jnp.full(n, self.drawn))  # fmt: skip
-        return DensityEmission(*e, rows(v["dlogp"], n, first_id, 1)) if "dlogp" in v else e
+        return Emission(*(rows(v[k], n, first_id, r) for k, r in (("x", 1), ("d", 1), ("t", 0), ("lam", 0), ("w", 0))),
+                        rows(pol, n, first_id, 2), jnp.full(n, self.drawn),
+                        rows(v["dlogp"], n, first_id, 1) if "dlogp" in v else None)  # fmt: skip
+
+    def emit(self, params, key, n: int, first_id=0, samples=None, *, moving=False):
+        """Return the rows; a derivative that moves drawn rows needs their density's gradient (``dlogp``)."""
+        if moving and self.dlogp is None:
+            raise GradientNotAvailable("FromArrays(drawn=True) moved without its direction density's gradient: pass "
+                                       "dlogp=jnp.zeros((N, 3)) when the directions are isotropic, else grad_d log p "
+                                       "of their density (or write a source function, lumen.source)")  # fmt: skip
+        return super().emit(params, key, n, first_id, samples, moving=moving)

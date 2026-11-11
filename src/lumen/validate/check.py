@@ -52,6 +52,10 @@ class GradientReport:
         """Return the paired z of the total."""
         return float(self.z[-1])
 
+    def __repr__(self):
+        """Show the summary (an assertion message reads it)."""
+        return str(self)
+
     def __str__(self):
         """Summarise: the total's AD, FD and z, the observables' mean z^2 against its null, and the verdict."""
         rows = [f"check_gradient at {self.theta0:g} (h {self.h:g}, {self.seeds} seeds): "

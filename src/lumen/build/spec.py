@@ -127,8 +127,8 @@ def model_values(df: fmt.DetectorFile) -> tuple[dict, dict, dict]:
     values, spec, layers = {}, {}, {}
     for kind, section, items in (("medium", "materials", df.materials), ("surface", "surfaces", df.surfaces)):
         for name, rec in items.items():
-            m = models.registered(rec.optics.name, kind)
-            if m is None:
+            m = models.find(rec.optics.name, kind)
+            if m is None or not m.declared:
                 continue
             for k, p in m.declared:
                 key = f"{section}/{name}/{k}"

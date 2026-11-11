@@ -111,7 +111,7 @@ def _declared(rec, section, prop) -> bool:
     """Return whether ``prop`` is a parameter declared by the record's registered optics model (lumen.models)."""
     from lumen import models
 
-    m = models.registered(rec.optics.name, "medium" if section == "materials" else "surface")
+    m = models.find(rec.optics.name, "medium" if section == "materials" else "surface")
     return m is not None and prop in dict(m.declared)
 
 

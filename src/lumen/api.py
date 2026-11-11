@@ -213,9 +213,7 @@ def _with_models(df, models: dict):
         if section not in out or rec_name not in out[section]:
             raise ValueError(f"load(models=): {target!r} is not materials/<M> or surfaces/<S> of this detector")
         kind = "medium" if section == "materials" else "surface"
-        builtin = registry.BUILTIN_MEDIA if kind == "medium" else registry.BUILTIN_SURFACES
-        if name not in builtin and registry.registered(name, kind) is None:
-            registry.lookup(name, kind, target)  # an unknown name, or a model of the other sort: the registry's error
+        registry.get(name, kind, target)  # an unknown name, or a model of the other sort: the registry's error
         rec = out[section][rec_name]
         out[section][rec_name] = dataclasses.replace(rec, optics=dataclasses.replace(rec.optics, name=name))
     return df if not models else dataclasses.replace(df, materials=out["materials"], surfaces=out["surfaces"])
@@ -284,17 +282,6 @@ COUNTS = ("n_truncated", "stuck")  # the outputs that count photons, not weights
 WEIGHT_FLOOR_LOG2 = -6  # rows whose largest weight is below 2^-6 are rescaled (_unit_weights)
 
 
-def _guard_rows(rows):
-    """Refuse a derivative that moves a callable's or an array source's photons (no density: a silent wrong value)."""
-    from lumen.sources import _base
-
-    g = _base._guard(
-        "a callable or array source (subclass lumen.sources.Source, with drawn_direction, to "
-        "differentiate a position)"
-    )
-    return rows._replace(x=g(rows.x), d=g(rows.d), lam=g(rows.lam))
-
-
 def _unit_weights(rows):
     """Return (rows with weights times 2^k, 2^-k): the largest weight in [1, 2) when it is below 2^WEIGHT_FLOOR_LOG2.
 
@@ -332,23 +319,15 @@ def _moving(source, params, wrt) -> tuple:
     """Return (the moving-source method is on, the source's origins (m) for its clearance, None when traced)."""
     from lumen import sources
 
-    prefix = getattr(source, "prefix", sources.PREFIX)
-    moved = [k for k in wrt if k.startswith(prefix)
-             and k.removeprefix(prefix) in getattr(source, "MOVING", ())]  # fmt: skip
+    moved = [k for k in wrt if k.startswith(source.prefix) and k.removeprefix(source.prefix) in source.MOVING]
     if not moved:
         return False, None
     if not source.drawn_direction:
         raise sources.GradientNotAvailable(f"simulate: {moved} move the photons of a source whose directions are "
                                            "not drawn from a density (drawn_direction False)")  # fmt: skip
-    if isinstance(source, sources.FromArrays) and source.dlogp is None:
-        raise sources.GradientNotAvailable(f"simulate: {moved} move the photons of FromArrays(drawn=True) without "
-                                           "its direction density's gradient: pass dlogp=jnp.zeros((N, 3)) when the "
-                                           "directions are isotropic, else grad_d log p of their density (or write a "
-                                           "source function, lumen.source)")  # fmt: skip
     v = source.values(params)
-    names = getattr(source, "ORIGINS", ("position", "x", "start", "end"))
     try:
-        pts = [np.asarray(v[f], np.float32).reshape(-1, 3) for f in names if f in v]
+        pts = [np.asarray(v[f], np.float32).reshape(-1, 3) for f in source.ORIGINS if f in v]
     except jax.errors.TracerArrayConversionError:  # traced origins: no co-moving radius (exact, without the field)
         return True, None
     return True, np.unique(np.concatenate(pts), axis=0)
@@ -383,16 +362,6 @@ def _edge_rows(det, params, wrt) -> tuple:
 
     packed = jax.tree_util.tree_map(np.asarray, det.pack(pack.host_params(det, params)[1]))
     return estimator.edge_rows(o, packed, paths)
-
-
-def _emitter(src, params, skey, samples, moving):
-    """Return (first, count) -> the Emission of a source; a source function is checked once and its photons guarded
-    unless the moving-source method is on."""  # noqa: D205, D209
-    kw = {}
-    if hasattr(src, "check"):
-        src.check(params)
-        kw = {"moving": moving}
-    return lambda first, count: src.emit(params, skey, count, first, samples, **kw)
 
 
 def _diagnostics(diagnostics, samples, chunk) -> tuple:
@@ -443,6 +412,7 @@ def simulate(det, source, params=None, *, samples: int, seed: int, replicas: int
     """
     from lumen import readout as ro
     from lumen import run as runner
+    from lumen import sources
     from lumen.build import build
     from lumen.transport import item
     from lumen.transport import step as steps
@@ -460,21 +430,18 @@ def simulate(det, source, params=None, *, samples: int, seed: int, replicas: int
     r = item.HistogramLayout(max(len(tags), 1), grid, int(replicas), index=index)
     ro.check_memory(grid, max(len(tags), 1), int(replicas), 0, _budget())
     params = det.params() if params is None else params
-    moving, origins = _moving(source, params, wrt) if hasattr(source, "emit") else (False, None)
+    source = sources.CallableSource.of(source)  # a callable or an Emission batch: a source without a density
+    moving, origins = _moving(source, params, wrt)
+    source.check(params)
     model = _model(det, grid.theta_knots is not None, moving, origins, _edge_rows(det, params, wrt))
     packed = jax.tree_util.tree_map(jnp.asarray, det.pack(params))
     ops = steps.operands(model, packed, None, steps.Controls() if controls is None else controls, None)
     diagnostics, dnames = _diagnostics(diagnostics, samples, chunk)
     key = jax.random.key_data(jax.random.PRNGKey(int(seed)))
-    emitted = hasattr(source, "emit")
-    if emitted:
-        source = _emitter(source, params, jax.random.fold_in(key, SOURCE_STREAM), int(samples), moving)
+    skey = jax.random.fold_in(key, SOURCE_STREAM)
     size, acc, overflow = min(int(chunk), int(samples)), None, jnp.int32(0)
     for first, count in ro.photon_chunks(int(samples), size):
-        rows = source(first, count) if callable(source) else \
-            jax.tree_util.tree_map(lambda a, f=first, c=count: a[f:f + c], source)  # fmt: skip
-        if not emitted:  # a callable or arrays: no density for the positions, so no derivative moving them
-            rows = _guard_rows(rows)
+        rows = source.emit(params, skey, count, first, int(samples), moving=moving)
         rows, unit = _unit_weights(rows)
         if count < size:  # the last chunk keeps the shape: padded, its extra rows inactive
             pad = lambda a, c=count: jnp.concatenate([a, jnp.repeat(a[-1:], size - c, 0)])  # noqa: E731

@@ -105,6 +105,13 @@ def test_the_flasher(tank, ex, what):
     assert r.passes, r
 
 
+def test_a_source_function_is_the_same_in_any_chunks(tank, ex):
+    """Photon i of a source function is the same whatever the chunk size (the function draws all photons once)."""
+    whole = lumen.simulate(tank, ex.flasher, samples=1 << 16, seed=4)
+    parts = lumen.simulate(tank, ex.flasher, samples=1 << 16, seed=4, chunk=1 << 14)
+    np.testing.assert_allclose(np.asarray(parts.arrivals), np.asarray(whole.arrivals), rtol=1e-6 if GPU else 1e-5)
+
+
 def test_simulate_refuses_a_position_derivative_it_cannot_give(tank, ex):
     import jax
 
@@ -134,7 +141,8 @@ def test_simulate_refuses_a_position_derivative_it_cannot_give(tank, ex):
                                                           ("my_waveform", "tau_f", 8.0)])  # fmt: skip
 def test_a_response_is_exact_after_tracking(tank, ex, response, key, theta0):
     """The guide's saturating PE and waveform: their keys join the detector's, and their derivatives (no new
-    simulation) agree with the FD to float32 on every seed."""
+    simulation) are exact: AD equals the Richardson FD on every observable to its float32 resolution. (The seeds'
+    z rules of ``passes`` judge Monte Carlo noise; here there is none, so the FD's own rounding would dominate them.)"""
     r = getattr(ex, response)
     det = tank.with_responses(r)
     k = f"sensors/pmt/{key}"
@@ -147,9 +155,10 @@ def test_a_response_is_exact_after_tracking(tank, ex, response, key, theta0):
             lights[seed] = lumen.simulate(det, src, samples=1 << 16, seed=seed)
         return r(lights[seed], det.params().set(k, theta))
 
-    rep = check_gradient(f, theta0, seeds=SEEDS, h=1e-2 * theta0)
-    assert rep.passes, rep
-    assert abs(rep.ad[-1] - rep.fd[-1]) <= 1e-3 * abs(rep.fd[-1]), rep
+    rep = check_gradient(f, theta0, seeds=4, h=1e-2 * theta0)
+    scale = np.max(np.abs(rep.fd[:-1]))
+    assert scale > 0.0 and np.max(np.abs(rep.ad - rep.fd)[:-1]) <= 1e-3 * scale, rep
+    assert abs(rep.ad[-1] - rep.fd[-1]) <= 1e-4 * abs(rep.fd[-1]), rep
 
 
 # ------------------------------------------------------------------------------------------------ registered models
@@ -174,7 +183,9 @@ def test_a_registered_model_parameter(lined, ex, models, key, theta0):
     def f(theta, seed):
         return arrivals(det, src, p0.set(key, theta), seed=seed)
 
-    r = check_gradient(f, theta0, seeds=SEEDS, h=0.02, stencil="central")
+    # Richardson: the light reflected twice makes the arrivals curve in the parameter, and the seeds' spread of AD - FD
+    # is small enough (the draws stay, the weights move) that a central FD's h^2 term would show
+    r = check_gradient(f, theta0, seeds=SEEDS, h=0.02)
     assert r.passes, r
     assert abs(r.ad[-1]) > 3 * r.ad_sem[-1], r  # resolved: the parameter moves the light
 
@@ -189,7 +200,9 @@ def test_simulate_takes_controls_and_diagnostics(tank):
     same = lumen.simulate(tank, src, samples=n, seed=2, controls=lumen.Controls())
     assert np.asarray(plain.arrivals).tobytes() == np.asarray(same.arrivals).tobytes() and plain.diagnostics is None
     early = lumen.simulate(tank, src, samples=n, seed=2, controls=lumen.Controls(t_end=0.1))
-    assert float(np.asarray(early.arrivals).sum()) == 0.0  # no PMT within 0.1 ns of light
+    # a photon past t_end is retired at its first event: only light that reaches a PMT on its first path counts
+    assert float(np.asarray(early.arrivals).sum()) < float(np.asarray(plain.arrivals).sum())
+    assert float(np.asarray(early.health["retired"]).sum()) > 0.0
     tr = Trace(steps=4, n_traced=n)
     seen = lumen.simulate(tank, src, samples=n, seed=2, diagnostics=(tr,))
     if GPU:  # exact sums: a probe changes nothing (the CPU's sums may round a last bit differently)

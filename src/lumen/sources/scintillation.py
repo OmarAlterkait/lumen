@@ -19,6 +19,7 @@ import jax
 import jax.numpy as jnp
 
 from lumen._core.safe import safe_sqrt
+from lumen.params import Param
 from lumen.sources._base import F32, POSITION, TIME, Source, photon_uniforms, proposal, wavelength
 from lumen.transport.estimator import reweight
 from lumen.transport.state import Emission
@@ -26,7 +27,8 @@ from lumen.transport.state import Emission
 KEYS = {"11": ("SCINTILLATIONCOMPONENT1", "SCINTILLATIONCOMPONENT2", "SCINTILLATIONTIMECONSTANT1",
                "SCINTILLATIONTIMECONSTANT2", "SCINTILLATIONYIELD1", "SCINTILLATIONYIELD2"),
         "10.7": ("FASTCOMPONENT", "SLOWCOMPONENT", "FASTTIMECONSTANT", "SLOWTIMECONSTANT", "YIELDRATIO")}  # fmt: skip
-ENERGY, BIRKS = ("MeV", (0.0, float("inf")), "reweight"), ("m/MeV", (0.0, float("inf")), "reweight")
+ENERGY = Param("MeV", (0.0, float("inf")), method="reweight")
+BIRKS = Param("m/MeV", (0.0, float("inf")), method="reweight")
 sg = jax.lax.stop_gradient
 
 

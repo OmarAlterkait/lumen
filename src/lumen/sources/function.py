@@ -9,7 +9,7 @@
     light = lumen.simulate(det, led, samples=1 << 20, seed=0, wrt=["source/led/x"])
 
 The function returns ``n`` photons whose weights sum, in expectation, to the photons the source stands for; ``simulate``
-runs them in chunks (each chunk a call with its own key) and scales each chunk's weights by n / samples. Its
+calls it once with n = samples and runs its photons in chunks (photon i is the same row whatever the chunk size). Its
 parameters are the keys ``source/<name>/<field>`` (``name``: the function's, unless given), taken from the ``params``
 given to ``simulate`` where they are set, else the declared defaults (``FunctionSource.parameters`` adds them to a
 ``Params``).
@@ -42,7 +42,7 @@ import jax.numpy as jnp
 
 from lumen._core import frames
 from lumen.sources._base import PREFIX, GradientNotAvailable, Source, _guard
-from lumen.transport.state import DensityEmission, Emission
+from lumen.transport.state import Emission
 
 F32 = jnp.float32
 DENSITIES = ("isotropic", "direction", "none")
@@ -165,8 +165,8 @@ class FunctionSource(Source):
 
     @property
     def FIELDS(self) -> dict:  # noqa: N802 -- the Source protocol's name
-        """Return {field: (unit, range, method)} of the declared parameters."""
-        return {k: (p.unit, p.range, "moving_paths" if p.moves else "reweight") for k, p in self.declared}
+        """Return {field: Param} of the declared parameters."""
+        return dict(self.declared)
 
     @property
     def MOVING(self) -> tuple:  # noqa: N802 -- the Source protocol's name
@@ -207,13 +207,12 @@ class FunctionSource(Source):
         return base.merged(values, spec, f"source {self.name}")
 
     def emit(self, params, key, n: int, first_id=0, samples=None, *, moving=False):
-        """Return the Emission of chunk ``first_id`` (``n`` photons of ``samples``): the function's photons under
-        ``fold_in(key, first_id)``, weights times n / samples. ``moving``: the moving-source method is on (else a
-        tangent on x, d or lam is refused)."""  # noqa: D205, D209
+        """Return photons ``first_id .. first_id + n - 1`` of the function's ``samples`` (default n) photons under
+        ``key``: one draw of them all, so photon i is the same whatever the chunks. ``moving``: the moving-source
+        method is on (else a tangent on x, d or lam is refused)."""  # noqa: D205, D209
         v = self.values(params)
         key = jax.random.key_data(key) if jnp.issubdtype(jnp.asarray(key).dtype, jax.dtypes.prng_key) else key
-        key = jax.random.fold_in(key, jnp.asarray(first_id, jnp.uint32))
-        rows = _FN_EMIT(self, v, key, int(n), jnp.asarray(n / (samples or n), F32))
+        rows = _FN_EMIT(self, v, key, int(samples or n), jnp.asarray(first_id, jnp.int32), int(n))
         if not moving:
             g = _guard(f"source {self.name!r}: a parameter that moves its photons (declare it moves=True and give it "
                        "in wrt)")  # fmt: skip
@@ -240,7 +239,7 @@ class FunctionSource(Source):
 _CHECKED: set = set()
 
 
-def _draw(src, v, key, n, scale):
+def _draw(src, v, key, n, first_id, count):
     ph = src.fn(v, key, n)
     if not isinstance(ph, Photons):
         raise SourceError(f"source {src.name!r}: return lumen.Photons, not {type(ph).__name__}")
@@ -249,12 +248,13 @@ def _draw(src, v, key, n, scale):
     if src.density == "isotropic" and ph.dlogp is not None:
         raise SourceError(f"source {src.name!r}: density='isotropic' has no dlogp (declare density='direction')")
     pol = jnp.zeros((n, 2, 3), F32) if ph.pol is None else jnp.asarray(ph.pol, F32)
+    g = sg(jnp.asarray(ph.dlogp, F32)) if src.density == "direction" else None
     e = Emission(jnp.asarray(ph.x, F32), jnp.asarray(ph.d, F32), jnp.asarray(ph.t, F32), jnp.asarray(ph.lam, F32),
-                 jnp.asarray(ph.w, F32) * scale, pol, jnp.full(n, src.drawn_direction))  # fmt: skip
-    return DensityEmission(*e, sg(jnp.asarray(ph.dlogp, F32))) if src.density == "direction" else e
+                 jnp.asarray(ph.w, F32), pol, jnp.full(n, src.drawn_direction), g)  # fmt: skip
+    return jax.tree_util.tree_map(lambda a: jax.lax.dynamic_slice_in_dim(a, first_id, count, 0), e)
 
 
-_FN_EMIT = jax.jit(_draw, static_argnums=(0, 3))
+_FN_EMIT = jax.jit(_draw, static_argnums=(0, 3, 5))
 
 
 def _check_shapes(src, out):

@@ -22,11 +22,15 @@ from jax.extend.random import threefry2x32_p
 from lumen._core import rng
 from lumen._core.safe import safe_div
 from lumen.media import spectra
+from lumen.params import Param
 from lumen.units import HC
 
 F32, INF, PREFIX = jnp.float32, float("inf"), "source/"
-POSITION, DIRECTION = ("m", (-INF, INF), "moving_paths"), ("", (-1.0, 1.0), "moving_paths")
-TIME, COUNT, WAVELENGTH = ("ns", (-INF, INF), "reweight"), ("", (0.0, INF), "reweight"), ("nm", (0.0, INF), "reweight")
+POSITION = Param("m", (-INF, INF), method="moving_paths")
+DIRECTION = Param("", (-1.0, 1.0), method="moving_paths")
+TIME = Param("ns", (-INF, INF), method="reweight")
+COUNT = Param("", (0.0, INF), method="reweight")
+WAVELENGTH = Param("nm", (0.0, INF), method="reweight")
 NORMAL_LO = np.nextafter(np.float32(-1.0), np.float32(0.0))  # jax.random.normal's lower bound
 sg = jax.lax.stop_gradient
 
@@ -37,10 +41,20 @@ class GradientNotAvailable(ValueError):  # noqa: N818 -- the documented error ca
 
 @dataclasses.dataclass(frozen=True)
 class Source:
-    """The base of every source; ``FIELDS``: {field: (unit, range, gradient method)}, ``MOVING``: those that move it."""
+    """The base of every source; ``FIELDS``: {field: lumen.Param}, ``MOVING``: those that move it.
+
+    ``prefix``: its keys' prefix; ``ORIGINS``: the fields that are the light's origins (the moving-source clearance);
+    ``check(params)``: checks run once before a simulation; ``emit(..., moving=)``: whether the moving-source method is
+    on.
+    """
 
     FIELDS: ClassVar[dict] = {}
     MOVING: ClassVar[tuple] = ()
+    ORIGINS: ClassVar[tuple] = ("position", "x", "start", "end")
+    prefix: ClassVar[str] = PREFIX
+
+    def check(self, params=None) -> None:
+        """Check the source before a simulation (nothing for lumen's own)."""
 
     @property
     def drawn_direction(self) -> bool:
@@ -65,15 +79,15 @@ class Source:
 
     def parameters(self, params=None):
         """Return ``params`` (a ``lumen.Params``, default empty) with this source's ``source/`` keys added."""
-        from lumen.params import ParamInfo, Params
+        from lumen.params import Params
 
         fs = [f for f in self.FIELDS if getattr(self, f) is not None]
-        spec = {PREFIX + f: ParamInfo(PREFIX + f, *self.FIELDS[f], self.drawn_direction or f not in self.MOVING)
+        spec = {PREFIX + f: self.FIELDS[f].info(PREFIX + f, available=self.drawn_direction or f not in self.MOVING)
                 for f in fs}  # fmt: skip
         base = Params({}, {}, {}) if params is None else params
         return base.merged({PREFIX + f: getattr(self, f) for f in fs}, spec, f"source {type(self).__name__}")
 
-    def emit(self, params, key, n: int, first_id=0, samples=None):
+    def emit(self, params, key, n: int, first_id=0, samples=None, *, moving=False):
         """Return the Emission of photons ``first_id .. first_id + n - 1`` of ``samples`` (default n).
 
         Their weights sum in expectation to the source's photons over the ``samples``. A tangent on a ``MOVING`` field
@@ -91,6 +105,32 @@ class Source:
     def draw(self, v, key, n, first_id, samples):
         """Return the Emission from the values ``v`` (each source's own photons)."""
         raise NotImplementedError
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class CallableSource(Source):
+    """A function ``(first_id, count) -> Emission`` (or an Emission batch, sliced) as a source.
+
+    No density for its photons: a derivative that moves them (x, d or lam) is refused; their weights may carry one.
+    """
+
+    fn: object
+
+    def emit(self, params, key, n: int, first_id=0, samples=None, *, moving=False):
+        """Return the function's rows ``first_id .. first_id + n - 1``, x, d and lam guarded."""
+        rows = self.fn(first_id, n)
+        g = _guard("a callable or array source (subclass lumen.sources.Source, with drawn_direction, to differentiate "
+                   "a position)")  # fmt: skip
+        return rows._replace(x=g(rows.x), d=g(rows.d), lam=g(rows.lam))
+
+    @classmethod
+    def of(cls, source) -> Source:
+        """Return ``source`` as a Source: itself, a callable wrapped, or an Emission batch sliced per chunk."""
+        if isinstance(source, Source):
+            return source
+        if callable(source):
+            return cls(source)
+        return cls(lambda first, count: jax.tree_util.tree_map(lambda a: a[first : first + count], source))
 
 
 _EMIT = jax.jit(lambda s, v, key, first_id, n, samples: s.draw(v, key, n, first_id, samples), static_argnums=(0, 4))

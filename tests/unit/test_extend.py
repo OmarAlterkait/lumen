@@ -119,6 +119,9 @@ def test_a_source_function_is_a_source_with_keys():
     np.testing.assert_allclose(tang(g), tang(want), rtol=1e-4, atol=1e-4)
     e2 = led.emit(None, jax.random.PRNGKey(1), 64, 64, 256)
     assert not np.array_equal(np.asarray(e.d), np.asarray(e2.d))  # each chunk its own photons
+    whole = led.emit(None, jax.random.PRNGKey(1), 256, 0, 256)
+    for a, b in zip(whole, e2, strict=True):  # photon i is the same whatever the chunk
+        assert (a is None and b is None) or np.array_equal(np.asarray(a)[64:128], np.asarray(b))
 
 
 def test_a_source_function_refuses_what_it_cannot_differentiate():
@@ -148,14 +151,13 @@ def test_a_source_function_refuses_what_it_cannot_differentiate():
     n = 8
     arr = sources.FromArrays(jnp.zeros((n, 3)), jnp.tile(jnp.asarray([0.0, 0.0, 1.0]), (n, 1)), jnp.zeros(n),
                              jnp.full(n, 400.0), jnp.ones(n), drawn=True)  # fmt: skip
+    assert api._moving(arr, None, ("source/x",))[0]
     with pytest.raises(sources.GradientNotAvailable, match="dlogp=jnp.zeros"):
-        api._moving(arr, None, ("source/x",))
+        arr.emit(None, jax.random.PRNGKey(0), n, moving=True)  # moved without its density's gradient
     with_g = sources.FromArrays(arr.x, arr.d, arr.t, arr.lam, arr.w, drawn=True, dlogp=jnp.zeros((n, 3)))
-    assert api._moving(with_g, None, ("source/x",))[0]
-    assert with_g.emit(None, jax.random.PRNGKey(0), n).dlogp.shape == (n, 3)
-    assert (
-        type(arr.emit(None, jax.random.PRNGKey(0), n)) is Emission
-    )  # built-ins: a plain Emission, the start unchanged
+    assert with_g.emit(None, jax.random.PRNGKey(0), n, moving=True).dlogp.shape == (n, 3)
+    e = arr.emit(None, jax.random.PRNGKey(0), n)
+    assert e.dlogp is None and len(e) == len(Emission._fields)  # built-ins: no dlogp, the chain start unchanged
     with pytest.raises(ValueError, match="density"):
         lumen.source(density="cone")
 
@@ -279,9 +281,9 @@ def test_a_detecting_model_and_the_refusals(lined):
     # under lumen:pmt every absorption entering is counted: eff 1, folded into the type as lumen's own sensors' is
     assert e.surface_type.name == "schlick_cathode{eff=1}" and e.params == {"R0": 0.04}
     assert "surfaces/CathodeSurface/R0" in det.params()
-    with pytest.raises(LibraryError, match="not lumen's own nor registered"):
+    with pytest.raises(LibraryError, match="not one this library reads"):
         lumen.load(lined, models={"surfaces/Liner": "mylab:nothing"})
-    with pytest.raises(LibraryError, match="not a medium model"):
+    with pytest.raises(LibraryError, match="as a medium"):
         lumen.load(lined, models={"materials/Water": "mylab:schlick"})
     with pytest.raises(ValueError, match="not materials"):
         lumen.load(lined, models={"materials/Nope": "mylab:water_hg"})
@@ -318,16 +320,19 @@ def test_a_lobe_is_checked_against_its_density():
         check_lobe(wrong, {"g": 0.9})
 
 
-def test_lumen_s_own_models_never_read_the_registry(lined, monkeypatch):
-    """A detector naming only lumen's own models builds without looking at the registry (the same parts as 0.1.1)."""
-    from lumen import plugins
+def test_lumen_s_own_models_are_registered_like_any_other(lined):
+    """One dispatch: lumen's own models are registry entries, read by name like a user's (and cannot be replaced)."""
+    from lumen import models
 
-    def refuse(name):
-        raise AssertionError(f"the registry was read for {name!r}")
-
-    monkeypatch.setattr(plugins.optics_models, "get", refuse)
+    assert {"geant4", "lumen:opaque", "lumen:same_as", "lumen:larsoft_lar"} <= set(models.names("medium"))
+    assert {"geant4", "lumen:larsoft_reflector", "lumen:wls_film"} <= set(models.names("surface"))
+    assert models.names("reader") == ["lumen:complex_index", "lumen:geant4"] and models.names("counting") == [
+        "lumen:counting"
+    ]
     det = lumen.load(lined)
-    assert det.pack() is not None and det.parts.library.surfaces["Liner"].surface_type.name == "specular_metal"
+    assert det.parts.library.surfaces["Liner"].surface_type.name == "specular_metal"
+    with pytest.raises(ValueError, match="lumen's own"):
+        lumen.surface_model("lumen:geant4")
 
 
 def test_with_responses_adds_keys_and_refuses_a_taken_one(lined):

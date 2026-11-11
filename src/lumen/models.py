@@ -42,13 +42,10 @@ from __future__ import annotations
 
 import dataclasses
 import itertools
-from collections.abc import Callable
 
 import numpy as np
 
-BUILTIN_MEDIA = ("geant4", "lumen:opaque", "lumen:same_as", "lumen:larsoft_lar")
-BUILTIN_SURFACES = ("geant4", "lumen:larsoft_reflector", "lumen:wls_film")
-KINDS = ("medium", "surface")
+SORTS = ("medium", "surface", "reader", "counting")  # a material's model, a surface's, a sensor group's readers
 MAX_RAND = 3  # uniforms per lobe (the step's layout)
 SUM_TOL = 1e-5  # |sum of outcome probabilities - 1|
 P_TOL = 1e-6  # a probability below -P_TOL or above 1 + P_TOL is refused
@@ -62,13 +59,18 @@ class ModelError(ValueError):
 
 @dataclasses.dataclass(frozen=True, eq=False)
 class OpticsModel:
-    """A registered model: its name, sort ("medium" or "surface"), function, declared parameters and ``detects``."""
+    """A registered model: its name, its functions by sort (``SORTS``), declared parameters, ``detects``.
+
+    lumen's own models are registered like any other (``register_builtins``): ``geant4`` reads a material and a
+    surface, ``lumen:geant4`` and ``lumen:complex_index`` read a sensor group's detecting surfaces. A user model has one
+    sort, "medium" or "surface", and its function is wrapped by ``medium_entry`` / ``surface_entry``.
+    """
 
     name: str
-    kind: str
-    fn: Callable
-    declared: tuple  # ((name, Param), ...)
+    fns: dict  # {sort: function}
+    declared: tuple = ()  # ((name, Param), ...)
     detects: bool = False
+    builtin: bool = False
 
     def values(self, rec) -> dict:
         """Return {declared name: value} for a record: its property of that name when present, else the default."""
@@ -80,15 +82,53 @@ class OpticsModel:
     def keys(self, rec) -> dict:
         """Return {declared name: (key, Source column)} of a record ("constant" when the file has it, else
         "default")."""  # noqa: D205, D209
-        section = "materials" if self.kind == "medium" else "surfaces"
+        section = "materials" if "medium" in self.fns else "surfaces"
         return {k: (f"{section}/{rec.name}/{k}", "constant" if k in rec.properties else "default")
                 for k, _ in self.declared}  # fmt: skip
 
+    def medium(self, rec):
+        """Return (library name, MediumEntry, sources by param path) of a material, or (target material, None, None)."""
+        if self.builtin:
+            return self.fns["medium"](rec)
+        name = rec.optics.settings.get("medium", rec.name)
+        return (name, *medium_entry(self, rec, name))
+
+    def surface(self, rec):
+        """Return the SurfaceEntry of a surface record."""
+        if self.builtin:
+            return self.fns["surface"](rec)
+        if self.detects:
+            raise ModelError(f"surface model {self.name!r} detects: bind it to a sensor's border surface")
+        return surface_entry(self, rec, _geant4_or_none(_rules().surface, rec))
+
+    def sensor(self, rec, lam_domain, eff=None):
+        """Return the SensorEntry of a detecting surface: a reader's, or a detecting model's."""
+        if "reader" in self.fns:
+            return _rules().sensor(rec, lam_domain, self.fns["reader"], eff=eff)
+        base = _geant4_or_none(_rules().sensor, rec, lam_domain)
+        return surface_entry(self, rec, base, sensor=True, eff=eff)
+
+
+def _rules():
+    from lumen.rules import optics
+
+    return optics
+
+
+def _geant4_or_none(read, rec, *args):
+    """Return Geant4's reading of a record (a model's base), or None where Geant4 refuses it."""
+    try:
+        return read(rec, *args)
+    except _rules().OpticsRefused:
+        return None
+
 
 def _check_declaration(name, params):
+    from lumen import plugins
     from lumen.params import Param
 
-    if ":" not in name or name in BUILTIN_MEDIA + BUILTIN_SURFACES:
+    old = plugins.optics_models._entries.get(name)
+    if ":" not in name or (isinstance(old, OpticsModel) and old.builtin):
         raise ValueError(f"optics model {name!r}: a 'distribution:name', not one of lumen's own")
     for k, p in (params or {}).items():
         if not isinstance(p, Param) or p.moves or p.shape != () or p.default is None:
@@ -97,14 +137,15 @@ def _check_declaration(name, params):
             raise ValueError(f"optics model {name!r}: parameter name {k!r} (no '/')")
 
 
-def _register(name, kind, params, fn, detects=False):
-    from lumen import plugins
-
-    m = OpticsModel(name, kind, fn, tuple(sorted((params or {}).items())), bool(detects))
+def _register(name, sort, params, fn, detects=False):
     from importlib import metadata
 
+    from lumen import plugins
+
+    m = OpticsModel(name, {sort: fn}, tuple(sorted((params or {}).items())), bool(detects))
     old = plugins.optics_models._entries.get(name)
-    if isinstance(old, metadata.EntryPoint) or (isinstance(old, OpticsModel) and _same_code(old.fn, fn)):
+    if isinstance(old, metadata.EntryPoint) or (isinstance(old, OpticsModel) and not old.builtin
+                                                 and _same_code(old.fns.get(sort), fn)):  # fmt: skip
         # its package's entry point being loaded (the module registers it), or the same definition run again
         plugins.optics_models._entries[name] = m
         _CHECKED.difference_update({k for k in _CHECKED if k[0] == name})
@@ -130,45 +171,74 @@ def surface_model(name: str, params: dict | None = None, detects: bool = False):
     return lambda fn: _register(name, "surface", params, fn, detects)
 
 
-def lookup(name: str, kind: str, what: str) -> OpticsModel:
-    """Return the registered model ``name`` of ``kind`` (``what`` names the record in errors)."""
+def find(name: str, sort: str):
+    """Return the model ``name`` if it has ``sort`` (lumen's own included), else None (unknown, or another sort)."""
     from lumen import plugins
-    from lumen.build.library import LibraryError
 
-    try:
-        m = plugins.optics_models.get(name)
-    except plugins.NotRegistered as e:
-        raise LibraryError(f"{what}: optics model {name!r} is not lumen's own nor registered ({e})") from None
-    if not isinstance(m, OpticsModel) or m.kind != kind:
-        raise LibraryError(f"{what}: optics model {name!r} is not a {kind} model")
-    return m
-
-
-def registered(name: str, kind: str):
-    """Return the registered model ``name`` of ``kind``, or None (lumen's own names, an unknown name)."""
-    from lumen import plugins
-    from lumen.rules.optics import SENSOR_SURFACES
-
-    if name in (BUILTIN_MEDIA if kind == "medium" else BUILTIN_SURFACES + tuple(SENSOR_SURFACES) + ("lumen:counting",)):
-        return None
     try:
         m = plugins.optics_models.get(name)
     except plugins.NotRegistered:
         return None
-    return m if isinstance(m, OpticsModel) and m.kind == kind else None
+    return m if isinstance(m, OpticsModel) and sort in m.fns else None
+
+
+def get(name: str, sort: str, what: str) -> OpticsModel:
+    """Return the model ``name`` of ``sort``; ``what`` names the record in the error (LibraryError) otherwise."""
+    from lumen.build.library import LibraryError
+
+    m = find(name, sort)
+    if m is None:
+        raise LibraryError(f"{what}: optics model {name!r} is not one this library reads as a {sort} (registered: "
+                           f"{names(sort)})")  # fmt: skip
+    return m
+
+
+def names(sort: str) -> list[str]:
+    """Return the registered names of ``sort``."""
+    from lumen import plugins
+
+    return [n for n in plugins.optics_models.names() if find(n, sort) is not None]
+
+
+def register_builtins() -> None:
+    """Register lumen's own models (each name listed here once): the build reads every model through the registry."""
+    from lumen import plugins
+
+    def lib(fn):  # a library function, imported when first read (the library imports this module)
+        def call(rec):
+            from lumen.build import library
+
+            return getattr(library, fn)(rec)
+
+        return call
+
+    rules = _rules()
+    builtins = {
+        "geant4": dict(medium=lib("geant4_medium"), surface=rules.surface),
+        "lumen:opaque": dict(medium=lib("opaque_medium")),
+        "lumen:same_as": dict(medium=lib("same_as_medium")),
+        "lumen:larsoft_lar": dict(medium=lib("larsoft_lar_medium")),
+        "lumen:larsoft_reflector": dict(surface=lib("larsoft_reflector_surface")),
+        "lumen:wls_film": dict(surface=lib("film_record")),
+        "lumen:geant4": dict(reader=rules.geant4_sensor),
+        "lumen:complex_index": dict(reader=rules.complex_index_sensor),
+        "lumen:counting": dict(counting=None),
+    }
+    for name, fns in builtins.items():
+        if not isinstance(plugins.optics_models._entries.get(name), OpticsModel):
+            plugins.optics_models.register(name, OpticsModel(name, fns, builtin=True))
 
 
 # --------------------------------------------------------------------------------------------- building an entry
-def medium_entry(rec, name):
-    """Return (MediumEntry, sources {param path: Source}) of a material under its registered medium model."""
+def medium_entry(m, rec, name):
+    """Return (MediumEntry, sources {param path: Source}) of a material under the user medium model ``m``."""
     from lumen.build import library as lib
     from lumen.build import surfaces as regions
     from lumen.media.spec import MediumSpec
     from lumen.rules import optics as rules
 
-    m = lookup(rec.optics.name, "medium", f"material {rec.name!r}")
     base = rules.medium(rec, name)
-    spec = m.fn(rec, MediumSpec(base.medium, dict(base.params), m.values(rec)))
+    spec = m.fns["medium"](rec, MediumSpec(base.medium, dict(base.params), m.values(rec)))
     if not isinstance(spec, MediumSpec):
         raise ModelError(f"medium model {m.name!r}: return a lumen.media.MediumSpec, not {type(spec).__name__}")
     _check_medium(m, spec)
@@ -179,14 +249,13 @@ def medium_entry(rec, name):
     return regions.MediumEntry(spec.medium, spec.params), sources
 
 
-def surface_entry(rec, base, *, sensor=False, eff=None):
-    """Return the SurfaceEntry (or SensorEntry) of a surface under its registered model; ``base``: Geant4's reading."""
+def surface_entry(m, rec, base, *, sensor=False, eff=None):
+    """Return the SurfaceEntry (or SensorEntry) of a surface under the user model ``m``; ``base``: Geant4's reading."""
     from lumen.build import surfaces as regions
     from lumen.surfaces.outcomes import DETECT
     from lumen.surfaces.types import SurfaceType
 
-    m = lookup(rec.optics.name, "surface", f"surface {rec.name!r}")
-    stype = m.fn(rec, base)
+    stype = m.fns["surface"](rec, base)
     if not isinstance(stype, SurfaceType):
         raise ModelError(f"surface model {m.name!r}: return a lumen.surfaces.SurfaceType, not {type(stype).__name__}")
     if m.detects != (DETECT in stype.outcomes) or (sensor and not m.detects):
@@ -319,3 +388,6 @@ def check_lobe(lobe, p, what="lobe"):
     chi2 = float(np.sum((count[ok] - expect[ok]) ** 2 / expect[ok]) / max(ok.sum() - 1, 1))
     if not stats.chi2_passes(chi2, max(int(ok.sum()) - 1, 1)):
         raise ModelError(f"{what}: its sampler does not draw its density (chi2/ndf {chi2:.2f})")
+
+
+register_builtins()

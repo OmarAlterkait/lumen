@@ -20,13 +20,14 @@ import jax
 import jax.numpy as jnp
 
 from lumen._core.safe import safe_div
+from lumen.params import Param
 from lumen.sources import scintillation as sc
 from lumen.sources._base import F32, INF, POSITION, TIME, WAVELENGTH, photon_uniforms
 from lumen.sources.cherenkov import UNIFORMS, CherenkovSegment, cone
 from lumen.transport.state import Emission
 
 sg = jax.lax.stop_gradient
-SPEED = ("", (0.0, 1.0), "moving_paths")
+SPEED = Param("", (0.0, 1.0), method="moving_paths")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -47,8 +48,9 @@ class Geant4Steps(sc._Scintillation):
     lam_max: Any = 700.0
     light: str = dataclasses.field(default="cherenkov", kw_only=True)
     FIELDS = {"start": POSITION, "end": POSITION, "t_start": TIME, "t_end": TIME, "beta_start": SPEED,
-              "beta_end": SPEED, "charge": CherenkovSegment.FIELDS["charge"], "edep": ("eV", *sc.ENERGY[1:]),
-              "step_length": ("m", (0.0, INF), "reweight"),  # the light count only
+              "beta_end": SPEED, "charge": CherenkovSegment.FIELDS["charge"],
+              "edep": dataclasses.replace(sc.ENERGY, unit="eV"),
+              "step_length": Param("m", (0.0, INF), method="reweight"),  # the light count only
               "birks": sc.BIRKS, "lam_min": WAVELENGTH, "lam_max": WAVELENGTH}  # fmt: skip
     MOVING = ("start", "end", "beta_start", "beta_end")
 

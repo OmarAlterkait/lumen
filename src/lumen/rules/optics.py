@@ -2,7 +2,7 @@
 
     entry = medium(df.materials["LAr"])                 # a MediumEntry (opaque without RINDEX)
     entry = surface(df.surfaces["Surface_Steel_1"])     # a SurfaceEntry, Geant4 11 semantics, fail closed
-    entry = sensor(df.surfaces["GlassCathode"], lam)    # a SensorEntry: how a detecting surface reads (SENSOR_SURFACES)
+    entry = sensor(df.surfaces["GlassCathode"], lam)    # a SensorEntry: how a detecting surface reads
 
 The records are ``lumen.format.schema`` Material and Surface records: energies in eV, lengths in m (tables and
 constants), every other value as Geant4 holds it (times in ns, yields per MeV). Geant4 semantics are those of
@@ -45,9 +45,10 @@ a complex index, SURFACEROUGHNESS, a coated surface's keys, a nonzero EFFICIENCY
 surface is a sensor: ``sensor``), TRANSMITTANCE on a metal, a unified sigma_alpha outside [SIGMA_MIN, SIGMA_MAX] and
 a GLISUR polish below 0 or with 1 - polish below GLISUR_R_MIN.
 
-Detecting surfaces (``sensor``): how a sensor's optical surface behaves during tracking, read by one of
-``SENSOR_SURFACES`` (``reader(surface, lam_domain) -> SensorEntry``), named by the sensor group's model (or a callable
-of that form). Not the sensor model (``lumen.plugins.sensor_models``): that is what happens after tracking.
+Detecting surfaces (``sensor``): how a sensor's optical surface behaves during tracking, read by a reader
+(``reader(surface, lam_domain) -> SensorEntry``, registered in ``lumen.plugins.optics_models``), named by the sensor
+group's surface reader (or a callable of that form). Not the sensor model (``lumen.plugins.sensor_models``): that is
+what happens after tracking.
 
     lumen:geant4 (the default)
         the surface as stock Geant4 (G4OpBoundaryProcess, 10.7 / 11) reads it. dielectric_metal: REFLECTIVITY R
@@ -599,19 +600,21 @@ def complex_index_sensor(s: schema.Surface, lam_domain) -> SensorEntry:
                                              "f_glossy": 0.0, "sigma_alpha": 0.0})  # fmt: skip
 
 
-SENSOR_SURFACES = {"lumen:geant4": geant4_sensor, "lumen:complex_index": complex_index_sensor}
-DEFAULT_SENSOR_SURFACE = "lumen:geant4"
+DEFAULT_SENSOR_SURFACE = "lumen:geant4"  # the readers are registered optics models (lumen.models)
 
 
 def sensor_surface(model=None):
     """Return the reader of a detecting surface named ``model`` (None: the default; a bare name is lumen's own)."""
     if callable(model):
         return model
+    from lumen import models
+
     name = DEFAULT_SENSOR_SURFACE if model is None else str(model)
     for candidate in (name,) if ":" in name else (name, f"lumen:{name}"):
-        if candidate in SENSOR_SURFACES:
-            return SENSOR_SURFACES[candidate]
-    raise OpticsRefused(f"detecting surface reader {name!r}: not one of {sorted(SENSOR_SURFACES)}")
+        m = models.find(candidate, "reader")
+        if m is not None:
+            return m.fns["reader"]
+    raise OpticsRefused(f"detecting surface reader {name!r}: not one of {models.names('reader')}")
 
 
 def sensor(s: schema.Surface, lam_domain=None, model=None, eff: float | None = None) -> SensorEntry:

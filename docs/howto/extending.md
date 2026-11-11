@@ -31,8 +31,8 @@ needed for that.
 
 A source is one function `f(v, key, n)` returning `lumen.Photons`: `n` photons whose weights sum, in expectation, to
 the photons the source stands for. `v` holds its declared parameters (traced: their derivatives flow), `key` is a JAX
-key, `n` a static count. `simulate` runs it in chunks, a call per chunk with its own key, and scales each chunk's
-weights by its share of the photons. Its keys are `source/<name>/<field>`; `src.parameters(det.params())` adds them at
+key, `n` a static count. `simulate` calls it once with `n` = `samples` and runs the photons in
+chunks, so photon i is the same whatever the chunk size. Its keys are `source/<name>/<field>`; `src.parameters(det.params())` adds them at
 their defaults.
 
 ```python

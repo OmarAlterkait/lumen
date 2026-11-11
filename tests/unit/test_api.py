@@ -169,8 +169,9 @@ def test_simulate_guards_callable_rows_and_rescales_small_weights():
         return Emission(x, d, t, lam, jnp.full(n, w), pol, jnp.zeros(n, bool))
 
     with pytest.raises(sources.GradientNotAvailable, match="subclass lumen.sources.Source"):
-        jax.jvp(lambda z: api._guard_rows(rows(z)).x.sum(), (1.0,), (1.0,))
-    _, dw = jax.jvp(lambda w: api._guard_rows(rows(0.5, w)).w.sum(), (1.0,), (1.0,))
+        jax.jvp(lambda z: sources.CallableSource.of(lambda f, c: rows(z)).emit(None, None, 4).x.sum(), (1.0,), (1.0,))
+    _, dw = jax.jvp(lambda w: sources.CallableSource.of(lambda f, c: rows(0.5, w)).emit(None, None, 4).w.sum(), (1.0,),
+                    (1.0,))  # fmt: skip
     assert float(dw) == 4.0
     small, unit = api._unit_weights(rows(0.0, 1.0 / 65536))
     assert float(small.w.max()) == 1.0 and float(unit) == 1.0 / 65536

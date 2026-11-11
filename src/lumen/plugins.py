@@ -5,7 +5,8 @@ in the package; other packages add theirs through the entry-point groups ``lumen
 ``lumen.sensor_models`` and ``lumen.optics_models``. An unknown name fails closed, naming what is registered.
 
 ``sensor_models`` holds the after-tracking sensor models (detection, electronics, hit coordinates); how a detecting
-surface behaves during tracking is optics (``lumen.rules.optics.SENSOR_SURFACES``).
+surface behaves during tracking is optics: ``optics_models`` holds the medium and surface models and the detecting
+surfaces' readers, lumen's own (``lumen.models.register_builtins``) and any registered.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from dataclasses import dataclass, field
 from importlib import import_module, metadata
 
 GROUPS = ("lumen.detectors", "lumen.sensor_models", "lumen.optics_models")
-BUILTINS = {"lumen.sensor_models": "lumen.sensors"}  # the module that registers lumen's own entries of a group
+BUILTINS = {"lumen.sensor_models": "lumen.sensors", "lumen.optics_models": "lumen.models"}  # registers lumen's own
 
 
 class NotRegistered(KeyError):  # noqa: N818 (the name of the documented error catalogue)

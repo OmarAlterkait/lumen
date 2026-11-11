@@ -445,6 +445,8 @@ def _probe_support(stype, consts):
     """Return the outcomes of ``stype`` with ``consts`` fixed that are not identically zero (terminal ones kept).
 
     Probed at every other parameter 0.5 and a generic incidence; a type whose probe needs more keeps its support.
+    Known issue (structure review, to fix separately): a Geant4 cut chain at 0.5, 0.5, 0.5 gives zero to its third and
+    fourth shares, so fixed(DIELECTRIC_METAL, {"eff": 0}) drops BACKSCATTER and DIFFUSE; no shipped detector folds so.
     """
     try:
         p = {k: 0.5 for k in stype.params if k not in consts} | {k: jnp.asarray(v) for k, v in consts.items()}

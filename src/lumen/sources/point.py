@@ -14,6 +14,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
+from lumen.params import Param
 from lumen.sources._base import COUNT, DIRECTION, F32, POSITION, TIME, Source, gaussian, proposal, rows, uniforms
 from lumen.sources._base import wavelength as draw_wavelength
 from lumen.transport.state import Emission
@@ -38,8 +39,8 @@ class Point(Source):
     direction: Any = None
     time: Any = 0.0
     structure: Any = dataclasses.field(init=False, default=None)  # (the spectrum's proposal, a beam)
-    FIELDS = {"position": POSITION, "direction": DIRECTION, "n_photons": COUNT, "lam": ("nm", (0.0, float("inf")),
-              "moving_paths+reweight"), "spectrum": COUNT, "time": TIME}  # fmt: skip
+    FIELDS = {"position": POSITION, "direction": DIRECTION, "n_photons": COUNT, "lam": Param("nm", (0.0, float("inf")),
+              method="moving_paths+reweight"), "spectrum": COUNT, "time": TIME}  # fmt: skip
     MOVING = ("position", "direction", "lam")
 
     def __post_init__(self):  # noqa: D105

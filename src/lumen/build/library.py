@@ -122,25 +122,36 @@ def _opaque(name):
 
 def _material_medium(rec: schema.Material):
     """Return (library name, MediumEntry, sources by param path) of one material, or (target material, None, None)."""
-    o, m = rec.optics, rec.name
-    if o.name == "lumen:same_as":
-        return o.settings["material"], None, None
-    if o.name == "lumen:opaque":
-        return o.settings.get("medium", m), _opaque(o.settings.get("medium", m)), {}
-    if o.name == "geant4":
-        name = o.settings.get("medium", m)
-        return name, rules.medium(rec, name), _medium_sources(rec)
-    if o.name == "lumen:larsoft_lar":
-        from lumen.detectors import larsoft_optics
+    from lumen import models
 
-        name = o.settings.get("medium", LAR_MEDIUM)
-        med, p = larsoft_optics.lar_medium_from(rec, name, o.settings.get("scatter", True),
-                                                o.settings.get("absorb", True))  # fmt: skip
-        return name, regions.MediumEntry(med, p), _medium_sources(rec)
-    from lumen import models  # lumen's own models above; any other name: a registered medium model
+    return models.get(rec.optics.name, "medium", f"material {rec.name!r}").medium(rec)
 
-    name = o.settings.get("medium", m)
-    return (name, *models.medium_entry(rec, name))
+
+def geant4_medium(rec):
+    """``geant4``: Geant4's reading (``lumen.rules.optics.medium``), named ``settings["medium"]``."""
+    name = rec.optics.settings.get("medium", rec.name)
+    return name, rules.medium(rec, name), _medium_sources(rec)
+
+
+def opaque_medium(rec):
+    """``lumen:opaque``: an opaque medium named ``settings["medium"]`` (several materials may share one)."""
+    name = rec.optics.settings.get("medium", rec.name)
+    return name, _opaque(name), {}
+
+
+def same_as_medium(rec):
+    """``lumen:same_as``: bound to the medium of material ``settings["material"]``."""
+    return rec.optics.settings["material"], None, None
+
+
+def larsoft_lar_medium(rec):
+    """``lumen:larsoft_lar``: LArSoft's LAr (``lumen.detectors.larsoft_optics``), named ``settings["medium"]``."""
+    from lumen.detectors import larsoft_optics
+
+    o = rec.optics
+    name = o.settings.get("medium", LAR_MEDIUM)
+    med, p = larsoft_optics.lar_medium_from(rec, name, o.settings.get("scatter", True), o.settings.get("absorb", True))
+    return name, regions.MediumEntry(med, p), _medium_sources(rec)
 
 
 def _add_medium(media, name, entry, m):
@@ -174,23 +185,21 @@ def _media(df, tree):
 # ---------------------------------------------------------------------------------------------------- the surfaces
 def surface_entry(s: schema.Surface) -> regions.SurfaceEntry:
     """Return the library surface of a surface record under its optics model (not a WLS film: see ``film_entry``)."""
-    if s.optics.name == "geant4":
-        return rules.surface(s)
-    if s.optics.name == "lumen:larsoft_reflector":
-        from lumen.detectors import larsoft_optics
+    from lumen import models
 
-        return regions.SurfaceEntry(*larsoft_optics.reflector_from(s.properties))
-    from lumen import models  # lumen's own models above; any other name: a registered surface model
-
-    return models.surface_entry(s, _geant4_or_none(rules.surface, s))
+    return models.get(s.optics.name, "surface", f"surface {s.name!r}").surface(s)
 
 
-def _geant4_or_none(read, s, *args, **kw):
-    """Return Geant4's reading of a record (a registered model's base), or None where Geant4 refuses it."""
-    try:
-        return read(s, *args, **kw)
-    except rules.OpticsRefused:
-        return None
+def larsoft_reflector_surface(s):
+    """``lumen:larsoft_reflector``: LArSoft's reflector from REFLECTIVITY and DIFFUSE_FRACTION."""
+    from lumen.detectors import larsoft_optics
+
+    return regions.SurfaceEntry(*larsoft_optics.reflector_from(s.properties))
+
+
+def film_record(s):
+    """``lumen:wls_film``: read with its film split (``film_entry``), never as a surface of its own."""
+    raise LibraryError(f"surface {s.name!r}: optics model 'lumen:wls_film' is read on a skin, with its film split")
 
 
 def film_entry(df, s: schema.Surface, axis, types) -> regions.SurfaceEntry:
@@ -238,60 +247,43 @@ def _surfaces(df, tree, films):
 
 
 # ----------------------------------------------------------------------------------------------------- the sensors
-BORDER_SURFACES = ("lumen:geant4",)  # the surface readers of a border_into group (or a registered detecting model)
-
-
 def _border_groups(df, tree, groups):
+    from lumen import models
+
     border = [g for g in groups if g.rule == "border_into"]
     if len(border) > 1:
         raise LibraryError(f"sensor groups {[g.name for g in border]}: one border_into group is supported")
     if not border:
         return set(), BorderSensor(), None
     g = border[0]
-    if g.surface not in BORDER_SURFACES and not _detecting(g.surface):
-        raise LibraryError(f"sensor group {g.name!r}: border_into reads its surfaces with one of {BORDER_SURFACES}, "
-                           f"not {g.surface!r}")  # fmt: skip
+    if models.find(g.surface, "reader") is None:
+        raise LibraryError(f"sensor group {g.name!r}: border_into reads its surfaces with one of "
+                           f"{models.names('reader')}, not {g.surface!r}")  # fmt: skip
     pvs = {p for p in tree.order if g.selects(tree.by_name[p].lv)}
     eff_in = 1.0 if g.model == "lumen:pmt" else g.settings.get("efficiency_on_entry")
-    how = BorderSensor(g.surface if _detecting(g.surface) else None, eff_in, g.settings.get("name_prefix", g.name))
+    how = BorderSensor(g.surface, eff_in, g.settings.get("name_prefix", g.name))
     return pvs, how, g
 
 
-def _detecting(name):
-    from lumen import models
-
-    m = models.registered(name, "surface")
-    return m is not None and m.detects
-
-
 def _sensor_entry(rec, lam_domain, how, eff=None):
-    """Return a border sensor's SensorEntry: the record's registered detecting model, the group's, or a reader."""
+    """Return a border sensor's SensorEntry: the record's detecting model when it names one, else the group's reader."""
     from lumen import models
 
-    if models.registered(rec.optics.name, "surface") is not None:
-        base = _geant4_or_none(rules.sensor, rec, lam_domain)
-        return models.surface_entry(rec, base, sensor=True, eff=eff)
-    if how.surface is not None and _detecting(how.surface):
-        base = _geant4_or_none(rules.sensor, rec, lam_domain)
-        rec2 = schema_replace_optics(rec, how.surface)
-        return models.surface_entry(rec2, base, sensor=True, eff=eff)
-    return rules.sensor(rec, lam_domain, how.surface, eff=eff)
-
-
-def schema_replace_optics(rec, name):
-    """Return a record read by optics model ``name`` (its settings kept)."""
-    import dataclasses
-
-    return dataclasses.replace(rec, optics=dataclasses.replace(rec.optics, name=name))
+    m = models.find(rec.optics.name, "surface")
+    if m is None or not m.detects:
+        m = models.get(how.surface or rules.DEFAULT_SENSOR_SURFACE, "reader", f"surface {rec.name!r}")
+    return m.sensor(rec, lam_domain, eff)
 
 
 def _counting(tree, groups):
+    from lumen import models
+
     sensors, sbind, sources = {}, [], {}
     lvs = sorted(set(tree.lv_material))
     for g in groups:
         if g.rule != "any_entry":
             continue
-        if g.surface != "lumen:counting":
+        if models.find(g.surface, "counting") is None:
             raise LibraryError(f"sensor group {g.name!r}: any_entry counts with the surface reader 'lumen:counting', "
                                f"not {g.surface!r}")  # fmt: skip
         if g.model == "lumen:pmt":  # every entry counted; the model applies its efficiency after tracking
@@ -407,20 +399,14 @@ VALUE_PARAMS = ("polish", "sigma_alpha")  # the opticalsurface value
 INDEX_KEYS = {"nr": ("REALRINDEX", "RINDEX"), "nk": ("IMAGINARYRINDEX", "KINDEX")}
 
 
-def _registered_surface(rec):
-    from lumen import models
-
-    return models.registered(rec.optics.name, "surface") is not None
-
-
 def _surface_param(rec: schema.Surface, param: str, value):
     s, pr = f"surfaces/{rec.name}", rec.properties
-    if _registered_surface(rec):
-        from lumen import models
+    from lumen import models
 
-        keys = models.registered(rec.optics.name, "surface").keys(rec)
-        if param in keys:
-            return {(): Source(*keys[param], f"declared by {rec.optics.name}")}
+    m = models.find(rec.optics.name, "surface")
+    keys = m.keys(rec) if m is not None else {}
+    if param in keys:
+        return {(): Source(*keys[param], f"declared by {rec.optics.name}")}
     if rec.optics.name == "lumen:larsoft_reflector" and param in ("f_glossy", "sigma_alpha"):
         # larsim OpBoundaryProcessSimple: specular about the global normal or Lambertian, no lobe and no facets
         return {(): Source(None, "fixed", f"never read by LArSoft's OpBoundaryProcessSimple ({param})")}
@@ -643,6 +629,6 @@ def border_library(df, tree, sensor_pvs, lam_domain=None, how: BorderSensor | No
             borders[(pre, post)] = k
         else:
             if s not in surfaces:
-                surfaces[s] = surface_entry(rec) if _registered_surface(rec) else rules.surface(rec)
+                surfaces[s] = surface_entry(rec)
             borders[(pre, post)] = s
     return sensors, surfaces, borders, tuple(sbind)

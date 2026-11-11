@@ -8,7 +8,15 @@ Weights sum in expectation to the source's photons; fields are traced parameters
 A source of your own is one function, ``@lumen.source`` (``lumen.sources.function``).
 """
 
-from lumen.sources._base import PREFIX, GradientNotAvailable, Source, gaussian, photon_uniforms, uniforms
+from lumen.sources._base import (
+    PREFIX,
+    CallableSource,
+    GradientNotAvailable,
+    Source,
+    gaussian,
+    photon_uniforms,
+    uniforms,
+)
 from lumen.sources.arrays import FromArrays
 from lumen.sources.cherenkov import CherenkovSegment
 from lumen.sources.function import (
@@ -27,7 +35,8 @@ from lumen.sources.scintillation import ScintillationPoint, ScintillationSegment
 from lumen.sources.steps import Geant4Steps
 
 __all__ = [
-    "PREFIX", "CherenkovSegment", "FromArrays", "FunctionSource", "Geant4Steps", "GradientNotAvailable", "Photons",
-    "Point", "ScintillationPoint", "ScintillationSegment", "Source", "SourceError", "concat", "cone_about", "gaussian",
-    "gaussian_spot", "grad_logpdf", "photon_uniforms", "reweight", "source", "uniforms",
+    "PREFIX", "CallableSource", "CherenkovSegment", "FromArrays", "FunctionSource", "Geant4Steps",
+    "GradientNotAvailable", "Photons", "Point", "ScintillationPoint", "ScintillationSegment", "Source", "SourceError",
+    "concat", "cone_about", "gaussian", "gaussian_spot", "grad_logpdf", "photon_uniforms", "reweight", "source",
+    "uniforms",
 ]  # fmt: skip

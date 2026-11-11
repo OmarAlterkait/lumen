@@ -59,6 +59,7 @@ class Param:
     shape: tuple = ()
     default: object = None
     moves: bool = False
+    method: str | None = None  # the gradient method, when not the one ``moves`` implies (lumen's own sources)
 
     def __post_init__(self):
         """Check the declaration; store the range, shape and default as hashable tuples of floats."""
@@ -81,11 +82,11 @@ class Param:
             return None
         return self.default if not self.shape else np.asarray(self.default, np.float32).reshape(self.shape)
 
-    def info(self, key: str, method: str | None = None, note: str = "") -> ParamInfo:
-        """Return the ParamInfo of this declaration under ``key`` (default method: moving_paths if it moves, else
-        reweight)."""  # noqa: D205, D209
-        method = method or ("moving_paths" if self.moves else "reweight")
-        return ParamInfo(key, self.unit, self.range, method, True, False, note)
+    def info(self, key: str, method: str | None = None, note: str = "", available: bool = True) -> ParamInfo:
+        """Return the ParamInfo of this declaration under ``key`` (the method: ``method``, else the declared one, else
+        moving_paths if it moves, else reweight). The one constructor of a declared key's ParamInfo."""  # noqa: D205, D209
+        method = method or self.method or ("moving_paths" if self.moves else "reweight")
+        return ParamInfo(key, self.unit, self.range, method, available, False, note)
 
 
 def declared(prefix: str, params: Mapping, method: str | None = None, note: str = "") -> tuple[dict, dict]:
