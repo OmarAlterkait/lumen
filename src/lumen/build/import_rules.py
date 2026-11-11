@@ -8,7 +8,7 @@ Each choice is recorded with ``origin="import"`` and a note.
   smallest length the navigator resolves) at every knot is bound opaque: Geant4 refracts a photon in and absorbs it
   within that length, and lumen's navigator does not track inside a mesh (the facet rule). Its surfaces still apply.
   Elsewhere such a medium is tracked as Geant4 tracks it (the photon refracts in and is absorbed on its first step).
-- **One-sided WLS films** (docs/dev/design.md section 7). A box of a WLS material (WLSABSLENGTH) thinner than the band
+- **One-sided WLS films** (docs/dev/decisions.md, 9). A box of a WLS material (WLSABSLENGTH) thinner than the band
   at its first placement, with no surface of its own, is a film on the face it touches: per placement, its sibling boxes
   in its mother (turned by signed permutations, as is the film) are searched for a contact; the contact set must be
   exactly one complete flat face of one backing, else the conversion is refused. Every placement of the backing's volume

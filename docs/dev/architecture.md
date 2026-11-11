@@ -1,10 +1,12 @@
-# lumen design
+# lumen architecture
 
-How lumen is built and why, for people changing it. The words users read are in `docs/explanation/glossary.md`;
-the developer words and the terms they replace are in `docs/dev/vocabulary.md`. Where this file and the code disagree,
-the code is wrong or this file is stale: fix one of them in the same change.
+How lumen is built, for people changing it. Why each choice was made is in `decisions.md`; the coding rules are in
+`style.md`; what is not built yet is in `roadmap.md`. The words users read are in `docs/reference/vocabulary.md`; the
+developer words and the terms they replace are in `vocabulary.md`. Cite a section of this file by its name (for
+example "architecture.md, Gradients"), never by a number. Where this file and the code disagree, the code is wrong or
+this file is stale: fix one of them in the same change.
 
-## 1. Scope
+## Scope
 
 lumen is a differentiable optical-photon simulation in JAX for neutrino detectors: water Cherenkov (SK, WCTE, ANNIE)
 and LArTPC (SBND, MicroBooNE) detectors, and others through detector packages. It converts a detector from GDML with
@@ -14,12 +16,12 @@ charges, times and waveforms, and gives derivatives with respect to every parame
 It does three jobs:
 - convert a physicist's GDML and simulate per-sensor charge, time and PMT waveforms;
 - give correct derivatives for every calibration parameter, in forward and reverse mode;
-- reproduce its validation checks (§14) and generate their report.
+- reproduce its validation checks (Validation and tests) and generate their report.
 
 In 0.1:
 - one Geant4-style navigator, with Geant4's overlap, facet and stuck rules;
 - the detector file (schema `lumen-detector/1.1`), GDML import, and GDML export (frozen as built);
-- Geant4's surface rule (border, then skin, then material default) over the legacy Geant4 surface types (§10);
+- Geant4's surface rule (border, then skin, then material default) over the legacy Geant4 surface types (Surfaces);
 - bulk absorption, Rayleigh, WLS and Mie (G4OpMieHG);
 - sources: point, Cherenkov segment, scintillation, Geant4 step dump, external photon list;
 - everything except geometry a traced parameter, with a declared gradient method per parameter and `wrt=`;
@@ -31,9 +33,9 @@ In 0.1:
 - tallymap as the photon-loop engine: CUDA on a GPU, its plain-JAX CPU backend elsewhere;
 - three registries; plug-in protocols named but provisional.
 
-Not in 0.1: §16.
+Not built yet: `roadmap.md`.
 
-## 2. Principles
+## Principles
 
 | # | Principle |
 |---|---|
@@ -53,7 +55,7 @@ Units are **m, ns, nm, eV** everywhere. The API takes plain numbers in these uni
 file field names. In transport, `t` is a time (ns) and a distance along a ray is `dist` or `s` (m); the navigator's
 ray parameter is `t` (m) inside `geometry/` only.
 
-## 3. Words
+## Words
 
 `docs/dev/vocabulary.md` is the table. One meaning per word; in particular:
 - **chain**: the moving-source chain only. GLOSSY's repeated facet reflections are the **facet path**; a
@@ -61,42 +63,46 @@ ray parameter is `t` (m) inside `geometry/` only.
 - **pinned**: a vertex the moving-source method holds fixed while the source moves (never "held").
 - **late / early**: light outside the time grid (the histograms' overflow); **retired**: a photon stopped past
   `t_end`.
-- **surface type**: one of the legacy Geant4 surface behaviours (§10); there is no "kind" or "kernel" in the API.
+- **surface type**: one of the legacy Geant4 surface behaviours (Surfaces); there is no "kind" or "kernel" in the API.
 - **sensor model**: the after-tracking PMT model only; how a detecting surface behaves during tracking is its
   **surface reader** (`SensorGroup.surface`).
 
-## 4. Package layout
+## Package layout
 
 ```
 src/lumen/
 ├── api.py, __init__.py        load, simulate, convert; Detector, Light
-├── params.py                  Params; unit, range and gradient method per key; precedence
+├── params.py                  Params, Param; unit, range and gradient method per key; precedence
 ├── recipe.py, plugins.py      Recipe; the three registries
+├── models.py, extend.py       lumen's own optics models registered by name; the extension API
 ├── cli.py                     lumen validate
-├── diagnostics.py             per-photon probes run beside the loop (Trace)
+├── diagnostics.py             per-photon diagnostics run beside the loop (Trace)
 ├── _core/                     frames, safe math, rng
 ├── units.py, _env.py, _cache.py
 ├── format/                    schema, io, apply (THE value-application path), calibrations, sensorsets
-├── gdml/                      reader, importer, units, solids_schema, tokens, exporter (frozen)
+├── gdml/                      reader, repair, importer, units, solids_schema, tokens, exporter (frozen), geant4_forms
 ├── rules/                     navigation, boundary, optics (incl. the surface readers)
 ├── build/                     lowering + solids, scene + tree, surfaces (the surface lookup), library,
 │                              spec + pack, cache
-├── geometry/                  bvh, navigator_build, csg, navigate, surface_id, clearance, tracked
-├── media/                     laws, bulk, phase (Rayleigh, Mie), spectra
+├── geometry/                  bvh, navigator_build, csg, csg_build, leaf_kernels, navigate, surface_id, clearance,
+│                              tracked
+├── media/                     laws, bulk, phase (Rayleigh, Mie), spectra, spec
 ├── surfaces/                  outcomes, fresnel, polar, lobes, facets, types (the legacy surface types)
-├── transport/                 state, step, medium, surface_event, bulk_event, estimator, moving_source, item
+├── transport/                 state, step, medium, surface_event, estimator, moving_source, item
 ├── run.py                     the tallymap runner: the only `import tallymap`
-├── sources/                   point, cherenkov, scintillation, steps, arrays
-├── readout/, sensors/         grid, detection, waveform, hits, events; the PMT model, components, default sets
+├── sources/                   point, cherenkov, scintillation, steps, arrays, function (source functions)
+├── readout/, sensors/         grid, detection, waveform, hits, events, custom; the PMT model, components, value sets
 ├── detectors/                 wcsim, larsoft, their optics tables and the reference manifest (data)
-└── validate/                  oracle, geometry, overlaps, charge, gradients, toys, stats, records, report
+└── validate/                  oracle, geometry, overlaps, charge, gradients, check, photons, references, toys, stats,
+                               records, report
 ```
 
 Line budgets count code lines only (no blanks, comments or docstrings). Outside `src/`: `tests/` (unit, physics,
-toys), `refs/` (reference production, never packaged), `docs/`, `tools/` (hooks, the readout transcription). Detector files,
+toys), `refs/` (reference production, never packaged), `docs/`, `tools/` (hooks, the readout transcription). The
+repository map and where new code goes: `README.md` in this directory. Detector files,
 caches and reference outputs are not in the repo.
 
-## 5. Data flow and signatures
+## Data flow and signatures
 
 GDML + recipe → `import_gdml` → detector file → `load` → build products (cached) and `Params` → `Model` (static) +
 `Operands` (traced) → `run.py` (tallymap) → per-sensor histograms and health → readout functions → `pe`, waveforms,
@@ -152,9 +158,9 @@ def hits_nll(eh, data); def waveform_nll(w, data)
 replicas live on the charge histogram (2 MB each) and the time histogram carries two half-replicas. Each forward
 tangent adds the histograms again.
 
-## 6. The detector file
+## The detector file
 
-### 6.1 Layout and schema `lumen-detector/1.1`
+### Layout and schema `lumen-detector/1.1`
 
 Canonical JSON (sorted keys, one-space indent, shortest round-trip floats, one record per line) and one `.npy` per
 array, its sha256 in the manifest. The full GDML world is kept; the detector volume is cut out at load.
@@ -183,7 +189,7 @@ array, its sha256 in the manifest. The full GDML world is kept; the detector vol
   experiment ids), never taken from a build product.
 - A reader refuses a newer major schema version, naming the lumen version that reads it.
 
-### 6.2 Parameters
+### Parameters
 
 | Key | Value |
 |---|---|
@@ -212,7 +218,7 @@ directories on `LUMEN_DETECTORS`, never inside a shared detector file. The loade
 nearest), a value outside its range, a structural field, and a table whose knot count differs from the detector
 file's. `format/apply.py` is the one path that applies values, for loading and for export.
 
-### 6.3 Sensor sets
+### Sensor sets
 
 Structure only: groups, each with one selector (`lv` or `lv_pattern`), a counting rule (`border_into`, `any_entry`), a
 surface reader (`surface`: how the detecting surface behaves during tracking, `lumen:geant4` or `lumen:counting`), an
@@ -221,7 +227,7 @@ time bands). The sensor volumes are the union of the groups' selectors. Efficien
 a sensor model applies QE after tracking, Geant4's EFFICIENCY otherwise. Sensor positions and axes are derived at
 load.
 
-### 6.4 Digests and caches
+### Digests and caches
 
 | What | Key | Where |
 |---|---|---|
@@ -232,7 +238,7 @@ load.
 
 Caches are per user and never under `$HOME`; writes go to a temporary directory, then `os.replace`.
 
-### 6.5 Importer and loader
+### Importer and loader
 
 **Import fails closed** on: an `opticalsurface` missing model, finish, type or value; a repeated border pair; a
 border `physvolref` whose full name repeats (stripped-name repeats are fine: Geant4 and lumen bind by full name);
@@ -241,13 +247,13 @@ without composition; a surface form outside the legacy types; a property Geant4 
 a sensor selector matching no volume.
 
 **Recipe:** the detector volume, sensor groups, an id remap, extra tables GDML lacks (recorded with `origin`), the
-recorded films (§10), shipped calibrations; typed fields only.
+recorded films (Surfaces), shipped calibrations; typed fields only.
 
 **`lumen.load`:** a path; else `$LUMEN_DETECTORS`; else `$LUMEN_CACHE/detectors`; else a `lumen.detectors` entry,
 converted into the user's cache on first use. It checks the schema, cuts the detector volume, builds or fetches the
 build products, computes the parameter spec and resolves the calibration. No recipe code runs at load.
 
-### 6.6 GDML export (frozen as built)
+### GDML export (frozen as built)
 
 `lumen.gdml.export(df, path, *, calibration=None, sensors="default", scope="active"|"full", on_lossy="error"|"omit")`.
 Contract: `import(export(df)) == df` on every content file, and `import(export(df, c)) == apply(df, c)`; the source
@@ -255,7 +261,7 @@ tokens make Geant4-on-export equal Geant4-on-original. `on_lossy="omit"` writes 
 model has no Geant4 form, records it in the sidecar and marks the file `lossless: false`. Geant4 10.7.4 is the
 reference reader; the Geant4 11.2.2 load check is advisory.
 
-## 7. Geometry and the Geant4 rules
+## Geometry and the Geant4 rules
 
 **The navigator** tracks the placed volume (`vol`), the surface the photon sits on (`srf`), its normal (`sn`) and the
 count of zero-length steps (`nz`). One BVH per volume over its daughters; the crossing is the nearer of the own
@@ -286,18 +292,15 @@ with T a calibration key.
 - **Absorbed at entry, on meshes only.** A mesh volume's material whose ABSLENGTH is below the band floor
   (`BAND_FLOOR`, 1e-9 m) at every knot is bound opaque: Geant4 refracts the photon in and absorbs it within a length
   the navigator cannot resolve, and the navigator does not track inside a mesh. Elsewhere such a medium is tracked as
-  Geant4 tracks it. Applied to every volume, the rule would bind the PMT interiors' Air in SK and ANNIE, whose builds
-  then fail (measured), so it stays on meshes.
+  Geant4 tracks it (decision 8).
 - **One-sided WLS films, by the thinness band.** A box of a WLS material with no surface of its own is a film when its
   smallest box dimension is below the band at its first placement: `BAND_ULPS` float32 ulps of that placement's largest coordinate plus
   `BAND_FLOOR` (`rules.navigation.band`; 0.5 um at 0.5 m), the length below which two crossings are one. A thicker WLS
   box is tracked as a volume. The importer derives the film's axis from its contact face, per placement in its own
   frame, and fails closed unless the contact set is exactly one complete flat face of one backing per placement; a
-  film on both faces, partial coverage or a bare placement is rejected. Because the band grows with the distance from
-  the origin, a film's classification can depend on where it is placed: a 20 nm film is a film anywhere, a 1 mm
-  slab never is.
+  film on both faces, partial coverage or a bare placement is rejected (decision 9).
 
-## 8. Photon state, step and estimator
+## Photon state, step and estimator
 
 | Part | Fields | Present when |
 |---|---|---|
@@ -337,7 +340,7 @@ data; the runner refuses a loop body that closes over a concrete float array (`C
 changes every kind of value (materials, surfaces, sensors, electronics, source fields, calibration, controls, grid
 positions, seed, samples) and asserts zero new compilations.
 
-## 9. Gradients
+## Gradients
 
 | Method | Parameters | How | 0.1 |
 |---|---|---|---|
@@ -372,7 +375,7 @@ so carried tangents stay O(1) in float32.
 
 User-facing text for these limits: `docs/explanation/known-limits.md`.
 
-## 10. Surfaces
+## Surfaces
 
 0.1 ships the **legacy Geant4 surface types** (`surfaces/types.py`) behind the surface lookup. The `geant4` optics
 model maps each `opticalsurface` (type, model, finish) to one of them.
@@ -386,16 +389,16 @@ model maps each `opticalsurface` (type, model, finish) to one of them.
 | UNIFIED_METAL, DIELECTRIC_METAL | dielectric_metal unified ground (spike, lobe facet path, backscatter, Lambert) | ANNIE holders and liner |
 | GLISUR_METAL, GLISUR_METAL_EFF | dielectric_metal glisur ground (facet path) | SBND steel |
 | REFLECTOR, SENSOR, PHOTOCATHODE, COUNTING | LArSoft reflector; detecting reflector; complex-index cathode; counting sensor | MicroBooNE, SBND |
-| coated | a WLS film over a backing (§7) | SBND TPB |
+| coated | a WLS film over a backing (Geometry and the Geant4 rules) | SBND TPB |
 
 Refused at import with a message: ground dielectric_dielectric, backpainted finishes, complex-index ground metals,
 Geant4's `coated` type, LUT, LUTDAVIS, dichroic, SURFACEROUGHNESS. The surface outcomes have ten indices
 (`surfaces/outcomes.py`). Each surface type is one `lax.switch` branch; its tables enter as operands. The surface
-readers `lumen:geant4` and `lumen:complex_index`, which choose a detecting surface type for `border_into` groups,
-live in `rules/optics.py` (`SENSOR_SURFACES`); `any_entry` groups use `lumen:counting`. "Sensor model" means only
+readers `lumen:geant4` and `lumen:complex_index`, which choose a detecting surface type for `border_into` groups, are
+defined in `rules/optics.py` and registered by name in `models.py`; `any_entry` groups use `lumen:counting`. "Sensor model" means only
 the after-tracking PMT model.
 
-## 11. Bulk processes and sources
+## Bulk processes and sources
 
 | Channel | Geant4 process and keys | Notes |
 |---|---|---|
@@ -431,7 +434,7 @@ numbers come from `lumen.sources.uniforms(key, k, n, first_id)`. Sources run bef
 Geant4 step dump: arrays `start (n,3)` m, `end (n,3)` m, `t_start`, `t_end` ns, `beta_start`, `beta_end`, `charge`,
 `edep` eV.
 
-## 12. Sensors and readout (PMTs)
+## Sensors and readout (PMTs)
 
 ```
 during tracking: surface type → DETECT → deposit (sensor, q, t, λ, θ)
@@ -443,11 +446,8 @@ after tracking:  detection  η_s(λ, θ) = ε_s · QE(λ) · CE(θ)             
 - **One sensor model: `lumen:pmt`.** SBND's X-ARAPUCAs and MicroBooNE's discs stay counting sensors read by the
   `lumen:counting` surface reader, with their reference efficiencies applied as constants.
 - **Hit angle**: θ = acos(z_local / r_local) of the crossing point on the sensor, in the sensor's own placement
-  frame (signed: WCSim's |z| agrees bitwise on SK and WCTE, whose cathode crossings all have z > 0): the hit position on the PMT about its axis, on which the CE table is defined. WCSim evaluates the formula at
-  the step's start point in the glass's frame (WCSimWCSD.cc:75-84, 220-224), a proxy off by the glass thickness:
-  lumen's SK expected PE is 0.2-0.3 % below that proxy's (job 44172555). WCSim's point would make CE depend on the
-  photon's origin for a sensor placed straight in the detector volume, with a derivative singular at that volume's
-  centre.
+  frame: the hit position on the PMT about its axis, on which the CE table is defined. It is signed; WCSim's |z|
+  agrees bitwise on SK and WCTE, whose cathode crossings all have z > 0. Why not WCSim's point: decision 10.
 - **Two histograms per group**: charge (sensor × λ knots × θ knots, exact in QE and CE) and time (sensor × one λ band
   × time nodes, scaled per sensor to the charge histogram). The time histogram is weighted at the reference QE: exact
   for a QE scale, approximate for a QE shape. Grids are static, derived from the components' declared supports and
@@ -469,27 +469,27 @@ dark rate, threshold (acceptance vs charge), front end (sampling, baseline, nois
 
 | Default values | Source |
 |---|---|
-| `sk_r3600` | QE per absorbed photon (@2): WCSim's PMT20inch table without the ×4/3 of `SensitiveDetector_Only`, divided by the cathode absorptance at normal incidence that lumen tracks (1 − rgcff = 0.68), so lumen's expected PE is 1/0.907 of WCSim's (0.75 / 0.68). At normal incidence a PMT detects QE × the tracked window transmission (0.9929 at 400 nm in water, job 44182524). If the table's QE was measured in air it also holds the air→glass Fresnel loss (about 4 %), which is not removed; its measurement conditions are unverified; the SKI threshold acceptance; SPE table and dark rate from WCSim; CE (**unverified**): WCSim's 2011 table {100, 100, 99, 95, 90, 85, 80, 69, 35, 13} % in 10° steps (commit 3a56a2caeb; dropped for a flat 100 % in 2a3ff0adc6, whose comment calls it "different from SKDetSim"; kept commented at WCSimPMTObject.cc:70-71), in WCSim's convention; its source and coordinate are undocumented |
+| `sk_r3600` | QE per absorbed photon (@2, decision 11): WCSim's PMT20inch table without the ×4/3 of `SensitiveDetector_Only`, divided by the cathode absorptance at normal incidence that lumen tracks (1 − rgcff = 0.68); the SKI threshold acceptance; SPE table and dark rate from WCSim; CE (**unverified**): WCSim's 2011 table {100, 100, 99, 95, 90, 85, 80, 69, 35, 13} % in 10° steps (commit 3a56a2caeb; dropped for a flat 100 % in 2a3ff0adc6, whose comment calls it "different from SKDetSim"; kept commented at WCSimPMTObject.cc:70-71), in WCSim's convention; its source and coordinate are undocumented |
 | `wcte_r14374` | the same rule for WCTE's 3-inch PMT (own QE table, CE 95 % flat in WCSim) |
 | `wcsim_annie_<type>` | ANNIE's PMT tables from annie WCSim |
 | `sbnd_pmt` | `digi_pmt_sbnd.fcl`: efficiency 0.0392 coated (VUV), 0.026 coated (visible), 0.0357 uncoated; TTS 2.4 ns FWHM; transit 55.1 ns; SPE template; 2 ns sampling |
 
 Default values are package data named `<distribution>:<set>@<version>`; a local path is accepted.
 
-## 13. Extensibility
+## Extensibility
 
 | Registry | Resolves |
 |---|---|
 | `lumen.detectors` | `lumen.load("<name>")` → `DetectorPackage` |
 | `lumen.sensor_models` | a group's `model` → the after-tracking model |
-| `lumen.optics_models` | a surface or material record's `lumen_model` → its behaviour (`geant4` in 0.1) |
+| `lumen.optics_models` | a surface or material record's `lumen_model`, or a sensor group's surface reader → its behaviour (lumen's own models are listed once, in `models.register_builtins`) |
 
 Importers are plain functions; experiment software may write the format directly. Names are `distribution:model`;
 duplicates are refused; an unknown model fails closed, naming the distribution. The plug-in protocols (`Lobe`, sensor
-components, `Source`) are documented and **provisional in 0.1**. A plug-in needs no Geant4 counterpart, never
+components, `Source`) are documented and **provisional in 0.1**; the way to extend lumen is `docs/howto/extending.md`. A plug-in needs no Geant4 counterpart, never
 branches in Python on a parameter value, never closes over a parameter array and declares every value it reads.
 
-## 14. Validation and tests
+## Validation and tests
 
 | Check | Reference | Pass |
 |---|---|---|
@@ -499,7 +499,7 @@ branches in Python on a parameter value, never closes over a parameter array and
 | overlaps | the 18 g4ref overlap toys; the overlap census | detected fraction and mean time within errors |
 | WCSim digits, SK consistency | digits from the charge-check runs; QE/CE-on runs with WCSim's 2011 CE table patched in | yields 1 %, timing 0.02 ns and 1 %, threshold loss; digit times truncated on a 0.4 ns grid, applied on the reference side |
 | SBND PMT waveforms | sbndcode OpDetSim; photon lists from the SBND reference | mean and variance per channel |
-| Mie | §11 | §11 |
+| Mie | Bulk processes and sources | Bulk processes and sources |
 | export | Geant4 10.7.4 round trip on toys | `import(export(df)) == df`; Geant4 hits equal |
 
 | Tier | Content | Target |
@@ -513,29 +513,14 @@ References are reduced products with sha256, read-only in the reference store un
 `lumen/detectors/references.json`; production code lives in `refs/`. Check outputs never overwrite reference
 products. The report is generated from the JSON records every `lumen validate` run writes.
 
-## 15. Engineering
+## Engineering
 
 | Item | Rule |
 |---|---|
-| tallymap | pinned by SHA (`pyproject.toml` range, the development lock), installed from one wheel; FFMA contraction off (it changes bits) |
+| tallymap | pinned by tag in `pyproject.toml` (decision 7); FFMA contraction off (it changes bits) |
 | backend | `backend="auto"`: CUDA on a GPU, the CPU backend elsewhere; CPU sums are inexact, compared with the GPU at ~2.5e-4 |
-| environment | the library reads only `LUMEN_DATA`, `LUMEN_DETECTORS`, `LUMEN_CACHE` (in `_env.py`) |
+| environment | only `_env.py` reads the environment (decision 18); what it reads is listed in its docstring |
 | tooling | src layout, hatchling + hatch-vcs, ruff at 120 columns, pre-commit, mypy on host code, type hints on the public API |
-| style | plain physics words in anything a user reads (the jargon hook); functions ≤ 50 statements and ≤ 6 positional arguments; NamedTuples or frozen dataclasses built by keyword; Protocols, no `getattr` discovery; numpydoc with units; comments say why, never when; named constants with unit and source; no env reads outside `_env.py`; no site paths in `src/` or `tests/` |
-| docstrings | what it is, its units, the Geant4 source it follows (class::method or file:line), what each non-obvious argument means; point here or to `docs/explanation/` instead of repeating; no port history |
+| style, docstrings | `style.md` (numbered rules; the hooks and `pyproject.toml` cite them by number) |
 | privacy | non-public detectors are separate entry-point packages; a pre-commit hook greps content, paths and messages against `LUMEN_PRIVATE_PATTERNS`, kept outside the repo |
 | bitwise | results are bitwise reproducible on one CPU or GPU model only |
-
-## 16. Not built yet, and next
-
-Planned for 0.1, not in the code yet: `lumen.estimate` (cost estimate); `Light.check()` and the eager health warning;
-`Params.sensor(id, field)`; `simulate(reference=)`; the `lumen convert` and `lumen doctor` commands; a hit-map and
-waveform plot module; the error catalogue of the first-hour guide (`RangeError`, `NoSensorsMatched`,
-`ModelNotInstalled`, `FormatVersionError`, `IncompleteResultError`, `GradientSetupError`, `MemoryEstimateError`; today
-these raise `ValueError`, `MemoryError` or `GradientNotAvailable`).
-
-Next (0.2): factorised surfaces and the public plug-in kit; deposit labels (labelled histograms and arrival records,
-history bits); the event axis and sensor subsets; electronics other than PMTs (SiPMs for X-ARAPUCA, LAPPDs with
-strips, afterpulses, crosstalk, saturation); refractive-index derivatives; the shadow-edge term; bulk
-`WLSMEANNUMBERPHOTONS` and WLS2; LUT, LUTDAVIS, dichroic and latent-facet finishes; tracks and LAr recombination;
-geometry calibration; tolerance unification.

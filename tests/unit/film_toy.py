@@ -1,4 +1,4 @@
-"""The film toy: CPA-like foil holders in a liquid tank, each a WLS film on one face of a painted foil (D51).
+"""The film toy: CPA-like foil holders in a liquid tank, each a WLS film on one face of a painted foil.
 
 ``film_gdml(holders, ...)`` returns the GDML: a 2 m liquid tank (light leaving it ends) in a vacuum world; each
 holder is a liquid box exactly foil (1 mm, material Steel, skin ``paint``: groundfrontpainted) plus film (20 nm,

@@ -1,17 +1,17 @@
-"""Mie scattering through the photon step (labels_and_mie.md M-T6, M-T7, M-T8): the physics tier, on a GPU.
+"""Mie scattering through the photon step: the physics tier, on a GPU.
 
-- M-T6, the isotropic-source sphere: a point source at the centre of a sphere of radius R = 1 m in a Mie-only medium
+- The isotropic-source sphere: a point source at the centre of a sphere of radius R = 1 m in a Mie-only medium
   (MIEHG 20 m, no absorption), the wall a detecting counting sensor. (i) The charge is N (each photon's expected
   deposits sum to 1 in expectation: checked against the replicas' error); (ii) the direct light, the first step's
   deposits, is N exp(-R / L) to float32 accuracy (each photon deposits exp(-mu R) there); (iii) the single-scatter
   light (the second step's deposits) per path-length bin on (R, 3R) against the float64 quadrature of
   f1(l) = int da / L e^(-a / L) int dmu p(mu) e^(-b / L) delta(l - a - b), b = -a mu + sqrt(R^2 - a^2 (1 - mu^2)).
-- M-T7, its derivatives: d/dL of the direct light against N R / L^2 e^(-R / L) (exact), d/d(g_f, g_b, r) of the
+- Its derivatives: d/dL of the direct light against N R / L^2 e^(-R / L) (exact), d/d(g_f, g_b, r) of the
   single-scatter bins against the quadrature's derivatives (paired z), forward against reverse mode, and the forward
-  ratio at its edge r = 1 (both lobes defined: WITHIN), with the edge rule's moved reference.
-- M-T8, the g4ref ring toy: a pencil beam at the centre of a sphere cut into 36 polar rings of 5 degrees, one counting
+  ratio at its edge r = 1 (both lobes defined, so it is a parameter there), with the edge rule's moved reference.
+- The g4ref ring toy: a pencil beam at the centre of a sphere cut into 36 polar rings of 5 degrees, one counting
   sensor per ring; the per-ring charge and mean time against Geant4 10.7.4 and 11.2.2 (tests/data/g4ref_mie, reduced
-  from g4ref's one-shell runs by the port's mie_rings_reduce.py), cases A (0.6, 0.3, 0.7) and B (0, 0.8, 0.5).
+  from g4ref's one-shell runs), cases A (0.6, 0.3, 0.7) and B (0, 0.8, 0.5).
 """
 
 import json
@@ -215,7 +215,7 @@ def f1_bins(gf, gb, r, length=L_MIE, n_a=400, n_u=64):
     return out
 
 
-# --------------------------------------------------------------------------------------------------- M-T6, M-T7
+# ------------------------------------------------------------------------------- the sphere and its derivatives
 @pytest.mark.parametrize("case", ["A", "B", "water"])
 def test_isotropic_sphere_charge_direct_light_and_single_scatters(detectors, case):
     det = detectors(case, 1)
@@ -329,7 +329,7 @@ def test_forward_and_reverse_mode_agree(detectors):
     assert float(rev) == pytest.approx(float(fwd), rel=1e-4, abs=1e-3)
 
 
-# ----------------------------------------------------------------------------------------------------------- M-T8
+# ------------------------------------------------------------------------------------------------ the ring toy
 @pytest.mark.parametrize("geant4", ["10.7.4", "11.2.2"])
 @pytest.mark.parametrize("case", ["A", "B"])
 def test_ring_toy_against_geant4(detectors, case, geant4):

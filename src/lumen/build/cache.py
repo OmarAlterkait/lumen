@@ -15,7 +15,7 @@ at once both write a temporary directory and move it into place (``lumen._cache.
 
 Notes
 -----
-Implements DESIGN section 4.5's build-products cache for the navigator's arrays.
+Implements the build-products cache of docs/dev/architecture.md, "Digests and caches", for the navigator's arrays.
 """
 
 from __future__ import annotations

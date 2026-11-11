@@ -1,8 +1,7 @@
-"""A toy GDML exercising every optics rule (the baseline's tests/test_gdml_optics.py TOY), read by the importer.
+"""A toy GDML exercising every optics rule, read by the importer.
 
-Changed from the baseline's string only where the importer is stricter than the baseline's optics reader: every
-material names a composition (an element Ar), the border's second volume is a placed physvol ("other"), and the file
-has a setup naming the world.
+Every material names a composition (an element Ar), the border's second volume is a placed physvol ("other"), and the
+file has a setup naming the world, as the importer requires.
 """
 
 import numpy as np

@@ -3,9 +3,6 @@
 The words lumen uses in its API, its messages and these pages, one meaning each. Units are m, ns, nm and eV
 everywhere. The API takes plain numbers in these units; only file field names carry a unit suffix (`sigma_ns`).
 
-How these words map to the terms of the code lumen was ported from is in
-[the developer vocabulary](../dev/vocabulary.md).
-
 ## Detectors and files
 
 | Word | Meaning | Where you meet it |
@@ -53,7 +50,7 @@ How these words map to the terms of the code lumen was ported from is in
 | **replicas** | Independent sub-runs of one call. Their spread gives the Monte Carlo errors. | `simulate(replicas=)` |
 | **arrivals** | The expected number of photons the counting rule counts at each sensor, before QE and collection efficiency. | `light.arrivals` |
 | **`mean_arrival_time`** | The arrivals-weighted mean time of arrival after emission, before the PMT's time spread (ns). | `light.mean_arrival_time` |
-| **health** | What happened to the photons that were not counted: `escaped` (travelled the maximum step distance without meeting a surface or a bulk event), `abandoned` (stuck on a surface), `truncated` (the weight still bouncing at the step limit), `n_truncated` (how many photons that was), `retired` (stopped past the time limit), `lost` (the weight that crossed between two volumes the geometry does not make neighbours, usually an overlap: see [the health section](errors.md#health)), `stuck` (two counts: photons pushed off a surface after repeated zero-length steps, and photons abandoned there), `overflow` (emits the GPU's exact sums dropped; `simulate` raises `SumOverflow` when it is not 0, and under `jax.jit` it is only reported). | `light.health` |
+| **health** | What happened to the photons that were not counted or absorbed: `escaped`, `abandoned`, `truncated`, `n_truncated`, `retired`, `lost`, `stuck`, `overflow`. Each key and what to do about it: [health](errors.md#health). | `light.health` |
 | **late / early** | Light outside the time grid of the histograms. Not the same as `retired`. | the histograms |
 | **per-sensor histograms** | The light recorded at each sensor, in wavelength and hit angle, and in time. | `light.histograms` |
 | **expected detection** | The detected share of a photon's weight is added at every sensor surface it meets, instead of being drawn at random. | how arrivals are computed |
@@ -83,29 +80,8 @@ How these words map to the terms of the code lumen was ported from is in
 | **gradient check** | Derivatives against finite differences. | `lumen validate gradients` |
 | **geometry-import check** | lumen's point location against Geant4's navigator on the same GDML. | `python -m lumen.validate.geometry` |
 | **overlap check** | Overlapping and coincident volumes through lumen's step against Geant4. | `lumen validate overlaps` |
+| **validation report** | The page generated from the checks' records. | `lumen validate report` |
 | **fixed-reference finite difference**, **same-random-number finite difference** | The two finite differences lumen's derivatives are checked against. | the validation report |
 | **g4ref** | The small Geant4 10.7.4 application that produces lumen's Geant4 references from a GDML file. | the how-to guide |
 
-## Words lumen does not use
-
-These words appear in older code, studies or other tools. lumen's documentation and messages use the word on the
-right.
-
-| Not used | Use |
-|---|---|
-| held, hold (a vertex) | **pinned** |
-| chain (of facets), chain lobe | **facet path** |
-| chain (of calibrations) | **parents** |
-| late (photon stopped past `t_end`) | **retired** |
-| kind, kernel (of a surface) | **surface type** |
-| `SensorGroup.model = "lumen:geant4"` | `surface="lumen:geant4"`; `model` is only the sensor model |
-| `eff` (sensor-group setting) | **efficiency** |
-| `surfaces/<S>/value` | `surfaces/<S>/sigma_alpha` (unified) or `surfaces/<S>/polish` (glisur) |
-| `source/x`, `Point(x=)` | `source/position`, `Point(position=)` |
-| magic, magic box | **reweighting** |
-| slot | **replica** |
-| Q, Tw | **arrivals**, **mean arrival time** |
-| tally | **per-sensor histograms** |
-| lockstep backend | **CPU backend** |
-| u (the step's uniforms) | **rand** |
-| t (a distance along a ray) | **dist** (m); **t** is always a time (ns) |
+Names that changed between releases are in the [changelog](../../CHANGELOG.md).

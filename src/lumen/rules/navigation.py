@@ -4,9 +4,9 @@ The photon carries the placed volume it is in and the surface it sits on (its fa
 G4Navigator decides a point's side of a surface within kCarTolerance by the direction of travel; lumen's tolerance is
 the float32 resolution of the coordinates, the **band**. The rules, each with the Geant4 code it follows:
 
-- **Tolerance.** Three sites, two forms, kept exactly as the navigator, the overlap check and the step had them
-  (unified later): ``band`` (the query and the CSG evaluator: ``8 eps (|x| + |t|) + 1e-9 m``), ``check_step_in`` (the
-  overlap check's step in: ``K_ON`` bands at a point) and ``step_band`` (the step's push: ``8 eps max|x| + 1e-9 m``).
+- **Tolerance.** Three sites, two forms (one form is on docs/dev/roadmap.md): ``band`` (the query and the CSG
+  evaluator: ``8 eps (|x| + |t|) + 1e-9 m``), ``check_step_in`` (the overlap check's step in: ``K_ON`` bands at a
+  point) and ``step_band`` (the step's push: ``8 eps max|x| + 1e-9 m``).
 - **Surface identity.** A face within ``K_ON`` bands of the start (perpendicular to it) is the face the photon sits
   on: the direction decides which side it is on (G4Navigator's fEntering / fExiting). A face that close along the ray
   but farther perpendicularly is looked for up to ``GRAZE`` times farther (1 / sin(0.25 deg) ~ 229).

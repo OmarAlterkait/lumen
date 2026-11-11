@@ -1,4 +1,4 @@
-"""The Geant4 traps of gdml_export.md section 5: one assertion each, on the written GDML, and the refusals.
+"""The Geant4 traps the exporter avoids: one assertion each, on the written GDML, and the refusals.
 
 The traps are checked on the canonical writer (the toys' source tokens dropped); test_gdml_export checks the tokens.
 """

@@ -2,7 +2,7 @@
 
 lumen turns the cache on by default (``lumen._env.xla_cache``: ``<LUMEN_CACHE>/xla``). That is safe only while a
 loaded program computes exactly what a fresh compile computes: on jax 0.5.3 it did not (CPU programs loaded from the
-cache missed navigator faces; port/gates/persistent_cache.json). This test runs the photon loop on a small toy in
+cache missed navigator faces; docs/dev/decisions.md, 7). This test runs the photon loop on a small toy in
 three fresh processes -- (a) the cache disabled, (b) a cold compile writing a fresh cache through lumen's default,
 (c) a new process loading it -- and requires every output to be bitwise equal, so a future jax that breaks it fails
 here. The physics tier (one GPU); this file is also the driver its processes run (``python <this file> DET OUT``).

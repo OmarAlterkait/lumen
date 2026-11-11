@@ -3,9 +3,9 @@
 This tutorial takes you through lumen on the toy detector that ships with it: you simulate a light source, read what
 the numbers mean, draw a hit map, take derivatives, fit a source position and a set of PMT efficiencies, and look at a
 waveform. Every code block comes from `examples/first_hour.py`, which runs as it stands; the outputs shown are from
-one run of it on an NVIDIA A100 (Slurm job 44124132). Your numbers can differ in the last digits on another GPU model.
+lumen 0.1.1 on an NVIDIA A100. Your numbers can differ in the last digits on another GPU model.
 
-Before you start, install lumen (see the [README](../../README.md)) and choose a directory for your calibrations:
+Before you start, install lumen (see [installing lumen](../howto/install.md)) and choose a directory for your calibrations:
 
 ```bash
 export LUMEN_DETECTORS=$PWD/lumen-examples/calibrations
@@ -122,8 +122,6 @@ health (photons): {'lost': 0.0, 'abandoned': 0.0, 'escaped': 0.0, 'retired': 0.0
 | `lumen.readout.pe(light, p0)` (8,) | expected photoelectrons: arrivals × QE × efficiency (× collection efficiency, if the value set has one) | photoelectrons |
 | `light.health` | photons that ended for a reason other than absorption or detection | photons |
 
-(This run was made before the 0.1 naming pass, which renames the health key `late` to `retired`.)
-
 Read the table as physics:
 
 - PMT 1, on the top face, is closest to the source (0.37 m to its face) and sees the most light; PMTs 0, 6 and 7 on
@@ -158,8 +156,9 @@ fixed inside anything you differentiate or fit, so that every call uses the same
 
 ## 3. A hit map
 
-lumen 0.1 has no plotting module and no public table of sensor positions yet. `examples/example_tank.py` reads the
-PMT centres with `sensor_positions(det)`, and the script draws the expected PE on the unfolded tank with matplotlib:
+lumen has no plotting module. `det.sensor_table()` gives each sensor's centre, in the order of `light.arrivals`
+(`examples/example_tank.py` wraps it as `sensor_positions(det)`), and the script draws the expected PE on the unfolded
+tank with matplotlib:
 
 ```python
 xyz = sensor_positions(det)          # (8, 3) m, in sensor order
@@ -210,9 +209,8 @@ PMT 1: derivative   1199.4 +-  12.2   finite difference   1141.4 +-  28.0   (1/m
 ```
 
 Here the derivative and the finite difference agree within two standard errors (1.5 for PMT 0, 1.9 for PMT 1): this
-comparison does not resolve a difference below about 5 %. The moving-source method has known limits: the shadow edge
-between a source and an object close to it, light focused behind a refracting PMT window, and sources a few cm from a
-reflector. They are listed in [known limits](../explanation/known-limits.md).
+comparison does not resolve a difference below about 5 %. The moving-source method has known limits, listed in
+[known limits](../explanation/known-limits.md#the-moving-source-method-derivatives-in-the-source-position).
 
 ### A fit: the source height
 

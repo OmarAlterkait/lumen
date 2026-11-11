@@ -1,8 +1,10 @@
-"""Style rule 10: text a user reads uses plain words, never internal terms or plan codes.
+"""Style rule 10 (docs/dev/style.md): text a user reads uses plain words, never internal terms or plan codes.
 
 Checked: the string literals (messages, docstrings) of the Python files given, and the prose, code comments and
 string literals of the Markdown files given (fenced Python code is tokenized, so the keyword ``class`` is fine but a
-message saying "optical class" is not). Prints file:line and the word; exits 1 on any hit.
+message saying "optical class" is not). Inline code spans in Markdown prose (`...`) are not checked: they quote
+identifiers, or messages whose source is checked where it is written. Prints file:line and the word; exits 1 on any
+hit.
 
     jargon.py FILE...
 """
@@ -30,13 +32,23 @@ WORDS = (
     r"lockstep",
     r"phase [ABC]",
     r"decisions? \d+",
+    r"edge rows?",
+    r"the baseline'?s?",
+    r"the port'?s?",
+    r"port steps?",
+    r"job \d{7,}",
+    r"[a-z_]+\.md section",
+    r"naming pass",
 )
 CODES = (
-    r"[EDGSR]\d",  # check codes: E1, D1, G1, G2, S1, R1-R3
+    r"[EDGSR][1-9]",  # check codes: E1, D1, G1, G2, S1, R1-R3 (not R0, a reflectance at normal incidence)
     r"T[1-9]",  # readout toys T1-T9
     r"B0",
     r"[AB]\d{1,2}b?",  # the baseline and the port steps (A0-A9, A6b, B1-B13)
     r"D\d{1,2}",  # decision numbers
+    r"OUT",  # the edge rule's internal labels (a value Geant4 never reads; a parameter at its range edge)
+    r"WITHIN",
+    r"FDX",  # the fixed-reference finite difference
 )
 # codes are case-sensitive (an "a1" in a variable is not a plan code); words are not
 CODE_RE = re.compile(r"\b(" + "|".join(CODES) + r")\b")
@@ -76,7 +88,7 @@ def markdown_texts(source: str) -> list[tuple[int, str]]:
         elif fence is not None:
             block.append(line)
         else:
-            out.append((i, line))
+            out.append((i, re.sub(r"`[^`]*`", "``", line)))
     return out
 
 

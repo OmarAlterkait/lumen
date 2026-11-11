@@ -7,8 +7,7 @@
   zero-length crossing of that pair's interface), and its zero-length step out of that one is Geant4's StepTooSmall,
   a straight continue event.
 
-The toys are GDML strings read by the importer (the coinc_sib layout: a 4 m world, two 0.4 m cubes); ported from the
-baseline's tests/test_overlaps.py, which built them with the scene builder."""
+The toys are GDML strings read by the importer (the coinc_sib layout: a 4 m world, two 0.4 m cubes)."""
 
 import numpy as np
 from nav_toys import defn, locate, make_scene, one, query

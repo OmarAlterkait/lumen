@@ -1,4 +1,4 @@
-"""No recompile per value (SPEC section 8): every kind of value enters the photon loop as an operand.
+"""No recompile per value (docs/dev/decisions.md, 2): every kind of value enters the photon loop as an operand.
 
 The loop runs once to compile, then again with each kind of value changed: materials, surfaces, sensors, a
 calibration, source fields, controls, the grid's positions, the seed and the number of samples. No new XLA

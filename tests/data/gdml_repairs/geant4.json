@@ -3,7 +3,7 @@
  "how": "g4ref --gdml TOY --dump '^lumen_no_such_volume$' (load, then exit), G4GDMLParser::Read(file, false)",
  "geant4": {
   "10.7.4": "develop.sif (Geant4 10.7.4), g4ref built against it (lumen's g4ref/build)",
-  "11.2.2": "geant4-11.2.2.sif, g4ref built against it (refs_new/g4_11/build)"
+  "11.2.2": "Geant4 11.2.2, g4ref built against it"
  },
  "measured": "2026-11-09",
  "toys": {

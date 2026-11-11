@@ -4,27 +4,27 @@
   "geant4": "10.7.4",
   "hits": 4000000,
   "sha256": "c9909beca5f628cbb44d8dc2bcb3cc6ae57e6f16f86faba429fb5b17dc1cf790",
-  "source": "the g4ref Mie toy (job 43873743), labels_mie/out/g4_10.7.4/mieA_hits.npy"
+  "source": "the g4ref Mie toy, g4_10.7.4/mieA_hits.npy"
  },
  "g4_10.7.4_mieB_rings.npz": {
   "case": "mieB",
   "geant4": "10.7.4",
   "hits": 4000000,
   "sha256": "8ad9a3879959bab07fe1844d41e7e70d3f690cc0251856a1c521b5e2460b9e13",
-  "source": "the g4ref Mie toy (job 43873743), labels_mie/out/g4_10.7.4/mieB_hits.npy"
+  "source": "the g4ref Mie toy, g4_10.7.4/mieB_hits.npy"
  },
  "g4_11.2.2_mieA_rings.npz": {
   "case": "mieA",
   "geant4": "11.2.2",
   "hits": 4000000,
   "sha256": "c9909beca5f628cbb44d8dc2bcb3cc6ae57e6f16f86faba429fb5b17dc1cf790",
-  "source": "the g4ref Mie toy (job 43873743), labels_mie/out/g4_11.2.2/mieA_hits.npy"
+  "source": "the g4ref Mie toy, g4_11.2.2/mieA_hits.npy"
  },
  "g4_11.2.2_mieB_rings.npz": {
   "case": "mieB",
   "geant4": "11.2.2",
   "hits": 4000000,
   "sha256": "8ad9a3879959bab07fe1844d41e7e70d3f690cc0251856a1c521b5e2460b9e13",
-  "source": "the g4ref Mie toy (job 43873743), labels_mie/out/g4_11.2.2/mieB_hits.npy"
+  "source": "the g4ref Mie toy, g4_11.2.2/mieB_hits.npy"
  }
 }

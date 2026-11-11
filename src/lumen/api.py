@@ -1,10 +1,11 @@
-"""The public surface: convert a GDML file into a detector file, and load a detector.
+"""The public API: ``convert``, ``load``, ``simulate``, ``Detector`` and ``Light``.
 
     from lumen.detectors import wcsim
     path = lumen.convert("sk.gdml", wcsim.SK, "sk.lumen")                    # once
     det = lumen.load("sk.lumen")                                             # or a registered name: "sk"
     p = det.params()                                                         # every parameter, by GDML name
-    arrays = det.pack(p)                                                     # the engine's packed arrays
+    src = lumen.sources.Point(position=(0.0, 0.0, 0.0), lam=400.0, n_photons=1e6)
+    light = lumen.simulate(det, src, p, samples=2**20, seed=0)               # arrivals per sensor, and errors
 
 Loading reads the detector file, cuts out the detector volume, lowers the geometry to its scene, builds the
 volume tree, the surfaces and media, and resolves the parameters (the detector file's values, the sensor models'
@@ -334,7 +335,7 @@ def _moving(source, params, wrt) -> tuple:
 
 
 def _edge_rows(det, params, wrt) -> tuple:
-    """Return the edge rows of the parameter keys in ``wrt``: their packed rows at an edge of their domain.
+    """Return the packed rows of the parameter keys in ``wrt`` whose values sit at an edge of their domain.
 
     A key maps to the packed rows it is read into (``parts.sources``): a surface or sensor parameter to its type's row
     of that surface, a medium's to its own entry; ``lumen.transport.estimator.edge_rows`` keeps those at an edge.
@@ -387,28 +388,50 @@ def _budget() -> float:
 
 def simulate(det, source, params=None, *, samples: int, seed: int, replicas: int = 16, gate=None,  # noqa: PLR0913
              chunk: int = 1 << 20, backend: str = "auto", wrt=(), controls=None, diagnostics=()) -> Light:  # fmt: skip
-    """Return the Light of ``samples`` photons of ``source`` through ``det`` at ``params`` (default: its own).
+    """Trace ``samples`` Monte Carlo photons from ``source`` through ``det`` and return the light at each sensor.
 
-    ``source``: a ``lumen.sources`` source, its fields from ``params``' ``source/`` keys where given (its random numbers
-    under ``fold_in(key(seed), SOURCE_STREAM)``), or an Emission batch of at least ``samples`` rows, or a function
-    ``(first_id, count) -> Emission``. ``wrt``: the parameter keys a derivative is taken in, any of them (optics,
-    sensors, the source's ``source/<field>``). ``params`` may contain traced values (``jax.jvp``, ``jax.grad`` over a
-    ``Params`` or a factor of ``Params.scale``): they pack differentiably (``lumen.build.pack``) and never recompile.
-    A key at an edge of its domain (a reflectivity of exactly 0) turns on its edge rows, so its one-sided derivative is
-    right; a source key that moves the photons (a position) turns on the moving-source method, with the clearance
-    about the source's origins (none when they are traced), and needs a source whose directions are drawn. The photons
-    run in chunks of ``chunk`` (``lumen.readout.photon_chunks``), photon i under ``fold_in(key(seed), i)``. The
-    histograms are those of the sensor set's group with a sensor model (``lumen:pmt``), over its sensors in their
-    order in the group, on its static grid
-    (``lumen.readout.make_grid`` with ``gate`` (ns), default the group's ``readout["gate"]``); ``simulate`` refuses
-    before launch (MemoryError) when they exceed the device's budget. The other sensors (a counting group) give
-    arrivals only, and a detector without a modelled group gives no histograms (``histograms`` None); ``arrivals``
-    and its error and mean time cover every sensor of the detector.
+    Parameters
+    ----------
+    det : Detector
+        From ``lumen.load``.
+    source : lumen.sources.Source
+        The light source; its fields can be set through ``params`` keys ``source/<field>``. Also accepted: an Emission
+        batch of at least ``samples`` rows, or a function ``(first_id, count) -> Emission``.
+    params : Params, optional
+        Parameter values (default ``det.params()``). May contain traced values (``jax.jvp``, ``jax.grad``): changing
+        them never recompiles.
+    samples : int
+        Monte Carlo photons (the effort). The physics, the photons emitted, is the source's ``n_photons``.
+    seed : int
+        Fixes the random numbers; keep it fixed inside anything you differentiate or fit.
+    replicas : int
+        Independent sub-runs whose spread gives ``Light.arrivals_error`` (default 16).
+    gate : (float, float), optional
+        Readout window in ns after emission (default: the sensor group's ``readout["gate"]``).
+    chunk : int
+        Photons per launch; results do not depend on it.
+    backend : {"auto", "cuda", "cpu"}
+        "auto": CUDA on a GPU, tallymap's CPU backend elsewhere.
+    wrt : sequence of str
+        Parameter keys to differentiate. Required for a key that moves the photons (``source/position``): it turns
+        on the moving-source method, which needs a source whose directions are drawn from a density. A key at an edge
+        of its range (a reflectivity of exactly 0) gets its one-sided derivative.
+    controls : lumen.Controls, optional
+        The step limits ``max_distance``, ``t_end``, ``roulette`` (default ``Controls()``).
+    diagnostics : sequence, optional
+        Per-photon diagnostics run beside the loop (``lumen.diagnostics.Trace``), in one chunk
+        (``samples <= chunk``); ``Light.diagnostics`` has what they recorded.
 
-    ``controls``: the step's values (``lumen.Controls``: ``max_distance``, ``t_end``, ``roulette``; default as
-    ``Controls()``). ``diagnostics``: probes run alongside the loop (``lumen.diagnostics``, e.g. ``Trace``), in one
-    chunk (``samples`` <= ``chunk``: their cells are indexed by the photon); ``Light.diagnostics`` holds their cells as
-    the loop wrote them, and "weight_scale", the factor the loop's weights carried (1 for weights of order 1).
+    Returns
+    -------
+    Light
+        ``arrivals``, ``arrivals_error`` and ``mean_arrival_time`` for every sensor; the histograms of the sensor group
+        with a sensor model (None when there is none); ``health``.
+
+    Raises
+    ------
+    GradientNotAvailable, MemoryError, DeviceError, SumOverflow
+        See docs/reference/errors.md.
     """
     from lumen import readout as ro
     from lumen import run as runner

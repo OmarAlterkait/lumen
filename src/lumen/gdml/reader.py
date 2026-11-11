@@ -1,4 +1,4 @@
-"""THE GDML reader: one parser, one CLHEP evaluator, lengths converted to metres by exact decimal scaling.
+"""The GDML reader: one parser, one CLHEP evaluator, lengths converted to metres by exact decimal scaling.
 
 The file is untrusted input: no ``eval``; expressions go through a small recursive-descent parser with CLHEP units.
 

@@ -1,7 +1,6 @@
-"""GDML toys for the exporter's tests (gdml_export.md section 7.2, toys a-k, and one per supported solid type).
+"""GDML toys for the exporter's tests (toys a-k, each a Geant4 trap or round-trip case, and one per supported solid).
 
-Each toy is a GDML string; ``TOYS`` maps a name to it. They are small enough to load in Geant4 as well
-(the port's check_export.py writes them out for the Geant4 load and probe check).
+Each toy is a GDML string; ``TOYS`` maps a name to it. They are small enough to load in Geant4 as well.
 """
 
 HEAD = """<?xml version="1.0" encoding="UTF-8"?>
@@ -168,7 +167,7 @@ def _all_solids():
     return toy("\n".join("  " + SOLIDS[t] for t in names), volumes, physvols, SOLID_DEFINES)
 
 
-# gdml_export.md section 7.2's export toys
+# the export toys
 TOYS = {
     "a_angles": toy('  <box name="b" x="100" y="200" z="300" lunit="mm"/>', vol("lvB", "b"),
                     pv("lvB", "pB", pos=(10, -20, 30.5), rot=(0.3, -0.7, 1.1))),

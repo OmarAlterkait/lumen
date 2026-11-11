@@ -19,10 +19,7 @@ pins the vertex just met, so every carried tangent stays O(1) on an expanding ch
 dy/du ~100 per bounce). A volume end near a moving origin co-moves with it, V = w U, w = exp(-r^2 / R0^2), R0 =
 min(CO_MOVING_RADIUS, a quarter of the origin's clearance); its divergence enters the weight.
 
-Known limits (docs/dev/design.md section 9): the moving shadow edge between a moving source and its first pinned
-vertex is not carried; the caustic at a pinned end has an infinite-variance tail; an ill-conditioned end solve after a
-grazing hit loses float32 precision; a zero-length segment in a medium opaque on the band's scale carries no
-attenuation or time derivative.
+Known limits: docs/explanation/known-limits.md (for users) and docs/dev/architecture.md, "Gradients".
 """
 
 # ruff: noqa: N803 -- the module docstring's math names (A, B, CA, CB, Y, ...) as arguments

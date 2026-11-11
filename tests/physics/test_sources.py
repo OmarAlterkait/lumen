@@ -1,4 +1,4 @@
-"""``lumen.simulate`` with ``lumen.sources`` (tier b): a Point in the absorbing sensor sphere of ``toys.sphere``.
+"""``lumen.simulate`` with ``lumen.sources`` (physics tier): a Point in the absorbing sensor sphere of ``toys.sphere``.
 
 - the arrivals per emitted photon against the closed form (1/2) int exp(-r(mu) / L) dmu of a source at z0 on the
   axis (every photon detected with weight exp(-r / L));

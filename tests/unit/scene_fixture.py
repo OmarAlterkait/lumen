@@ -15,7 +15,7 @@
       Plug (Glass, the same orb) plug_pv at (100, 0, -500)                   -- the sheet's hole is this sibling
       Frame (Steel tessellated tetrahedron) frame_pv at (-300, -300, 300)   -- an opaque mesh
 
-Ported from the baseline's tests/scene_fixture.py.
+``load`` imports and lowers it (test_lowering.py).
 """
 
 from lumen.build import lowering

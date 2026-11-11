@@ -13,8 +13,8 @@ rows every continuing outcome of the surface type whose reference probability is
 photon carries eps / q and ``Photon.z`` carries p / eps, exactly 0 in value and dp / eps in derivative. eps gives the
 floored outcomes the fixed share e = EDGE_BUDGET of the draws at that row, whatever the continuing reference mass S
 (a share that shrinks with 1 - S leaves the derivative's positive part to rare heavy-tailed draws on a reflector).
-The value pays e of the draws at an edge row (photons with z = 0); the estimand is unchanged (docs/dev/design.md
-section 8). A bulk lobe's parameter at an edge of its domain (the lobe's ``domains``: Mie's
+The value pays e of the draws at an edge row (photons with z = 0); the estimand is unchanged (docs/dev/architecture.md,
+"Photon state, step and estimator"). A bulk lobe's parameter at an edge of its domain (the lobe's ``domains``: Mie's
 forward ratio at 0 or 1) in ``wrt`` has its reference moved inside by the same share (``lobe_reference``); its live
 weight is the direction density's ratio.
 """

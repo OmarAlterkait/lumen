@@ -1,6 +1,5 @@
 """The float64 oracle: the batched point location equals the per-point one, a daughter is clipped to its mother, the
-query's first visible change (the thin-layer contract), an opaque mesh, and the torus roots. Ported from the
-baseline's tests/test_scene_oracle.py."""
+query's first visible change (the thin-layer contract), an opaque mesh, and the torus roots."""
 
 import numpy as np
 import scene_fixture as fixture

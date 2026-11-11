@@ -6,7 +6,7 @@ lined with a black sheet, with 12 disc PMTs. The file was written with two delib
 exporters produce, so that you can see how lumen reports them.
 
 Every code block comes from `examples/your_own_detector.py` and `examples/compare_with_geant4.py`, which run as they
-stand. The outputs shown are from one run of them (job Slurm job 44135330 on an NVIDIA A100, before the 0.1 naming pass, so the health key printed as `late` is `retired` after it).
+stand. The outputs shown are from lumen 0.1.1 on an NVIDIA A100.
 
 ```bash
 export LUMEN_DETECTORS=$PWD/lumen-examples/calibrations && mkdir -p $LUMEN_DETECTORS
@@ -50,16 +50,11 @@ How to fill it in for your detector:
 - **The sensor volumes.** One sensor group selects logical volumes, by name (`lv="PMT"`) or by a regular
   expression on the name (`lv_pattern=r"^PMT"`). Each placement of a selected volume becomes one sensor, numbered in
   placement order. The names are as your GDML writes them, including any `0x...` suffix an exporter added.
-- **The counting rule.** `border_into`: the photon is counted when it crosses the GDML border surface into the
-  sensor and that surface detects it (Geant4's own detection; with `model="lumen:pmt"` every photon absorbed on its
-  way in is counted, and the PMT's QE is applied after tracking). This is the rule for PMTs with a photocathode
-  surface. `any_entry`: every entry into the volume counts, for sensitive volumes without a detecting surface.
-- **A PMT whose interior is split into several volumes** (for example a vacuum volume behind the photocathode and
-  another behind the dynode, each a daughter of the glass body): choose the volume the photocathode's border surface
-  leads into. With `border_into` the photon is counted when it crosses that border surface from the body into the
-  selected volume, so select the volume on the far side of the photocathode surface (the GDML's
-  `<bordersurface>` names the pair: its second physical volume is the one to select); the other interior volumes
-  stay ordinary volumes. Select the same volume name in every PMT type with one regular expression (`lv_pattern`).
+- **The counting rule.** `border_into` (PMTs with a photocathode surface): a photon counts when it crosses the GDML
+  border surface into the sensor volume and that surface detects it (with `model="lumen:pmt"`, every absorption
+  there counts and the QE is applied after tracking). `any_entry` (sensitive volumes without a detecting surface): every entry counts.
+- **A PMT interior split into several volumes:** select the volume on the far side of the photocathode border, that
+  is, the second `physvolref` of its `<bordersurface>`. Use one `lv_pattern` that matches it in every PMT type.
 - **The surface reader**: `lumen:geant4` reads the detecting surface as stock Geant4 does. `lumen:complex_index` is
   for a photocathode surface whose GDML carries a complex refractive index (`RINDEX` and `KINDEX` tables, as some
   experiments' software writes for a thin-film cathode, which stock Geant4 10.7 ignores on a surface): it treats the
@@ -320,9 +315,9 @@ values. `scope="active"` writes only the detector volume, in a shell.
 
 ## 6. Check against Geant4 with g4ref
 
-g4ref is a small Geant4 10.7.4 application that reads a GDML file, shoots optical photons from point sources and
-records which sensor volumes they reach. lumen's validation uses it for every Geant4 comparison. It is not published
-yet; the commands below assume you have a build of it.
+g4ref is not published yet: this section assumes you have a build of it. g4ref is a small Geant4 10.7.4 application
+that reads a GDML file, shoots optical photons from point sources and records which sensor volumes they reach.
+lumen's validation uses it for every Geant4 comparison.
 
 **Charge.** Run g4ref and lumen on the same source, and compare the photons each sensor counts. With
 `--wcsim-hits`, g4ref counts a photon absorbed on its way into a sensor volume, which is what lumen's `border_into`

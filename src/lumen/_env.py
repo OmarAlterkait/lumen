@@ -1,23 +1,18 @@
-"""The only place lumen reads the environment.
+"""The only place lumen reads the environment (style rule 8).
 
-lumen reads three variables and nothing else:
+What it reads, and the function that reads it:
 
-- ``LUMEN_DATA``: where shared reference data lives.
-- ``LUMEN_DETECTORS``: a search path (``os.pathsep``-separated) of directories holding detector files and
-  calibrations.
-- ``LUMEN_CACHE``: the per-user cache root. Unset, it is ``$XDG_CACHE_HOME/lumen`` (``~/.cache/lumen``).
-
-It reads whether a GPU is expected (``gpu_expected``: ``JAX_PLATFORMS``, else Slurm's GPU allocation), so a run that
-expects one never falls back to the CPU silently (``lumen.run.DeviceError``).
-
-It also resolves the photon loop's CUDA kernel cache for tallymap (``tallymap_cache``): ``TALLYMAP_CUDA_CACHE``,
-else ``<LUMEN_CACHE>/tallymap``, never under HOME (tallymap's own default is ``~/.cache/tallymap``).
-
-And it turns on JAX's persistent compilation cache when this module is imported (``xla_cache``): an explicit
-``JAX_COMPILATION_CACHE_DIR`` (JAX reads it itself) or a directory already set in ``jax.config`` is respected;
-otherwise ``<LUMEN_CACHE>/xla``, and never under HOME (then the cache stays off). On jax 0.6.2 a program loaded from
-the cache is bitwise the one a fresh compile gives, on the CPU and the GPU (tests/physics/test_persistent_cache.py);
-on jax 0.5.3 it was not.
+- ``LUMEN_DATA`` (``data_dir``): where shared reference data lives.
+- ``LUMEN_DETECTORS`` (``detector_path``): a search path (``os.pathsep``-separated) of detector files and calibrations.
+- ``LUMEN_CACHE``, else ``XDG_CACHE_HOME``, else ``HOME`` (``cache_dir``): the per-user cache root,
+  ``$XDG_CACHE_HOME/lumen`` (``~/.cache/lumen``) when ``LUMEN_CACHE`` is unset.
+- ``JAX_PLATFORMS``, else Slurm's ``SLURM_JOB_GPUS``, ``SLURM_STEP_GPUS``, ``SLURM_GPUS_ON_NODE`` (``gpu_expected``):
+  whether a GPU is expected, so a run that expects one never falls back to the CPU silently (``DeviceError``).
+- ``TALLYMAP_CUDA_CACHE`` (``tallymap_cache``): tallymap's CUDA kernel cache; unset, ``<LUMEN_CACHE>/tallymap`` (set
+  here for tallymap), never under HOME.
+- ``JAX_COMPILATION_CACHE_DIR`` (``xla_cache``, at import): JAX's persistent compilation cache; unset, and none set in
+  ``jax.config``, ``<LUMEN_CACHE>/xla``, never under HOME (then it stays off). Why a cached program is safe on the
+  pinned jax: docs/dev/decisions.md, "jax pinned to 0.6.2".
 """
 
 from __future__ import annotations

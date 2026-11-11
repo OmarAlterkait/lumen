@@ -1,6 +1,6 @@
 """The volume tree of a Scene (lumen.build.tree) on small hand-built Scenes: one PV per world instance, mothers through
 assemblies, sensor ids in the canonical order, unique names, fail-closed checks; relabelling by region (clones only
-where instances differ). Ported from the tree parts of the baseline's tests/test_adapters_geometry.py."""
+where instances differ)."""
 
 import numpy as np
 import pytest

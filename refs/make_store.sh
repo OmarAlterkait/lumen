@@ -20,7 +20,8 @@ sha() { sha256sum "$1" | cut -d' ' -f1; }
 wcsim() {   # wcsim FILE DET COMMIT IMAGE GEANT4 RESPONSE
   cat > "$1" << EOF
 {"tool": "WCSim", "repository": "$4", "commit": "$3", "image": "$5", "image_sha256": "$(sha "$5")", "geant4": "$6",
- "macro": "refs/wcsim/macros/$2.mac (lumen-b1)", "harness": "refs/wcsim/run.sh hits (lumen-b1)",
+ "macro": "WCSim macro $2.mac (kept outside the repository)",
+ "harness": "WCSim run with its true-hits output (the harness is kept outside the repository)",
  "response": "$7", "hit": "a photon absorbed at WCSim's photocathode boundary (glass to InteriorWCPMT), true hits of trigger 0"}
 EOF
 }

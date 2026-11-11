@@ -1,4 +1,4 @@
-"""The surface lookup (lumen.build.surfaces, lumen.rules.boundary; the baseline's tests/test_classes.py): classes
+"""The surface lookup (lumen.build.surfaces, lumen.rules.boundary): classes
 from symbolic signatures, Geant4 border/skin precedence and defaults, the guards (surface conflicts in a class pair,
 invisible self-crossings), fail-closed bindings, sensor tags, and static tables that do not depend on parameter values
 or input order."""

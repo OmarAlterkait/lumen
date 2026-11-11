@@ -2,8 +2,7 @@
 matrix unit attribute, constants, '0x' names, Geant4-10 keys inert under 11, enum-valued surface attributes), media
 and surfaces with Geant4 semantics (each supported case, each refused one), Geant4's GROUPVEL group index and WLS /
 scintillation sampler against literal numpy translations, the WLS film (its numbers and checks), spectral surface
-params through the compiler, and border surfaces on a tree (the baseline's tests/test_gdml_optics.py and the import
-parts of tests/test_coated.py)."""
+params through the compiler, and border surfaces on a tree."""
 
 import dataclasses
 import math

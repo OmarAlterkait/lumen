@@ -3,42 +3,22 @@
     report = lumen.gdml.export("sk.lumen", "sk_export.gdml", scope="full")    # ExportReport
     result = lumen.gdml.read_export("sk_export.gdml")                         # ImportResult: detector file, sensors
 
-The exporter is the exact inverse of the reader and the importer: ``read_export(export(df, scope="full"))`` is ``df``
-bit for bit on every content file of ``lumen.format.io.to_files`` and on the head fields, and two exports of one
-detector file are byte-identical (the order of everything written is a function of the content). What Geant4 can
-read goes into the GDML; the recipe's layer goes into the sidecar ``<path>.lumen.json`` (canonical JSON), which
-``read_export`` re-applies: the detector volume, wavelength range, outside, build options, provenance and report,
-every optics model that is not the default, the recipe's properties' origin, the recipe's own surfaces and skins, the
-borders' binding, the sensor sets with their id maps, what was omitted and the g4ref arguments.
+Contract: ``read_export(export(df, scope="full"))`` is ``df`` bit for bit on every content file of
+``lumen.format.io.to_files`` and on the head fields, and two exports of one detector file are byte-identical. What
+Geant4 can read goes into the GDML; the recipe's layer (detector volume, wavelength range, outside, provenance and
+report, non-default optics models, the recipe's surfaces, skins and border bindings, the sensor sets, what was
+omitted, the g4ref arguments) goes into the sidecar ``<path>.lumen.json``, which ``read_export`` re-applies.
 
-Numbers (``lumen.gdml.units``): each value is the shortest repr of the stored double with its decimal point moved to
-Geant4's internal unit by exact decimal arithmetic (lengths m to mm, energies eV to MeV), a bare literal: lengths
-under ``lunit="mm"`` / ``unit="mm"``, angles in rad under ``aunit="rad"`` / ``unit="rad"``, energies as bare MeV
-tokens in matrices. No expressions, no constants, no matrix ``unit``. Geant4 reads each literal as the correctly
-rounded double (strtod; the unit is 1), and every literal is checked to read back to the stored double exactly as
-lumen's reader reads it.
+Numbers (``lumen.gdml.units``): each value is the shortest repr of the stored double moved to Geant4's internal unit
+by exact decimal arithmetic, written as a bare literal and checked to read back exactly. Order: what Geant4's
+one-pass reader (G4GDMLRead*) needs, placements in their stored order. Every opticalsurface attribute is written by
+name (G4GDMLReadSolids::OpticalSurfaceRead falls through to dichroic, Detector_LUT and x_ray on a missing one).
 
-Order (Geant4 reads in one pass, G4GDMLRead*): matrices, then the tet and tessellated vertices, in <define>;
-isotopes, elements, then materials after their components; solids after their constituents, then the optical
-surfaces (in <solids>, after the matrices they use); logical volumes daughters first, so that the placements come
-back in their stored order; skins, then borders, in stored order; userinfo; one setup named Default. Physvol
-transforms are written inline; a rotation, position or boolean transform only when some value is not +0.0. All four
-opticalsurface attributes are written, by name (Geant4 falls through to dichroic, Detector_LUT and x_ray on a missing
-or unknown string, G4GDMLReadSolids::OpticalSurfaceRead).
-
-Fails closed (``ExportError``): a border on a physvol name that is not unique (Geant4 binds the first one), a repeated
-border pair, two skins on one logical volume, a coated surface (GDML has no coated type), a model, finish or type
-Geant4 does not know, a non-finite or denormal value, a solid type the exporter has no spelling for, and placements
-in an order no GDML file can hold. Lossy (``on_lossy``): a surface whose optics model has no Geant4 form (e.g.
-"lumen:larsoft_reflector") raises under "error"; under "omit" it is not written, its record and those of its skins and
-borders go to the sidecar, the export is marked ``lossless: false`` and the g4ref arguments carry ``--refuse-lossy``
-(an option g4ref does not know, so it exits 2 rather than serve as a reference). A lowering of content the GDML holds
-natively ("lumen:wls_film": the TPB volume and the foil's skin are in the GDML) is not written and is not lossy.
-
-``scope="active"`` writes the detector volume in a shell (gdml_export.md section 4.4): its mother, made of the
-mother's material, with the mother's skin (or the detector's outside surface), as a box 1 mm larger than the
-detector's bounding box, inside boxes of a material with no RINDEX (Geant4 kills there), every transform as stored.
-``scope="full"`` writes the whole world.
+Fails closed (``ExportError``; the messages: docs/reference/errors.md, "Exporting to GDML"). Lossy (``on_lossy``): a
+surface whose optics model has no Geant4 form raises under "error"; under "omit" it goes to the sidecar, the export is
+marked ``lossless: false`` and the g4ref arguments carry ``--refuse-lossy`` (g4ref exits rather than serve as a
+reference). ``scope="active"`` writes the detector volume in a shell (its mother's material and skin, a box 1 mm larger
+than the detector, inside boxes with no RINDEX); ``scope="full"`` writes the whole world.
 """
 
 from __future__ import annotations
@@ -449,7 +429,7 @@ def _surface_users(df: schema.DetectorFile, sel: _Selection) -> list:
 
 
 def _matrices(df: schema.DetectorFile, sel: _Selection) -> tuple[dict, dict, list]:
-    """Name the matrices (gdml_export.md section 4.1, step 3).
+    """Name the matrices.
 
     Return (defines {name: (coldim, values)}, refs {(kind, owner, key): name}, renamed [[kind, owner, key, stored]]).
     A property keeps its stored matrix name when every property stored under that name has the same table; any other
@@ -788,7 +768,7 @@ def _comment(text: str) -> str:
 
 
 def _gdml_text(df: schema.DetectorFile, sel: _Selection, digest: str) -> tuple[str, list]:
-    """Return the GDML text and the matrix renames (gdml_export.md section 4.1, steps 4 and 5)."""
+    """Return the GDML text and the matrix renames."""
     defines, refs, renamed = _matrices(df, sel)
     solid_order = _post_order(df.solids, lambda n: df.solids[n].refs)
     positions, facets = _vertices(df, solid_order)
@@ -1273,7 +1253,7 @@ def _geant4_sensors(sset: SensorSet, cols: dict) -> tuple[SensorSet, dict]:
     return dataclasses.replace(sset, groups=groups, ids=tuple(_strip_path(p) for p in sset.ids)), cols
 
 
-def export(df_or_path, path, *, calibration=None, sensors="default", scope="active", names="as_stored",  # noqa: PLR0913 -- the documented signature (DESIGN.md 4.7)
+def export(df_or_path, path, *, calibration=None, sensors="default", scope="active", names="as_stored",  # noqa: PLR0913 -- the documented signature
            target=TARGETS, on_lossy="error", sidecar=True) -> ExportReport:  # fmt: skip
     """Write a detector file (a ``.lumen`` path, a DetectorFile or an ImportResult) as GDML at ``path``.
 

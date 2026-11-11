@@ -1,6 +1,6 @@
 """The checks' statistics: errors from replicas, the pass rules, finite differences and the two-sample time test.
 
-Rules (docs/dev/design.md section 14):
+Rules (docs/dev/architecture.md, "Validation and tests"; docs/dev/decisions.md, 12 and 13):
 
 - a ratio passes when |z| <= ``Z_MAX`` (3);
 - a per-sensor Pearson chi2 / ndf passes when it is at most 1 + max(3 sqrt(2 / ndf), ``CHI2_FLOOR``): three standard

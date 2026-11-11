@@ -711,11 +711,11 @@
    "producer": {
     "commit": "e88314b31266255ed02a95ce87677f92d4c2db22",
     "geant4": "10.1.3",
-    "harness": "refs/wcsim/run.sh hits (lumen-b1)",
+    "harness": "WCSim run with its true-hits output (the harness is kept outside the repository)",
     "hit": "a photon absorbed at WCSim's photocathode boundary (glass to InteriorWCPMT), true hits of trigger 0",
     "image": "anniesoft_wcsim_latest.sif",
     "image_sha256": "e9aa1b236d096ce0796724a40bddfc82e5a2f17cb88682c1922bd055e5bfe56a",
-    "macro": "refs/wcsim/macros/annie.mac (lumen-b1)",
+    "macro": "WCSim macro annie.mac (kept outside the repository)",
     "repository": "ANNIEsoft/WCSim",
     "response": "QE kept (Multi_Tank_Types: no DoNotApplyQE in ANNIE's WCSim), collection efficiency off",
     "tool": "WCSim"
@@ -741,11 +741,11 @@
    "producer": {
     "commit": "e2dc7a48b1f83c74a541123542606a90d7b67a6f",
     "geant4": "10.3.3",
-    "harness": "refs/wcsim/run.sh hits (lumen-b1)",
+    "harness": "WCSim run with its true-hits output (the harness is kept outside the repository)",
     "hit": "a photon absorbed at WCSim's photocathode boundary (glass to InteriorWCPMT), true hits of trigger 0",
     "image": "hk-software_main.sif",
     "image_sha256": "53e28b7df7c1681eae8f8247c450874b3628e929716c8414846ccd7b082ae46f",
-    "macro": "refs/wcsim/macros/sk.mac (lumen-b1)",
+    "macro": "WCSim macro sk.mac (kept outside the repository)",
     "repository": "WCSim/WCSim",
     "response": "DoNotApplyQE, collection efficiency off, no dark noise",
     "tool": "WCSim"
@@ -771,11 +771,11 @@
    "producer": {
     "commit": "e2dc7a48b1f83c74a541123542606a90d7b67a6f",
     "geant4": "10.3.3",
-    "harness": "refs/wcsim/run.sh hits (lumen-b1)",
+    "harness": "WCSim run with its true-hits output (the harness is kept outside the repository)",
     "hit": "a photon absorbed at WCSim's photocathode boundary (glass to InteriorWCPMT), true hits of trigger 0",
     "image": "hk-software_main.sif",
     "image_sha256": "53e28b7df7c1681eae8f8247c450874b3628e929716c8414846ccd7b082ae46f",
-    "macro": "refs/wcsim/macros/wcte.mac (lumen-b1)",
+    "macro": "WCSim macro wcte.mac (kept outside the repository)",
     "repository": "WCSim/WCSim",
     "response": "DoNotApplyQE, collection efficiency off, no dark noise",
     "tool": "WCSim"

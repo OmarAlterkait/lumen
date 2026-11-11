@@ -1,4 +1,4 @@
-"""The extension API's derivatives (tier b): each extension point, AD against FD with ``lumen.validate.check_gradient``.
+"""The extension API's derivatives: each extension point, AD against FD with ``lumen.validate.check_gradient``.
 
 All on the shipped toy, ``examples/data/example_tank.gdml`` (a 1 m water cube, 8 disc PMTs, Rayleigh from Geant4's
 water formula, lumen:pmt with the tutorial's values), converted once per module. Every derivative is the forward mode

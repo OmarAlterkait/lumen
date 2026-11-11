@@ -46,7 +46,7 @@ def test_sk_spe_and_threshold_reproduce_wcsim():
     """The SK set's SPE table is WCSim's rn1pe (mean 0.9993 pe) and its threshold gives WCSim's A_1 = 0.7390."""
     m = _load("sk_r3600")
     mean, _ = m.charge.moments({"pdf": jnp.asarray(m.values["charge/pdf"])})
-    np.testing.assert_allclose(float(mean), 0.99935, atol=2e-5)  # refs_new/sk_consistency_reference.json spe_mean
+    np.testing.assert_allclose(float(mean), 0.99935, atol=2e-5)  # the SPE mean of WCSim's SK charge table
     v = m.split(m.defaults("pmt", 1), "pmt")
     v = {
         k: ({a: jnp.asarray(b, jnp.float32) for a, b in x.items()} if isinstance(x, dict) else x) for k, x in v.items()

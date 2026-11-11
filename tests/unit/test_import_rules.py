@@ -1,4 +1,4 @@
-"""The general import rules (lumen.build.import_rules): the film axis from the contact face per placement (D51), its
+"""The general import rules (lumen.build.import_rules): the film axis from the contact face per placement, its
 fail-closed cases, and absorbed at entry."""
 
 import dataclasses

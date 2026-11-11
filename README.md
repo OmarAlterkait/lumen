@@ -18,70 +18,26 @@ lumen is built for water Cherenkov detectors (Super-Kamiokande, WCTE, ANNIE) and
 MicroBooNE). It also works with any other detector you can describe in GDML. Its results are checked against Geant4
 and WCSim. The [validation report](docs/validation/report.md) lists the checks and what each one measured.
 
-**Status: 0.1.** The interfaces can still change, and lumen is not on PyPI. `simulate` differentiates optical values
-(absorption and scattering lengths, reflectivities, surface roughness), the source position and, through the readout,
-the PMT values; refractive indices are calibrated by value only.
-
-## Requirements
-
-- Linux with an **NVIDIA GPU** and a **CUDA 12** driver. lumen runs its photon loop through
-  [tallymap](https://github.com/OmarAlterkait/tallymap), which compiles a CUDA kernel for it.
-- Python 3.10 or newer.
-- Without a GPU, lumen falls back to tallymap's plain-JAX CPU backend. Its results agree with the GPU's to about
-  2.5e-4, but it compiles slowly and runs slowly. Use it for tests and for small photon counts (up to about 2^16
-  photons).
+**Status: 0.1.2.** The interfaces can still change, and lumen is not on PyPI. `simulate` differentiates optical
+values (absorption and scattering lengths, reflectivities, surface roughness), the source position and, through the
+readout, the PMT values; refractive indices are calibrated by value only. What changed between releases is in the
+[changelog](CHANGELOG.md).
 
 ## Install
 
-lumen pins exact versions of JAX and tallymap. Other versions change the photon loop's results bit for bit, or break
-its reverse-mode derivatives. One line installs lumen with both, in a fresh environment:
+lumen needs Linux, Python 3.10 or newer and, for full speed, an NVIDIA GPU with a CUDA 12 driver. In a fresh
+environment:
 
 ```bash
 python -m venv /path/to/envs/lumen && source /path/to/envs/lumen/bin/activate
 pip install "lumen[cuda] @ git+https://github.com/OmarAlterkait/lumen.git"
 python -c "import jax, lumen; print(lumen.__version__, jax.devices())"
+export LUMEN_CACHE=/path/with/space/lumen-cache         # compiled kernels and converted detectors
+export LUMEN_DETECTORS=/path/to/your/calibrations       # where your calibrations are saved
 ```
 
-That is the latest release: the repository's `main` moves only at releases. For a fixed version, name its tag:
-`pip install "lumen[cuda] @ git+https://github.com/OmarAlterkait/lumen.git@v0.1.2"`. Without `[cuda]` (plain `jax`),
-lumen runs on tallymap's CPU backend only. `pip install matplotlib` adds the tutorial's figures.
-
-To work on lumen itself, install a clone editable:
-
-```bash
-git clone https://github.com/OmarAlterkait/lumen.git
-pip install -e "lumen[cuda,dev]"
-```
-
-The `cuda` extra is `jax[cuda12]`: JAX's CUDA plugin and NVRTC, the compiler tallymap's CUDA backend uses; that is all
-`tallymap[cuda]` would add. tallymap is not on PyPI; lumen's dependency names its tag (v0.6.0rc1) on GitHub. The CUDA
-backend also builds a small C++ launch shim once, so a C++17 compiler must be on the PATH the first time.
-
-The last line should list a `CudaDevice`. If it lists only `CpuDevice`, JAX did not find the CUDA driver. lumen still
-runs in that case, on the CPU backend.
-
-lumen keeps compiled kernels and converted detectors in a cache. Point the cache at a disk with some space, and name a
-directory for your calibrations. The variables, in one place:
-
-| Variable | What | Default |
-|---|---|---|
-| `LUMEN_CACHE` | lumen's cache root | `$XDG_CACHE_HOME/lumen` (`~/.cache/lumen`) |
-| `TALLYMAP_CUDA_CACHE` | tallymap's compiled CUDA kernels | `$LUMEN_CACHE/tallymap` (lumen sets it; tallymap's own default is `~/.cache/tallymap`) |
-| `JAX_COMPILATION_CACHE_DIR` | JAX's persistent compilation cache | `$LUMEN_CACHE/xla` (never under HOME) |
-| `CUDA_CACHE_PATH` | the NVIDIA driver's own cache | `~/.nv/ComputeCache` (set it if HOME is small) |
-| `LUMEN_DETECTORS` | where detector files and calibrations are saved and found (a search path) | none |
-| `LUMEN_DATA` | shared reference data (the validation checks) | none |
-
-```bash
-export LUMEN_CACHE=/path/with/space/lumen-cache
-export LUMEN_DETECTORS=/path/to/your/calibrations
-```
-
-The first run of a detector compiles its photon loop, which takes a few minutes. Later runs reuse the cache, in new
-processes too. A measured large detector (43,212 sensors, one NVIDIA L40S): convert and first load about 10 minutes,
-the first `simulate` 31 s, later ones 2.2 s at 2^18 photons. At 2^18 photons from a point at the centre, 45 % of
-those sensors saw no light: choose the photon count from the light per sensor you need (the Monte Carlo error of a
-sensor's expected light falls as 1 / sqrt(photons)), and check `Light.arrivals_error`.
+The last Python line should list a `CudaDevice`. [Installing lumen](docs/howto/install.md) has the details: the
+pinned versions, running without a GPU, every cache variable, compile times and a fixed-version install.
 
 ## Quick start
 
@@ -106,10 +62,12 @@ Then follow the tutorial.
 
 ## Documentation
 
+- [Installing lumen](docs/howto/install.md): GPU or CPU, the pinned versions, the caches and their variables.
 - [The first hour](docs/tutorial/first-hour.md): the toy detector, what the numbers mean, a hit map, derivatives,
   a fit and a waveform.
 - [Your own detector](docs/howto/your-own-detector.md): import your GDML, read the repair warnings, simulate,
   calibrate, export, and check against Geant4.
+- [Extending lumen](docs/howto/extending.md): your own source, sensor response, medium or surface model.
 - [Errors](docs/reference/errors.md): the errors lumen raises, what each means, and the fix.
 - [Vocabulary](docs/reference/vocabulary.md): the words lumen uses.
 - Background: [parameters](docs/explanation/parameters.md), [known limits](docs/explanation/known-limits.md) and
@@ -117,7 +75,8 @@ Then follow the tutorial.
 
 ## Citing
 
-If you use lumen in a publication, please cite this repository. A `CITATION.cff` file will come with the 0.1 release.
+If you use lumen in a publication, please cite it as [`CITATION.cff`](CITATION.cff) says (GitHub's "Cite this
+repository" button reads it).
 
 ## Licence
 

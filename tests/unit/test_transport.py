@@ -1,6 +1,5 @@
 """The transport's host-free pieces: the estimator (proposal, choice, edge rows and floor), the photon's parts, the
-default item's cells and the trace's integer halves. The step itself is gated against the baseline on six detectors
-(the port's check_a6.py) and by the physics tier (tests/physics)."""
+default item's cells and the trace's integer halves. The step itself is checked by the physics tier (tests/physics)."""
 
 import types
 
@@ -20,7 +19,7 @@ F32 = jnp.float32
 
 
 def baseline_defensive(p_ref, mix):
-    """The baseline's lumen.estimator.defensive, verbatim: the port is its mix 0."""
+    """A defensive mixture proposal, written out literally: the estimator is its mix 0."""
     p_ref = jax.lax.stop_gradient(p_ref)
     sup = p_ref > 0.0
     tot = jnp.sum(p_ref)
@@ -210,7 +209,7 @@ def _rot_x(a):
 
 
 def test_the_hit_angle_reads_only_the_sensors_own_pose():
-    """docs/dev/design.md section 12: the CE coordinate of a crossing point, frame by frame (study test-plan item 1).
+    """docs/dev/decisions.md, 10: the CE coordinate of a crossing point, frame by frame.
 
     (a) inside a glass mother and (b) straight in the water: one world pose, one angle (the mother never enters);
     (c) turned 180 degrees about x, its cathode with it: the same angle;

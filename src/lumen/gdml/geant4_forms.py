@@ -1,6 +1,6 @@
 """Geant4 forms of lumen surface models: the Geant4 opticalsurface that makes Geant4 simulate what the model does.
 
-The surface-model contract's ``geant4_form`` (gdml_export.md section 4.3), for the models lumen ships: an export writes
+The surface-model contract's ``geant4_form``, for the models lumen ships: an export writes
 the form in place of the model's record (the record itself goes to the sidecar, so ``read_export`` restores it), and
 the export stays lossless. A model with no entry here has no Geant4 form: lossy (``on_lossy``).
 

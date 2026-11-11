@@ -41,6 +41,6 @@
    "single_scatters": 184688
   }
  },
- "source": "the g4ref Mie toy of the lumen redesign study labels_and_mie.md section 2.2 (Slurm job 43873743): 4e6 photons at 3 eV, MIEHG 20 m, RINDEX 1.33, a detecting sphere at 1 m; analysis scripts/analyse.py",
+ "source": "the g4ref Mie toy: 4e6 photons at 3 eV, MIEHG 20 m, RINDEX 1.33, a detecting sphere at 1 m",
  "what": "G4OpMieHG single-scatter angle distributions: the weighted cos(theta) histogram (40 bins on [-1, 1], normalised: obs, err) of single scatters selected from a pencil beam in a Mie-only medium, and the exact bin masses of three readings (A_mirror is Geant4's: r HG(g_f) + (1 - r) HG(-g_b))"
 }

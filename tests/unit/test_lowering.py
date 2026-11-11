@@ -1,7 +1,6 @@
 """The lowering on a small GDML (scene_fixture.py): Geant4's placement conventions (passive physvol rotation, active
 boolean rotation, reflection by a negative scale, assemblies), the envelope dissolve, sibling holes, the sensor rule
-(one PATH id per world instance), the detector subtree, fail-closed unsupported solids, and the exact union split.
-Ported from the baseline's tests/test_scene_build.py."""
+(one PATH id per world instance), the detector subtree, fail-closed unsupported solids, and the exact union split."""
 
 import math
 

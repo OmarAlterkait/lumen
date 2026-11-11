@@ -1,7 +1,6 @@
 """The light sources (lumen.sources): random numbers, closed forms per source type, chunks, parameters, derivatives.
 
-The bitwise comparison with the baseline's emitted photons is the port's a9s_check_sources.py on stored goldens;
-here each source is checked against what it must be: yields, the cone angle, spectrum moments, time profiles.
+Each source is checked against what it must be: yields, the cone angle, spectrum moments, time profiles.
 """
 
 import dataclasses

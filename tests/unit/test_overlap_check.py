@@ -1,6 +1,6 @@
 """The overlap check (lumen.validate.overlaps): Geant4's preconditions tested on the navigator -- an overlapping
 sibling pair and a protruding daughter found, a clean scene clean, the pieces of one split union passed, a mesh's
-pass-through reported. Ported from the check tests of the baseline's tests/test_navigator.py."""
+pass-through reported."""
 
 import numpy as np
 from nav_toys import nav_of, scene_mesh, scene_overlap, scene_split

@@ -2,11 +2,11 @@
 
     rows = gradients.check("sbnd", reverse=True)       # the manifest's "sbnd" entry: its sources and wavelength
 
-Families are discovered from the detector's packed parameters (only declared ones exist: docs/dev/design.md section
-6.2): every medium's absorption and scattering lengths and re-emission constants (multiplied: v (1 + th)), every surface
-type's parameters per row: a probability parameter (the surface type's ``domain``: a fraction in [0, 1], a film's yield
-or thickness in [0, inf)) added at min(v - lo, hi - v) (a row at an edge of its domain: one-sided, inward), others
-multiplied. Refractive indices are not differentiated (moving_paths+reweight, not available in 0.1).
+Families are discovered from the detector's packed parameters (only declared ones exist: docs/dev/architecture.md,
+"Parameters"): every medium's absorption and scattering lengths and re-emission constants (multiplied: v (1 + th)),
+every surface type's parameters per row: a probability parameter (the surface type's ``domain``: a fraction in [0, 1], a
+film's yield or thickness in [0, inf)) added at min(v - lo, hi - v) (a row at an edge of its domain: one-sided, inward),
+others multiplied. Refractive indices are not differentiated (moving_paths+reweight, not available in 0.1).
 
 Per family, on K replicas of ``photons`` photons (one run; the same photons and keys on every side):
 
@@ -22,7 +22,8 @@ F(h / 4)), the fixed-reference stencil when it moves no draw. A family whose AD 
 drawn (the edge rows proposed it, or it moves no draw) is "zero" (``judge_zero``): gated on the FD and FDX totals
 being 0, not on the groups' spread, which then measures only FD noise. Russian roulette is off in the comparison.
 ``reverse``: ``jax.grad`` of a fixed random weighting of Q and Tw against the same weighting of the forward
-derivatives (lumen's own reverse check; tallymap's runtime replay is not used).
+derivatives (lumen's own reverse check; tallymap's runtime replay is not used). Why each band is what it is:
+docs/dev/validation.md.
 """
 
 from __future__ import annotations
@@ -49,7 +50,7 @@ TRUNCATION_STEPS = 2  # h-scan steps of a family whose FD resolves its own trunc
 # ZERO: a family whose AD is exactly 0 on every output while the edge rows proposed its outcome (or it moves no draw)
 # is structurally zero (a dead end: ANNIE's LAPPD glass T); an exactly-0 AD with the outcome never proposed (the
 # edge rows missing) is not, and stays gated as any family
-INFINITE_VARIANCE = ("polish",)  # GLISUR's polish: unbiased, infinite variance (docs/dev/design.md section 9)
+INFINITE_VARIANCE = ("polish",)  # GLISUR's polish: unbiased, infinite variance (docs/dev/architecture.md, "Gradients")
 NO_DRAW = 1e-5  # shared- and fixed-reference FD closer than this (relative): the family moves no draw
 REVERSE = 1e-4  # |reverse - forward| relative to the family's forward derivative
 CONVERGED = 2.0  # |z| of F(4h) - F(h) below which the edge h-scan stops

@@ -749,11 +749,8 @@ def lower(df, detector=None, sensors=None, **options):
 
     Notes
     -----
-    ``lower_holes``: a hole of a subtraction (A - B, B split through its unions and multi-unions) that is a sibling
-    placement -- the same solid at the same pose in the same mother (WCSim's black sheets: the PMTs cut out of the
-    sheet they sit in) -- is left out of A, and the subtracted volume is placed before those siblings, which then
-    outrank it (Geant4's locate: later siblings first). Exact: every point of the hole lies in the sibling, which
-    wins it either way; a hole matching no sibling stays subtracted.
+    ``lower_holes`` (on by default): a hole of a subtraction (A - B, B split through its unions and multi-unions)
+    that is a sibling placement is left out of A, and A is placed before those siblings (docs/dev/decisions.md, 14).
 
     ``dissolve``: a placed volume of its mother's material with no skin surface, no border surface with its mother,
     no holes, not kept (sensors), every daughter proven inside it (``solids.box_inside`` on the daughter's box:

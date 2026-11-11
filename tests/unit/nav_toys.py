@@ -1,8 +1,4 @@
-"""Small scenes for the navigator tests, built with the scene builder (metres), and the batched-call helpers.
-
-Ported from the baseline's tests/test_navigator.py (its scenes, there in Geant4's mm); the walk against the float64
-oracle is the baseline's ``_walk_check``.
-"""
+"""Small scenes for the navigator tests, built with the scene builder (metres), and the batched-call helpers."""
 
 import functools
 

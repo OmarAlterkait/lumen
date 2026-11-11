@@ -4,9 +4,7 @@ in the glass directly, the border on glass -> cavity). The float32 geometry merg
 crossing (glass -> cavity); glass -> shell is a pass pair, so the class pair's kernel is the cathode's, as with the
 shell dissolved (g4ref: a 1 um shell detects as a 0.1 mm one).
 
-Ported from the navigator part of the baseline's tests/test_coincident.py; its transport toys (the charge with and
-without the shell, the reflecting coincident face) come with the transport. Its class-compiler tests are in
-test_surfaces.py."""
+The surface lookup's side of coincident faces is in test_surfaces.py."""
 
 import numpy as np
 from nav_toys import defn, make_scene, per_ray

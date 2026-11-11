@@ -1,6 +1,6 @@
-"""LArSoft's public optics (lumen.detectors.larsoft_optics): the tables as detector-file Property records give the
-baseline's LAr medium and steel reflector exactly; and the compile-level part of the baseline's
-tests/test_lartpc_toy.py (an LAr sensor in LAr has its own class, a same-material active volume is no boundary)."""
+"""LArSoft's public optics (lumen.detectors.larsoft_optics): the tables as detector-file Property records give LArSoft's
+LAr medium and steel reflector exactly; an LAr sensor in LAr has its own class, a same-material active volume is no
+boundary."""
 
 from decimal import Decimal
 

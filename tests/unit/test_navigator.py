@@ -1,7 +1,7 @@
 """The navigator (volume tracking) against the float64 oracle on small scenes: point location, the first visible change
 from random points, walks continued from each hit by surface identity (no push), the live t's derivatives against
-float64 finite differences, frame groups (rotated wires), split unions, meshes and the zero-length rules. Ported from
-the baseline's tests/test_navigator.py (the overlap check's tests are in test_overlap_check.py)."""
+float64 finite differences, frame groups (rotated wires), split unions, meshes and the zero-length rules (the overlap
+check's tests are in test_overlap_check.py)."""
 
 import jax
 import jax.numpy as jnp

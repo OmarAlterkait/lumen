@@ -1,8 +1,7 @@
 """The GDML reader (lumen.gdml.reader): the expression evaluator, lengths in metres, fail-closed reading, and the
 exporter defects Geant4 refuses (denormal numbers, identical re-definitions, matrices not a multiple of coldim,
 non-finite matrix values): each repaired with a warning (tests/unit/test_gdml_repairs.py has one toy per
-case and Geant4's verdicts); a conflicting re-definition is an error. Ported from the baseline's
-tests/test_scene_gdml.py."""
+case and Geant4's verdicts); a conflicting re-definition is an error."""
 
 import math
 

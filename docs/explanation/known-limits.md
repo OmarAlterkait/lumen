@@ -1,6 +1,6 @@
 # Known limits
 
-Measured limits of lumen 0.1: where a value or a derivative is less accurate than float32 suggests, with the toy that
+Measured limits of lumen 0.1.x: where a value or a derivative is less accurate than float32 suggests, with the toy that
 shows it and the reason it is accepted.
 
 ## The absorbing Fresnel reflectance's derivative in the absorption index, at small index
@@ -17,36 +17,21 @@ error of about 1e-7, so at nk = 1e-6 its relative error is a few per cent. No re
 regions the derivative is accurate to 1e-3 for every nk. At grazing incidence the derivative also goes to 0 as R goes
 to 1, so its float32 value is an absolute ~1e-7 against a float64 ~1e-16: harmless.
 
-**The toy** (the port's gate tooling, kept outside the repository) prints, per nk from 1e-6 to 1.5, how many of
-815 (incidence, index) points have a float32 derivative more than 1e-3 from float64, away from and at grazing
-incidence, and for each detector file the smallest IMAGINARYRINDEX or KINDEX of its surfaces. Measured (2026-11-09):
-away from grazing incidence, 10 points above 1e-3 at nk = 1e-6 (largest 6 %), 7 at 1e-5 (0.4 %), none from 1e-4
-up; at grazing incidence (cos_i <= 1e-3) the absolute error reaches 0.15 to 0.28 for nk <= 1e-4, where the derivative
-itself is up to ~1e5, and falls to 6e-8 at nk = 1.5.
+**How large.** Away from grazing incidence, at nk = 1e-6 the largest error is 6 %, at 1e-5 0.4 %, and from 1e-4 up
+below 1e-3. The measurement is in [the developer notes on validation](../dev/validation.md#the-absorbing-fresnel-derivative).
 
 **Who is affected.** None of the public detectors (SK, WCTE, ANNIE, SBND, MicroBooNE) has a complex-index surface. A
 detector with a photocathode or metal of nk below 1e-4 should not differentiate nk near the critical angle.
 
-## ANNIE's LAPPDs are not sensors: the LAPPD glass's transmittance has a zero derivative
+## ANNIE's LAPPDs are not sensors in 0.1
 
-**What.** In lumen 0.1 ANNIE's sensor set reads its PMTs only (`lumen:pmt`); the LAPPDs are not sensors, because
-their electronics (not a PMT model) come with the non-PMT sensor models of 0.2. A photon that enters an LAPPD's
-interior (`InteriorWCLAPPD`) is therefore never detected. The LAPPD glass face's surface
-(`GlassCathodeSurface`, a DIELECTRIC_RT with TRANSMITTANCE 0) has a T family whose derivative is exactly 0:
-T only sends photons into that interior. The gradient check reports it as "zero" (`lumen.validate.gradients`,
-`judge_zero`): its AD is exactly 0 although the edge rows propose the transmitted outcome, and it is gated on the
-FD and FDX totals being consistent with 0. That is the physics of this sensor set, not the "edge rows missing" bug
-(an exactly-zero AD with the outcome never proposed, which the check still fails).
+ANNIE's sensor set reads its PMTs only. LAPPD electronics come with the non-PMT sensor models of 0.2. Light that enters
+an LAPPD is therefore never detected. As a result, the derivative with respect to the LAPPD glass's TRANSMITTANCE
+(`surfaces/GlassCathodeSurface/TRANSMITTANCE`) is exactly 0: more transmission only sends light where nothing counts
+it. The gradient check reports this parameter as "zero". This is correct for this sensor set, not a bug.
 
-**The measurement** (the port's gate tooling, 2^20 photons): of 2^20 photons from the
-gradient check's sources, 93,382 enter an LAPPD interior at T = 0 and 127,019 at T = 1 - R = 0.68; the charge they
-deposit afterwards is exactly 0 in both, with no lost weight. With the edge rows on, the transmitted outcome is
-drawn 481 times in 92,740 crossings of that surface (2^19 photons) and the AD stays exactly 0; the FD is
--7.0e-4 +- 4.4e-4 per photon. `tests/physics/test_edge_rows.py` checks the same estimator on a toy with a closed
-form (dQ/dT = exp(-0.75 / L) per photon at T = 0+).
-
-**Who is affected.** ANNIE until its LAPPDs are sensors (0.2); any detector whose transmitting surface leads only into
-volumes that are not sensors and from which light does not return.
+**Who is affected.** ANNIE until 0.2; any detector whose transmitting surface leads only into volumes that are not
+sensors and from which light does not return.
 
 ## A full detector on the CPU
 

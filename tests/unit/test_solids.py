@@ -1,8 +1,7 @@
 """The host CSG model (lumen.build.solids): Geant4's solids against their defining inequalities (float64 point
 membership), exact boxes, the box proofs, flattening, the shared-plane rewrite and the polygon helpers.
 
-The baseline's tests/test_scene_solids.py tests the float32 ray kernels, which come with the navigator; these test the
-host model those kernels are built from."""
+The float32 ray kernels are tested with the navigator; these test the host model those kernels are built from."""
 
 import math
 

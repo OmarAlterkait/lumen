@@ -1,4 +1,4 @@
-"""Closed-form physics through the navigator and the step (tier b), on the toys of ``toys.py``.
+"""Closed-form physics through the navigator and the step (the physics tier), on the toys of ``toys.py``.
 
 - a point source at the centre of a specular sensor sphere: Q/N = (1 - R) e^(-a/L) / (1 - R e^(-2a/L)), each photon
   deterministic, so value and derivatives (R, L) are exact to float32;

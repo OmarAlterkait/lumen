@@ -1,8 +1,9 @@
 # Developer vocabulary
 
-lumen's words (the glossary) against the terms of the code it was ported from, its design studies and tallymap.
-The design is in `docs/dev/design.md`. Terms marked *dev* stay in developer documentation and code; user-facing text (tutorials, error messages,
-`__repr__`, public docstrings) uses only the right-hand words, checked by `tools/hooks/jargon.py`.
+lumen's words (the user glossary, `docs/reference/vocabulary.md`) against older or internal terms that still appear
+in code, old commit messages and tallymap. The architecture is in `architecture.md`. Terms marked *dev* stay in
+developer documentation and code; user-facing text (tutorials, error messages, `__repr__`, public docstrings) uses
+only the right-hand words, checked by `tools/hooks/jargon.py` (style rule 10).
 
 | Old / internal term | lumen's word | Where it lives |
 |---|---|---|
@@ -46,10 +47,8 @@ The design is in `docs/dev/design.md`. Terms marked *dev* stay in developer docu
 | probes | **diagnostics** | `lumen.diagnostics` |
 | band | **float32 tolerance** | `rules/navigation.py` |
 | FDX, CRN FD | **fixed-reference finite difference**, **same-random-number finite difference** | `lumen.validate.gradients` |
-| E1 | **charge check** (`lumen validate charge`) | `lumen.validate` |
-| D1 | **gradient check** (`lumen validate gradients`) | `lumen.validate` |
-| G1 / G2 | **geometry-import check** / **overlap check** | `lumen.validate` |
-| R1 / R2 / R3 | **WCSim digit check** / **SBND waveform check** / **sensor-set provenance check** | `lumen.validate` |
-| T1-T9 | **readout toys** | `tests/unit` |
-| G-e1, G-d1, G-bit, G-path | *dev* port gates **G-charge, G-gradient, G-bit, G-path** | port records (outside the repo) |
-| B0, Phase A/B/C | *dev*: the baseline (`rebuild/next` + item-4 + d1) and the port phases | port records (outside the repo) |
+| charge check, gradient check, geometry-import check, overlap check | `lumen validate charge`, `gradients`, `geometry`, `overlaps` | `lumen.validate` |
+| readout toys | closed-form tests of the readout | `tests/unit/readout_toys.py` |
+
+Old commit messages also use plan codes (letters with numbers, such as gate and step names); they refer to records
+kept outside the repository and carry no meaning in the code.

@@ -14,8 +14,8 @@ authors = [{ name = "Omar Alterkait" }]
 classifiers = ["Private :: Do Not Upload"]
 dependencies = [
     "numpy>=1.24",
-    # jax is pinned exactly (port/gates/jax_versions.json: 0.5.3's CPU thunk runtime misses faces with the persistent
-    # cache on; tallymap 0.6.0rc1 is tested on 0.6.2, 0.11.2 measured); the development lock is kept with the site tooling, outside the repository
+    # jax is pinned exactly: docs/dev/decisions.md, 7 (0.5.3's CPU runtime missed faces with the persistent cache on;
+    # tallymap 0.6.0rc1 is tested on 0.6.2)
     "jax==0.6.2",
     "jaxlib==0.6.2",
     "scipy>=1.10",  # spatial search of sibling placements (scipy.spatial.cKDTree) in the geometry lowering
@@ -29,7 +29,7 @@ lumen = "lumen.cli:main"
 [project.optional-dependencies]
 # the GPU: JAX's CUDA plugin and NVRTC, the compiler tallymap's CUDA backend uses
 cuda = ["jax[cuda12]==0.6.2"]
-# tier (a) runs on 4 workers (pytest tests/unit -n 4): pytest-xdist and its transport execnet
+# the unit tests run on 4 workers (pytest tests/unit -n 4; docs/dev/README.md): pytest-xdist and its transport execnet
 test = ["pytest>=8", "pytest-xdist>=3.6,<4", "execnet>=2.1,<3"]
 dev = ["pytest>=8", "pytest-xdist>=3.6,<4", "execnet>=2.1,<3", "ruff>=0.8,<0.9", "mypy>=1.13,<2", "pre-commit>=4,<5"]
 
@@ -44,7 +44,7 @@ fallback-version = "0.0.0"
 packages = ["src/lumen"]
 
 [tool.hatch.build.targets.sdist]
-# an explicit list: untracked files, cluster/ (site paths) and tools/ never ship
+# an explicit list: untracked files, examples/, refs/ and tools/ never ship
 only-include = ["src", "tests", "docs", "README.md", "LICENSE", "NOTICE", "pyproject.toml"]
 
 [tool.ruff]
@@ -59,7 +59,7 @@ extend-exclude = ["*.json", "*.gdml", "*.toml", "*.md", "*.txt", "*.yaml", "*.ym
 select = ["E", "F", "W", "I", "B", "N", "ICN", "D", "C901", "PLR0912", "PLR0913", "PLR0915", "TID251", "T20",
           "PGH004", "RUF100"]
 # N806: short uppercase math names (R, T, Es) are allowed inside a function whose docstring has a Notation line
-# (style rule 1); ruff cannot see the Notation line, so review enforces it.
+# (docs/dev/style.md, rule 1); ruff cannot see the Notation line, so review enforces it.
 ignore = ["N806"]
 
 [tool.ruff.lint.per-file-ignores]
@@ -67,7 +67,6 @@ ignore = ["N806"]
 # B023: the tests and tools build closures over loop variables and call them at once, inside the loop
 "tests/**" = ["D", "T20", "B023", "N803", "PLR0913", "PLR0915"]
 "tools/**" = ["D", "T20", "TID251", "B023", "PLR0912", "PLR0913", "PLR0915", "C901"]
-# imports the baseline's modules under the baseline's own short names, so the case code reads like the baseline's
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
@@ -81,14 +80,14 @@ max-branches = 12
 max-statements = 50
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
-"os.environ".msg = "Read the environment only in lumen._env (style rule 8)."
-"os.getenv".msg = "Read the environment only in lumen._env (style rule 8)."
+"os.environ".msg = "Read the environment only in lumen._env (docs/dev/style.md, rule 8)."
+"os.getenv".msg = "Read the environment only in lumen._env (docs/dev/style.md, rule 8)."
 
 [tool.ruff.lint.isort]
 known-first-party = ["lumen"]
 
 [tool.mypy]
-# Host-side code only (style guide): device code is annotated with jax.Array and checked by its tests.
+# Host-side code only (docs/dev/style.md): device code is annotated with jax.Array and checked by its tests.
 python_version = "3.10"
 files = ["src/lumen/_env.py", "src/lumen/_cache.py", "src/lumen/format", "src/lumen/gdml", "src/lumen/params.py",
          "src/lumen/plugins.py"]

@@ -1,4 +1,4 @@
-"""The legacy Geant4 surface types: what each does at a crossing (docs/dev/design.md section 10).
+"""The legacy Geant4 surface types: what each does at a crossing (docs/dev/architecture.md, "Surfaces").
 
 A legacy surface type is static (hashed by identity). ``probs(p, ctx)`` returns the probabilities of the ten outcomes
 of ``lumen.surfaces.outcomes`` (shape (10,), summing to 1 by construction) and ``lobe_params(p, ctx)`` the parameters

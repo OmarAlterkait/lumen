@@ -2,9 +2,10 @@
 
     ph2, dep = step(model, ops, ph, key)
 
-The order of operations and the health counters: docs/dev/design.md section 8. Detection is expected, not sampled:
-every crossing deposits the DETECT share times the probability of reaching it, and the photon goes on with a
-continuing outcome or a bulk event. Distances are in m, times in ns; time advances with the medium's group velocity.
+The order of operations and the health counters: docs/dev/architecture.md, "Photon state, step and estimator". Detection
+is expected, not sampled: every crossing deposits the DETECT share times the probability of reaching it, and the photon
+goes on with a continuing outcome or a bulk event. Distances are in m, times in ns; time advances with the medium's
+group velocity.
 Geant4: G4OpBoundaryProcess, G4OpAbsorption, G4OpRayleigh, G4OpMieHG, G4OpWLS, G4Navigator.
 """
 
@@ -80,7 +81,7 @@ class Model:
 
 
 class Operands(NamedTuple):
-    """The traced inputs of the photon loop (docs/dev/design.md section 5); every field is an operand.
+    """The traced inputs of the photon loop (docs/dev/architecture.md, "Data flow and signatures"); every operand.
 
     ``nav``: the navigator's arrays (``Navigator.operands``); ``tables``: the facet, spectrum and clearance tables
     (``operands``).
@@ -528,9 +529,9 @@ def hit_angle(model, ops, ph, sc, out_side):
     on the sensor's surface is that position, in the frame of the sensor's placement (the volume entered, or for
     ``out_side`` the volume left). WCSim evaluates the same formula at the step's start point in the frame of the
     volume the step starts in (WCSimWCSD.cc:75-84, 220-224, e2dc7a4): with the sensor inside its glass, a proxy for the
-    crossing point off by the glass thickness (SK's expected PE -0.2 to -0.3 %, port/REPORT.md); with the sensor
-    placed straight in the detector volume, the angle of the photon's origin about that volume's centre, singular at
-    it. Evaluated as atan2(rho, |z|): finite derivatives on the axis.
+    crossing point off by the glass thickness (SK's expected PE -0.2 to -0.3 %); with the sensor placed straight in the
+    detector volume, the angle of the photon's origin about that volume's centre, singular at it (docs/dev/decisions.md,
+    10). Evaluated as atan2(rho, |z|): finite derivatives on the axis.
     """
     q, D = sc.q, geometry(model, ops).nav.dev()
     v = jnp.where(out_side, q["vol_before"], q["vol_after"])
@@ -542,8 +543,8 @@ def sensor_angle(R, t, x):  # noqa: N803 -- R a rotation matrix, as in the navig
 
     Only the sensor's own pose enters: the angle is the same whatever volume holds the sensor. The polar angle is about
     the sensor solid's origin and its local +z axis, signed (beyond 90 degrees behind the origin's plane; a declared
-    axis and reference point are 0.2 scope, port/REPORT.md). WCSim folds it with |z|; every crossing of SK's and
-    WCTE's cathodes has z > 0, so the two agree bitwise there (job 44177141).
+    axis and reference point: docs/dev/roadmap.md). WCSim folds it with |z|; every crossing of SK's and WCTE's cathodes
+    has z > 0, so the two agree bitwise there.
     """
     r = R.T @ (x - t)
     return jnp.arctan2(jnp.sqrt(r[0] * r[0] + r[1] * r[1] + 1e-30), r[2])

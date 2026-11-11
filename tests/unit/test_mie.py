@@ -1,6 +1,6 @@
 """Mie scattering, Geant4's G4OpMieHG: the lobe, its density, the channel and the reading of the material tables.
 
-The gate (labels_and_mie.md section 2.7, M-T1 to M-T3 and M-T5, plus the single-scatter distributions of the g4ref toy):
+What is checked:
 
 - the sampler is Geant4's inverse CDF, uniform for uniform, against a float64 literal port of PostStepDoIt;
 - the density is the two-lobe mixture, normalised, and the density of the sampler (chi2 in bins of exact mass);
@@ -191,8 +191,8 @@ def test_the_score_identity_and_finite_derivatives_forward_and_reverse():
             assert np.all(np.isfinite(np.asarray(leaf))), case
         for name, g in g_p.items():
             g = np.asarray(g, np.float64)
-            # the ratio's score at a ratio of 0 or 1 is unbounded where the absent lobe peaks (mean 0, labels_and_mie
-            # 2.5); every other score is bounded, and its mean is zero
+            # the ratio's score at a ratio of 0 or 1 is unbounded where the absent lobe peaks (its mean is still 0);
+            # every other score is bounded, and its mean is zero
             if name == "forward_ratio" and case[2] in (0.0, 1.0):
                 continue
             if name == "forward_ratio" and case[0] == -case[1]:  # two equal lobes: the ratio's score is 0

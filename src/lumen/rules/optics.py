@@ -13,15 +13,12 @@ Tables are linear in photon ENERGY between their knots and clamped to the end va
 lists every table whose knots do not cover a wavelength range. RINDEX is ``laws.geant4_rindex``: the same n(E), whose
 group index is Geant4's GROUPVEL.
 
-Media (G4OpAbsorption, G4OpRayleigh, G4OpMieHG, G4OpWLS): RINDEX gives the index (none: opaque, Geant4's NoRINDEX
-kill), ABSLENGTH the absorption, RAYLEIGH a Rayleigh channel (for a material named Water without one, Geant4's own
-table: ``geant4_rayleigh``), MIEHG with MIEHG_FORWARD, MIEHG_BACKWARD and MIEHG_FORWARD_RATIO a Mie channel (a double
-Henyey-Greenstein, ``phase.MIE_HG``: ``mie``), WLSABSLENGTH with WLSCOMPONENT a re-emitting channel (one photon,
-isotropic, Geant4's sampler: ``spectra.geant4_spectrum``); the channels in the order rayleigh, mie, wls. Refused: the
-second WLS, WLSMEANNUMBERPHOTONS on a bulk medium (lowered only on a film: ``wls_film``), a complex index, a nonzero
-WLSTIMECONSTANT without a declared time profile, and a Mie constant Geant4 would read but the material lacks. A user
-GROUPVEL (one that is not Geant4's own from RINDEX, which a GDML export writes: ``geant4_groupvel_export``) is not read,
-with a warning: photons are timed by RINDEX's group index, where Geant4 uses the table.
+Media (``medium``; the channels and their keys: docs/dev/architecture.md, "Bulk processes and sources"): no RINDEX is
+opaque (Geant4's NoRINDEX kill); a material named Water without RAYLEIGH gets Geant4's own table
+(``geant4_rayleigh``). Refused: WLS2, a bulk WLSMEANNUMBERPHOTONS (lowered only on a film: ``wls_film``), a complex
+index, a nonzero WLSTIMECONSTANT, a Mie constant Geant4 would read but the material lacks. A user GROUPVEL is not
+read, with a warning (docs/dev/decisions.md, 16; Geant4's own, from a GDML export, is recognised:
+``geant4_groupvel_export``).
 
 Surfaces (G4OpBoundaryProcess::PostStepDoIt, DielectricMetal, DoReflection; no table: R = 1, T = 0, efficiency 0):
 
@@ -40,10 +37,9 @@ The type does not depend on whether R or T is present on a polished surface: Gea
 absorbed where it lands: ``lumen.rules.boundary``). A WLS film's backing models no transmission (PAINTED): a
 TRANSMITTANCE on it is refused.
 
-Refused: the LUT, DAVIS and dichroic models and surface types, backpainted finishes, a ground dielectric_dielectric,
-a complex index, SURFACEROUGHNESS, a coated surface's keys, a nonzero EFFICIENCY outside DIELECTRIC_RT (a detecting
-surface is a sensor: ``sensor``), TRANSMITTANCE on a metal, a unified sigma_alpha outside [SIGMA_MIN, SIGMA_MAX] and
-a GLISUR polish below 0 or with 1 - polish below GLISUR_R_MIN.
+Refused (the messages: docs/reference/errors.md): LUT, DAVIS, dichroic, backpainted, ground dielectric_dielectric, a
+complex index, SURFACEROUGHNESS, coated keys, EFFICIENCY outside DIELECTRIC_RT (a detecting surface is a ``sensor``),
+TRANSMITTANCE on a metal, sigma_alpha outside [SIGMA_MIN, SIGMA_MAX], 1 - polish below GLISUR_R_MIN.
 
 Detecting surfaces (``sensor``): how a sensor's optical surface behaves during tracking, read by a reader
 (``reader(surface, lam_domain) -> SensorEntry``, registered in ``lumen.plugins.optics_models``), named by the sensor

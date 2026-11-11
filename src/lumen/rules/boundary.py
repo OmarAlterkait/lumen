@@ -18,7 +18,8 @@ the border surfaces by ordered PV pair, the library entries and which media are 
 A polished dielectric_dielectric surface (found at 2 or 3) between two PVs of one material is skipped (SameMaterial).
 A surface whose far-side outcome would put the photon into a medium without RINDEX: the Fresnel default absorbs
 (NoRINDEX); a frontpainted transmission is absorbed where it lands (Geant4 transmits, then kills the photon at its
-next step: ``legacy.into_opaque``); a stacked (coated) type never ends beyond its backing; any other is refused.
+next step: ``lumen.surfaces.types.into_opaque``); a stacked (coated) type never ends beyond its backing; any other is
+refused.
 
 A daughter's face may lie ON its mother's boundary (SBND's ullage under the cryostat roof; a float32-thin shell): the
 navigator then reports p -> q with the zero-thickness b between them skipped. Geant4 locates the photon directly in

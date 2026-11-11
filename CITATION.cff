@@ -1,10 +1,23 @@
 cff-version: 1.2.0
 message: "If you use lumen, please cite it as below."
-title: "lumen: differentiable optical photon transport for neutrino detectors"
+title: "lumen: a differentiable optical-photon simulation for neutrino detectors"
+abstract: >-
+  lumen reads a detector from GDML and traces optical photons through it with Geant4's optical physics, in JAX. It
+  records the light that reaches each sensor, turns it into photoelectrons, hit times, charges and PMT waveforms, and
+  gives derivatives of those outputs with respect to the detector's optical, sensor and source parameters.
 type: software
 authors:
   - family-names: Alterkait
     given-names: Omar
-version: 0.1.1
+version: 0.1.2
+date-released: "2026-11-11"
 repository-code: "https://github.com/OmarAlterkait/lumen"
 license: Apache-2.0
+keywords:
+  - optical photons
+  - differentiable simulation
+  - JAX
+  - Geant4
+  - neutrino detectors
+  - water Cherenkov
+  - liquid argon

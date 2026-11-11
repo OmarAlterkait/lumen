@@ -1,4 +1,4 @@
-"""The CUDA backend against tallymap's CPU backend: the same toy, photons and keys, within 2.5e-4 (D49).
+"""The CUDA backend against tallymap's CPU backend: the same toy, photons and keys, within 2.5e-4.
 
 The CPU backend sums in float32 (``exact=False``), the CUDA backend in exact fixed point, and XLA's CPU and GPU
 math differ in the last bits, so the two agree to a Monte Carlo tolerance, not bit for bit. The specular sensor
@@ -18,7 +18,7 @@ from lumen import run as runner
 from lumen.transport import item
 from lumen.validate import photons
 
-TOLERANCE = 2.5e-4  # relative, CPU against GPU (D49)
+TOLERANCE = 2.5e-4  # relative, CPU against GPU
 N, REPLICAS = 4096, 64  # replicas keep each float32 cell's sum short on the CPU (its sums are plain float32)
 
 

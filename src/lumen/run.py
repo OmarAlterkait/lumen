@@ -50,7 +50,7 @@ def _static(loop, model, max_vertices, replicas, diagnostics, backend):
     return (loop, model, int(max_vertices), int(replicas), tuple(diagnostics), backend)
 
 
-def run(  # noqa: PLR0913 -- docs/dev/design.md section 5's signature
+def run(  # noqa: PLR0913 -- the signature of docs/dev/architecture.md, "Data flow and signatures"
     loop, model, ops, rows, key, *, max_vertices=MAX_VERTICES, replicas=1, diagnostics=(), backend="auto", first_id=0,
     n_active=None,
 ):  # fmt: skip

@@ -6,8 +6,8 @@ spelling of this table. Dimensions: ``L`` a length (m in the detector file, mm i
 an angle (rad, under ``aunit``), ``U`` unitless (read with no unit, e.g. elcone's ``dx``/``dy`` semi-axis ratios).
 
 ``CHILDREN`` names the child elements a solid carries (written from the record's ``planes``, ``vertices`` and
-``sections``, or from its references). The set is the 20 solids the lowering supports (DESIGN.md section 4.1), the
-two generic ones the reader reads, the booleans, multiUnion, scaledSolid and tessellated.
+``sections``, or from its references). The set is the 20 solids the lowering supports, the two generic ones the
+reader reads, the booleans, multiUnion, scaledSolid and tessellated.
 
 Notes
 -----

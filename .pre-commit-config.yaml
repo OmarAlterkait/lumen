@@ -47,7 +47,7 @@ repos:
         name: plain words in user-facing text (style rule 10)
         entry: python tools/hooks/jargon.py
         language: system
-        files: ^(src/lumen/(errors|api)\.py|docs/tutorials/.*\.md)$
+        files: ^(README\.md|docs/(tutorial|howto|reference|explanation)/.*\.md|src/lumen/(api|params|extend|units)\.py)$
         stages: [pre-commit]
       - id: no-site-paths
         name: no absolute site paths in src/ or tests/ (style rule 9)

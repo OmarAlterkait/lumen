@@ -151,8 +151,8 @@ or surface.
 | `sensor group <name>: rule <rule> is not one of ('border_into', 'any_entry')` | `ValueError` | spell the rule |
 | `sensor group <name>: give exactly one of lv and lv_pattern` | `ValueError` | select by name or by pattern, not both |
 | `sensor groups <names>: one border_into group is supported` | `LibraryError` | 0.1 has one `border_into` group per detector |
-| `sensor group <name>: border_into reads a model of ('lumen:geant4', 'lumen:pmt'), not <model>` | `LibraryError` | the surface reader is `SensorGroup.surface` |
-| `sensor group <name>: any_entry reads the model 'lumen:counting', not <model>` | `LibraryError` | an `any_entry` group is read by `lumen:counting` |
+| `sensor group <name>: border_into reads its surfaces with one of <readers>, not <surface>` | `LibraryError` | the surface reader is `SensorGroup.surface`: `lumen:geant4`, `lumen:complex_index` or a registered reader |
+| `sensor group <name>: any_entry counts with the surface reader 'lumen:counting', not <surface>` | `LibraryError` | an `any_entry` group is read by `lumen:counting` |
 | `sensor group <name>: model <model> needs its value set (defaults)` | `ValueError` | give `defaults=` (a shipped `lumen:<set>@<version>` or a JSON path) |
 | `<what>: unknown setting <key> (known: <keys>)` · `<what>: setting <key> must be <type>, got <value>` | `ValueError` | a misspelt sensor-group or optics setting (`efficiency`, not `eff`) |
 | `material <name>: optics model <model> is not one this library reads` · `surface <name>: optics model <model> is not one this library reads` | `LibraryError` | a recipe bound an optics model that is not installed |
@@ -197,7 +197,7 @@ or surface.
 | `no calibration <name> in <directories>` | `FileNotFoundError` | save it in a directory on `LUMEN_DETECTORS`, or check the name |
 | `calibration <path> exists: choose a new name` | `FileExistsError` | calibrations are never overwritten |
 | `calibration parent cycle through <name>` | `ValueError` | two calibrations name each other as parent |
-| `calibration <name>: unknown keys <keys>` | `KeyError` | the calibration was made for another detector, or for a key that was renamed (`surfaces/<S>/value` is now `sigma_alpha` or `polish`; `source/x` is `source/position`; see docs/dev/migration.md) |
+| `calibration <name>: unknown keys <keys>` | `KeyError` | the calibration was made for another detector, or for a key that was renamed (`surfaces/<S>/value` is now `sigma_alpha` or `polish`; `source/x` is `source/position`; see the [changelog](../../CHANGELOG.md)) |
 | `<path>: schema <schema>; this lumen reads lumen-params/1` | `ValueError` | another lumen version wrote it |
 
 ### PMT value sets (`SensorValuesError`)
@@ -239,7 +239,7 @@ A value set whose status is `unverified`, or which carries a `warning`, loads wi
 | `<source> moves photons whose directions are not drawn from a density (drawn_direction False): no derivative (docs/explanation/known-limits.md)` | `GradientNotAvailable` | as above. A callable or an array of photons passed to `simulate` is treated the same way: its positions, directions and wavelengths cannot carry a derivative (their weights can, as score weights); subclass `lumen.sources.Source`, with `drawn_direction`, to differentiate a position |
 | `the histograms need <x> GB, over the device budget of <y> GB: <n> sensors x <m> time nodes (<span> ns at <dt> ns), <k> replicas, <d> derivative directions. Shorten the readout gate, widen the time spread's declared lower range (coarser nodes), use fewer replicas or fewer derivative directions (wrt).` | `MemoryError` | lumen refuses before launch. Do what the message lists |
 | `the photon loop expects the GPU (<why>) but JAX runs on <backend>: the CUDA plugin did not load (see JAX's log above); run on a working GPU node, or pass backend='cpu'` | `DeviceError` | a GPU job whose JAX did not start CUDA. Check `jax.devices()` |
-| `simulate: <keys> move the photons of FromArrays(drawn=True) without its direction density's gradient: pass dlogp=jnp.zeros((N, 3)) when the directions are isotropic, else grad_d log p of their density (or write a source function, lumen.source)` | `GradientNotAvailable` | new in 0.1.2 (docs/dev/migration.md): an array list cannot say its directions are isotropic. Pass what the message says |
+| `simulate: <keys> move the photons of FromArrays(drawn=True) without its direction density's gradient: pass dlogp=jnp.zeros((N, 3)) when the directions are isotropic, else grad_d log p of their density (or write a source function, lumen.source)` | `GradientNotAvailable` | new in 0.1.2 (see the [changelog](../../CHANGELOG.md)): an array list cannot say its directions are isotropic. Pass what the message says |
 | `source <name>: density='direction' needs dlogp (lumen.sources.grad_logpdf)` | `SourceError` | a source function declared a direction density but returned no gradient: return `dlogp=lumen.sources.grad_logpdf(logp, d)` |
 | `source <name>: density='isotropic' has no dlogp (declare density='direction')` | `SourceError` | a gradient given for an isotropic source: declare the density it has |
 | `source <name>: dlogp is zero on every photon. ...` | `GradientNotAvailable` | an isotropic source declared `density="direction"` (declare `"isotropic"`), or a uniform density inside a hard angular edge, whose edge term the method does not carry: smooth the edge (the guide's soft cone) |
@@ -272,8 +272,8 @@ the units of the source's photons; a healthy run has them at zero or tiny.
 | `overflow` | emits the GPU's exact sums dropped | `simulate` raises `SumOverflow`; see that row |
 
 **Where `lost` photons end.** `lumen.diagnostics.Trace(steps, n)` passed to `lumen.run.run` records each photon's
-first `steps` steps (position, direction, volume, class, the class pair crossed, and the lost weight). The class pair at
-the step with nonzero lost weight names the two volumes; the position says where. `lumen.validate.geometry` checks
+first `steps` steps (position, direction, volume, the pair of volumes crossed, and the lost weight). The pair crossed
+at the step with nonzero lost weight names the two volumes; the position says where. `lumen.validate.geometry` checks
 lumen's point location against Geant4's on the same GDML: if it finds no mismatch, the geometry reads the same in
 both, and the lost light comes from a junction of touching surfaces (known limits).
 
@@ -325,62 +325,17 @@ both, and the lost light comes from a junction of touching surfaces (known limit
 
 ## Internal consistency checks
 
-These errors come from checks inside the geometry and surface build. They should not happen with a detector file
-that converted cleanly. If you see one, report it with the GDML, the recipe and the full message.
+`TreeError`, `DescriptionError`, `OpticsError`, `GeometryError`, and `NotImplementedError` or `ValueError` from
+`geometry/` or `build/`, come from checks inside the geometry and surface build. They should not happen for a detector
+that converted cleanly. If you see one, open an issue with the GDML, the recipe and the full message.
 
-- `TreeError` (`build/tree.py`): `tree: exactly one world PV (mother None) required, got <pvs>`; `tree: PV <name> has
-  unknown mother <name>`; `tree: PVs not reachable from the world (mother cycle): <pvs>`; `tree: LV <lv> placed with
-  materials <a> and <b>`; `tree: expected PV, got <x>`; `tree: duplicate PV name <name>`; `a bare Scene needs media=
-  (GDML material name -> medium id)`; `media: materials <a> and <b> share medium id <id>`; `<pv>: a mesh member with a
-  PATH sensor label (meshes are not numbered)`; `placement of unknown definition <name>`; `definition <name> has <n>
-  members and placements: the daughters' mother volume is ambiguous`; `<pv>: medium id <id> has no material name in
-  media`; `class_of misses <n> PVs, e.g. <pvs>`; `<n> PVs share the outside's region <id> (e.g. <pvs>): a query prunes
-  them as background; bind the outside material <name> to a medium of its own`; `class_of names <n> PVs this Scene does
-  not have, e.g. <pvs> (a different tree?)`; `class_of[<pv>] = <c>: region ids are non-negative integers`; `clone names
-  <names> already exist in the Scene`.
-- `DescriptionError` and `OpticsError` (`build/surfaces.py`, `build/library.py`): the surface lookup checks that
-  every material has a medium, every skin and border names a volume of the tree, and every sensor binding covers its
-  placements. Messages: `<what>: surface type <name> takes parameters <names>, got <names> (...)`; `medium <name>: expected a MediumEntry(bulk.Medium, params)`; `surface <name>: expected a
-  SurfaceEntry(SurfaceType, params)`; `surface <name>: surface type <name> detects; detection needs a sensor binding
-  (library.sensors), not a surface`; `sensor <name>: expected a SensorEntry(SurfaceType, params)`; `sensor <name>:
-  surface type <name> cannot detect`; `<what> pair <pair>: unknown PV <name>`; `<what> pair <pair>: adjacency facts are
-  declared between distinct siblings only`; `materials without a binding: <names>`; `bindings for materials that do
-  not occur in the tree: <names>`; `material <m> bound to <medium>, which is not a library medium`; `skin surface <s>
-  on LV <lv>, which does not occur in the tree`; `skin on LV <lv>: <s> is not a library surface`; `disjoint placements
-  of LV <lv>, which does not occur in the tree`; `sibling pairs declared both touching and disjoint: <pairs>`; `border
-  surface <s> (<pre> -> <post>): unknown PV <name>`; `border (<pre> -> <post>): <s> is <what>`; `border surface <s>
-  (<pre> -> <post>): the volumes never touch (not mother/daughter, not touching siblings)`; `sensor binding <b>: give
-  exactly one of lv= or pv=`; `sensor binding <b>: entry must be 'any' or 'border'`; `sensor binding <b>: <name> is not
-  a library sensor`; `sensor binding <b>: LV <lv> does not occur in the tree`; `sensor binding <b>: PV <pv> does not
-  occur in the tree`; `sensor <name> on <volume>: expected <n> instances, found <m>`; `PV <name> bound to two sensors
-  (<a>, <b>)`; `sensor PV <name> also has a skin surface <s> on its LV: ambiguous (the sensor's surface type is the boundary of a sensor)`
-  (remove the skin from the sensor's logical volume); `border surface <s> (<pre> -> <post>) into sensor PV <post>: ambiguous (the sensor's surface type is the boundary of a sensor; a
-  border may name the sensor itself when its binding has entry='border')`; `border
-  sensor <s> (<pre> -> <post>): <pre> is not a sensor PV, so a detection leaving it has no sensor to go to`; `sensor PV
-  <name> has entry='border' but no border bound to <sensor> leads into it: it would never detect` (add a border
-  surface into the sensor, or use `any_entry`); `bordersurface <name> (<a> -> <b>): no adjacent world instances (a
-  border from the detector volume to a volume outside it other than its mother: ...)` (lumen's outside is one region:
-  give the surface to every exit with the recipe's `outside_surface`; a border that starts outside the detector volume
-  is dropped with a warning instead, and needs no action: docs/howto/your-own-detector.md);
-  `class <class> touches itself across a <surface type> boundary (<reason>; e.g. <pre> -> <post>): the crossing would be invisible. Declare the placements disjoint (bindings.disjoint) if they do not touch, or give the ...`; `class pair <a> -> <b> resolves to two surface types: ... The signature missed a distinction ...`
- ; `two different surface types share a name: <names>`;
-  `wavelength domain must be finite with 0 < lam_min < lam_max, got <range>`; `medium <name>: missing params <names>`;
-  `<surface type>.<name>: rows use different Laws`; `<surface type>.<name>: only (energy, value) tables are packed`.
-- `BoundaryError` (`rules/boundary.py`): `<pre> -> <post>: type <surface type> (<reason>) would put the photon into
-  the opaque medium <medium>`. A surface transmits into a material without RINDEX. Remove TRANSMITTANCE, or give the
-  material a RINDEX.
-- `GeometryError` (`geometry/tracked.py`): `the scene's PVs differ from the optics': ...`; `navigator volumes <n> /
-  meshes <m> vs PVs <a> / <b>`; `coincident siblings <pvs>: no interface between them (...); Geant4 crosses one
-  leaving the first`.
-- The navigator's limits (`NotImplementedError` and `ValueError` in `geometry/`, `build/solids.py`,
-  `build/lowering.py`): `navigator: definition <name> has <n> members (one solid per volume: the lowering gives one member per logical volume)`; `navigator: mesh definition <name> with
-  daughters`; `navigator: mesh definition <name> is a sensor`; `arb8 with a twisted (non-planar) face`;
-  `polytope_from_faces: the vertices are not convex in position (a concave arb8/trap base or a twisted face)`; `xtru
-  polygon: ear clipping failed (self-touching or duplicate vertices)`; `csg tables: an unbounded solid (no finite
-  box)`; `csg tables: a boolean deeper than <n> operands`; `navigator: srf codes overflow int32 (<n>)`; `navigator: a
-  scene without volumes`; `navigator: a BVH of depth <n> > the traversal stack (<m>)`; `bvh.build_many: empty or
-  unordered box ranges`; `Op: unknown operation <op> (one of <ops>)`; `unsupported=<value> (one of <modes>)`; and the
-  lowering's `NotImplementedError` naming an unsupported solid type. A mesh used as a sensor, or a mesh with daughters,
-  is not supported in 0.1: make the sensor a solid, or move the daughters out of the mesh.
-- `edge rows: no surface type <name> (types <names>)`; `coated <name>: backing <name> has outcomes <names>; only an
-  opaque backing (reflect / absorb / detect) is supported`; `not a finite decimal: <value>`: internal; report them.
+Four have a user-side fix:
+
+- `BoundaryError: <pre> -> <post>: type <surface type> (<reason>) would put the photon into the opaque medium
+  <medium>`: a surface transmits into a material without RINDEX. Remove TRANSMITTANCE, or give the material a RINDEX.
+- `navigator: mesh definition <name> is a sensor` or `navigator: mesh definition <name> with daughters`: not supported
+  in 0.1. Make the sensor a solid, or move the daughters out of the mesh.
+- `sensor PV <name> also has a skin surface <s> on its LV`: remove the skin from the sensor's logical volume.
+- `bordersurface <name> (<a> -> <b>): no adjacent world instances (...)`: a border from the detector volume into a
+  volume outside it other than its mother. lumen's outside is one region: give that surface to every exit with the
+  recipe's `outside_surface`. A border that starts outside the detector volume is dropped with a warning instead.

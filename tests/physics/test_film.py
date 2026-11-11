@@ -1,4 +1,4 @@
-"""A one-sided WLS film through the step (tier b, D51): the film toy with its holder turned 90 degrees about z.
+"""A one-sided WLS film through the step (the physics tier): the film toy with its holder turned 90 degrees about z.
 
 VUV light (128 nm, absorbed within 1e-11 mm by the film) from 5 cm in front of the film face is re-emitted into the
 visible band; from 5 cm behind the foil's back face no light can reach the film (the tank's walls absorb), so no

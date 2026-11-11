@@ -1,5 +1,5 @@
 """The readers of a detecting surface (registered in lumen.plugins.optics_models) and the GDML's directional borders
-(library.border_library; the baseline's tests/test_sensor_models.py): the default reads a detecting surface as
+(library.border_library): the default reads a detecting surface as
 stock Geant4 does; a reader passed in replaces it without touching the core; a border applies only in the direction
 the GDML defines it, and a sensor detects from whichever side its border surface is defined on."""
 

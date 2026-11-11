@@ -4,8 +4,8 @@
     python examples/your_own_detector.py
 
 Converts examples/data/demo_barrel.gdml (written with two deliberate defects) under examples/demo_barrel_recipe.py,
-reads the repair warnings, fixes the file, simulates, calibrates (a source-position fit with ``wrt=`` and an
-absorption-length scan by value), saves the calibration and exports the detector back to GDML. Outputs go to
+reads the repair warnings, fixes the file, simulates, calibrates (a source-position fit with ``wrt=`` and a
+liner-reflectivity scan by value), saves the calibration and exports the detector back to GDML. Outputs go to
 ./lumen-examples (or $LUMEN_EXAMPLES_OUT).
 """
 # ruff: noqa: T201, TID251, D103  (an example script: it prints, reads its output directory from the environment)
