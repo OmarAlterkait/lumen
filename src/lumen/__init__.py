@@ -2,8 +2,9 @@
 
 from importlib.metadata import PackageNotFoundError, version
 
-from lumen import gdml, readout, sources
+from lumen import gdml, media, readout, sources, surfaces
 from lumen.api import Detector, Light, convert, load, simulate
+from lumen.models import medium_model, surface_model
 from lumen.params import Param, Params
 from lumen.readout import response
 from lumen.recipe import Recipe
@@ -26,9 +27,13 @@ __all__ = [
     "convert",
     "gdml",
     "load",
+    "media",
+    "medium_model",
     "readout",
     "response",
     "simulate",
     "source",
     "sources",
+    "surface_model",
+    "surfaces",
 ]

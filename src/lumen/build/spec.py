@@ -117,6 +117,27 @@ def default_values(df: fmt.DetectorFile) -> tuple[dict, dict]:
     return values, spec
 
 
+def model_values(df: fmt.DetectorFile) -> tuple[dict, dict, dict]:
+    """Return (values, spec, layers) of the parameters registered optics models declare (``lumen.models``).
+
+    A declared name the record has as a property keeps the file's value (and its layer); else it is the default.
+    """
+    from lumen import models
+
+    values, spec, layers = {}, {}, {}
+    for kind, section, items in (("medium", "materials", df.materials), ("surface", "surfaces", df.surfaces)):
+        for name, rec in items.items():
+            m = models.registered(rec.optics.name, kind)
+            if m is None:
+                continue
+            for k, p in m.declared:
+                key = f"{section}/{name}/{k}"
+                spec[key] = p.info(key, "reweight", f"declared by {m.name}")
+                if k not in rec.properties:
+                    values[key], layers[key] = p.default, f"model {m.name} default"
+    return values, spec, layers
+
+
 def param_spec_and_values(df: fmt.DetectorFile, sensor_defaults: dict | None = None) -> Params:
     """Return the detector's Params at its own values, then each sensor group's model defaults.
 
@@ -127,6 +148,9 @@ def param_spec_and_values(df: fmt.DetectorFile, sensor_defaults: dict | None = N
     dv, ds = default_values(df)
     values, spec = {**values, **dv}, {**spec, **ds}
     layers.update({k: f"Geant4 {ds[k].default}" for k in dv})
+    mv, ms, ml = model_values(df)
+    values, spec = {**values, **mv}, {**spec, **ms}
+    layers.update(ml)
     for key, (v, info) in (sensor_defaults or {}).items():
         values[key], spec[key], layers[key] = v, info, "sensor model defaults"
     return Params(values, spec, layers)

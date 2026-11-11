@@ -100,3 +100,56 @@ def my_waveform(h, v):
     pulse = jnp.exp(-t / v["tau_f"]) - jnp.exp(-t / v["tau_r"])
     return v["adc_per_pe"] * jax.vmap(lambda q: jnp.convolve(q, pulse)[: q.shape[0]])(nodes)
 # end example
+
+
+# ---------------------------------------------------------------- 4. registered medium and surface models
+# example: water_hg
+@lumen.medium_model("mylab:water_hg", params={"g": Param("", (-0.99, 0.99), default=0.9)})
+def water_hg(material, base):               # base: the Geant4 reading of this material (lumen.media.MediumSpec)
+    hg = lumen.media.henyey_greenstein("g")              # a Lobe reading its parameter "g" (declared above)
+    return base.with_channel("rayleigh", lobe=hg)        # or add_channel(...), with_absorption(...)
+# end example
+
+
+# example: schlick
+@lumen.surface_model("mylab:schlick", params={"R0": Param("", (0, 1), default=0.04)}, detects=False)
+def schlick(surface, base):
+    def probs(p, ctx):                                    # ctx: lam, wi, n, n1, n2, Jones vector (as today)
+        c = lumen.surfaces.cos_incidence(ctx)
+        r = p["R0"] + (1 - p["R0"]) * (1 - c) ** 5
+        return lumen.surfaces.outcome_vector(specular=r, absorb=1 - r)
+    return lumen.surfaces.SurfaceType("schlick", ("R0",), (lumen.surfaces.SPECULAR, lumen.surfaces.ABSORB), probs)
+# end example
+
+
+# example: schlick_cathode
+@lumen.surface_model("mylab:schlick_cathode", params={"R0": Param("", (0, 1), default=0.04)}, detects=True)
+def schlick_cathode(surface, base):
+    def probs(p, ctx):                                    # Schlick's reflectance, the rest detected with eff
+        c = lumen.surfaces.cos_incidence(ctx)
+        r = p["R0"] + (1 - p["R0"]) * (1 - c) ** 5
+        return lumen.surfaces.outcome_vector(specular=r, detect=(1 - r) * p["eff"], absorb=(1 - r) * (1 - p["eff"]))
+    return lumen.surfaces.SurfaceType("schlick_cathode", ("R0", "eff"),
+                                      (lumen.surfaces.SPECULAR, lumen.surfaces.DETECT, lumen.surfaces.ABSORB), probs)
+# end example
+
+
+def lined_tank(out):
+    """Return the tutorial tank with a liner: the opticalsurface "Liner" (a polished metal, R = 0.5) on the outside."""
+    import dataclasses
+    from pathlib import Path
+
+    import example_tank
+
+    liner = ('  <opticalsurface name="Liner" model="unified" finish="polished" type="dielectric_metal" value="0">\n'
+             '    <property name="REFLECTIVITY" ref="LINER_REFLECTIVITY"/>\n  </opticalsurface>\n</solids>')
+    gdml = example_tank.GDML.read_text().replace("</solids>", liner).replace(
+        "</define>", '  <matrix name="LINER_REFLECTIVITY" coldim="2" values="1.5*eV 0.5 5.0*eV 0.5"/>\n</define>')
+    src = Path(out) / "lined_tank.gdml"
+    src.write_text(gdml)
+
+    def outside_liner(df, inputs):                        # a recipe decision: the outside carries the liner
+        return dataclasses.replace(df, outside_surface="Liner")
+
+    recipe = dataclasses.replace(example_tank.RECIPE, name="lined_tank", decisions=(outside_liner,))
+    return lumen.convert(src, recipe, Path(out) / "lined_tank.lumen")

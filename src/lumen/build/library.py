@@ -137,7 +137,10 @@ def _material_medium(rec: schema.Material):
         med, p = larsoft_optics.lar_medium_from(rec, name, o.settings.get("scatter", True),
                                                 o.settings.get("absorb", True))  # fmt: skip
         return name, regions.MediumEntry(med, p), _medium_sources(rec)
-    raise LibraryError(f"material {m!r}: optics model {o.name!r} is not one this library reads")
+    from lumen import models  # lumen's own models above; any other name: a registered medium model
+
+    name = o.settings.get("medium", m)
+    return (name, *models.medium_entry(rec, name))
 
 
 def _add_medium(media, name, entry, m):
@@ -177,7 +180,17 @@ def surface_entry(s: schema.Surface) -> regions.SurfaceEntry:
         from lumen.detectors import larsoft_optics
 
         return regions.SurfaceEntry(*larsoft_optics.reflector_from(s.properties))
-    raise LibraryError(f"surface {s.name!r}: optics model {s.optics.name!r} is not one this library reads")
+    from lumen import models  # lumen's own models above; any other name: a registered surface model
+
+    return models.surface_entry(s, _geant4_or_none(rules.surface, s))
+
+
+def _geant4_or_none(read, s, *args, **kw):
+    """Return Geant4's reading of a record (a registered model's base), or None where Geant4 refuses it."""
+    try:
+        return read(s, *args, **kw)
+    except rules.OpticsRefused:
+        return None
 
 
 def film_entry(df, s: schema.Surface, axis, types) -> regions.SurfaceEntry:
@@ -225,7 +238,7 @@ def _surfaces(df, tree, films):
 
 
 # ----------------------------------------------------------------------------------------------------- the sensors
-BORDER_SURFACES = ("lumen:geant4",)  # the surface readers of a border_into group (rules.optics.SENSOR_SURFACES)
+BORDER_SURFACES = ("lumen:geant4",)  # the surface readers of a border_into group (or a registered detecting model)
 
 
 def _border_groups(df, tree, groups):
@@ -235,13 +248,41 @@ def _border_groups(df, tree, groups):
     if not border:
         return set(), BorderSensor(), None
     g = border[0]
-    if g.surface not in BORDER_SURFACES:
+    if g.surface not in BORDER_SURFACES and not _detecting(g.surface):
         raise LibraryError(f"sensor group {g.name!r}: border_into reads its surfaces with one of {BORDER_SURFACES}, "
                            f"not {g.surface!r}")  # fmt: skip
     pvs = {p for p in tree.order if g.selects(tree.by_name[p].lv)}
     eff_in = 1.0 if g.model == "lumen:pmt" else g.settings.get("efficiency_on_entry")
-    how = BorderSensor(None, eff_in, g.settings.get("name_prefix", g.name))
+    how = BorderSensor(g.surface if _detecting(g.surface) else None, eff_in, g.settings.get("name_prefix", g.name))
     return pvs, how, g
+
+
+def _detecting(name):
+    from lumen import models
+
+    m = models.registered(name, "surface")
+    return m is not None and m.detects
+
+
+def _sensor_entry(rec, lam_domain, how, eff=None):
+    """Return a border sensor's SensorEntry: the record's registered detecting model, the group's, or a reader."""
+    from lumen import models
+
+    if models.registered(rec.optics.name, "surface") is not None:
+        base = _geant4_or_none(rules.sensor, rec, lam_domain)
+        return models.surface_entry(rec, base, sensor=True, eff=eff)
+    if how.surface is not None and _detecting(how.surface):
+        base = _geant4_or_none(rules.sensor, rec, lam_domain)
+        rec2 = schema_replace_optics(rec, how.surface)
+        return models.surface_entry(rec2, base, sensor=True, eff=eff)
+    return rules.sensor(rec, lam_domain, how.surface, eff=eff)
+
+
+def schema_replace_optics(rec, name):
+    """Return a record read by optics model ``name`` (its settings kept)."""
+    import dataclasses
+
+    return dataclasses.replace(rec, optics=dataclasses.replace(rec.optics, name=name))
 
 
 def _counting(tree, groups):
@@ -366,8 +407,20 @@ VALUE_PARAMS = ("polish", "sigma_alpha")  # the opticalsurface value
 INDEX_KEYS = {"nr": ("REALRINDEX", "RINDEX"), "nk": ("IMAGINARYRINDEX", "KINDEX")}
 
 
+def _registered_surface(rec):
+    from lumen import models
+
+    return models.registered(rec.optics.name, "surface") is not None
+
+
 def _surface_param(rec: schema.Surface, param: str, value):
     s, pr = f"surfaces/{rec.name}", rec.properties
+    if _registered_surface(rec):
+        from lumen import models
+
+        keys = models.registered(rec.optics.name, "surface").keys(rec)
+        if param in keys:
+            return {(): Source(*keys[param], f"declared by {rec.optics.name}")}
     if rec.optics.name == "lumen:larsoft_reflector" and param in ("f_glossy", "sigma_alpha"):
         # larsim OpBoundaryProcessSimple: specular about the global normal or Lambertian, no lobe and no facets
         return {(): Source(None, "fixed", f"never read by LArSoft's OpBoundaryProcessSimple ({param})")}
@@ -577,7 +630,7 @@ def border_library(df, tree, sensor_pvs, lam_domain=None, how: BorderSensor | No
         if post in sensor_pvs:
             k = f"{how.prefix}:{s}"
             if k not in sensors:
-                sensors[k] = rules.sensor(rec, lam_domain, how.surface, eff=how.eff_in)
+                sensors[k] = _sensor_entry(rec, lam_domain, how, eff=how.eff_in)
             lv = tree.by_name[post].lv
             if (k, lv) not in bound:
                 bound.add((k, lv))
@@ -586,10 +639,10 @@ def border_library(df, tree, sensor_pvs, lam_domain=None, how: BorderSensor | No
         elif pre in sensor_pvs and rules.nonzero(rec.properties, "EFFICIENCY"):
             k = f"{how.prefix}:{s}|out"
             if k not in sensors:
-                sensors[k] = rules.sensor(rec, lam_domain, how.surface)
+                sensors[k] = _sensor_entry(rec, lam_domain, how)
             borders[(pre, post)] = k
         else:
             if s not in surfaces:
-                surfaces[s] = rules.surface(rec)
+                surfaces[s] = surface_entry(rec) if _registered_surface(rec) else rules.surface(rec)
             borders[(pre, post)] = s
     return sensors, surfaces, borders, tuple(sbind)

@@ -214,3 +214,128 @@ def test_a_response_reads_the_histograms_with_its_keys():
     wrong = lumen.response(group="other")(lambda h_, v: 0.0)
     with pytest.raises(ValueError, match="reads group"):
         wrong(h, p)
+
+
+# ------------------------------------------------------------------------------------------------ registered models
+def _examples():
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    ex = Path(__file__).resolve().parents[2] / "examples"
+    sys.path.insert(0, str(ex))
+    if "extending" not in sys.modules:
+        spec = importlib.util.spec_from_file_location("extending", ex / "extending.py")
+        sys.modules["extending"] = mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    return sys.modules["extending"]
+
+
+@pytest.fixture(scope="module")
+def lined(tmp_path_factory):
+    return _examples().lined_tank(tmp_path_factory.mktemp("lined"))
+
+
+def test_a_registered_medium_and_surface_model_build_with_their_keys(lined):
+    import jax
+    import jax.numpy as jnp
+
+    ex = _examples()
+    plain = lumen.load(lined)
+    det = lumen.load(lined, models={"materials/Water": "mylab:water_hg", "surfaces/Liner": "mylab:schlick"})
+    p = det.params()
+    assert p["materials/Water/g"] == 0.9 and p.explain("materials/Water/g") == "model mylab:water_hg default"
+    assert p["surfaces/Liner/R0"] == 0.04 and p.info("surfaces/Liner/R0").range == (0.0, 1.0)
+    assert "materials/Water/g" not in plain.params() and set(plain.params()) <= set(p)
+    lib = det.parts.library
+    ray = next(c for c in lib.media["Water"].medium.channels if c.name == "rayleigh")
+    assert ray.lobe is lumen.media.henyey_greenstein("g")
+    assert lib.media["Water"].params["rayleigh"]["lobe"] == {"g": 0.9}
+    assert lib.surfaces["Liner"].surface_type.name == "schlick" and lib.surfaces["Liner"].params == {"R0": 0.04}
+    src = det.parts.sources
+    assert src[("media", "Water", "rayleigh", "lobe", "g")].key == "materials/Water/g"
+    assert src[("surfaces", "Liner", "R0")].key == "surfaces/Liner/R0"
+    q = p.set("materials/Water/g", 0.5).set("surfaces/Liner/R0", 0.2)
+    named = det.pack(q)  # a value set: applied to the file (the declared property added) and packed
+    assert named is not None
+    from lumen.format.apply import apply
+
+    df2 = apply(det.file, q)
+    assert float(df2.materials["Water"].properties["g"].value) == 0.5
+    t = jax.jvp(lambda g: det.pack(p.set("materials/Water/g", g)), (jnp.float32(0.9),), (jnp.float32(1.0),))[1]
+    assert any(float(jnp.abs(x).max()) == 1.0 for x in jax.tree_util.tree_leaves(t))  # g reaches the packed rows
+    assert ex.water_hg.name == "mylab:water_hg"
+
+
+def test_a_detecting_model_and_the_refusals(lined):
+    import jax.numpy as jnp
+
+    from lumen import models, plugins
+    from lumen.build.library import LibraryError
+
+    det = lumen.load(lined, models={"surfaces/CathodeSurface": "mylab:schlick_cathode"})
+    sens = det.parts.library.sensors
+    e = next(v for k, v in sens.items() if k.endswith("CathodeSurface"))
+    # under lumen:pmt every absorption entering is counted: eff 1, folded into the type as lumen's own sensors' is
+    assert e.surface_type.name == "schlick_cathode{eff=1}" and e.params == {"R0": 0.04}
+    assert "surfaces/CathodeSurface/R0" in det.params()
+    with pytest.raises(LibraryError, match="not lumen's own nor registered"):
+        lumen.load(lined, models={"surfaces/Liner": "mylab:nothing"})
+    with pytest.raises(LibraryError, match="not a medium model"):
+        lumen.load(lined, models={"materials/Water": "mylab:schlick"})
+    with pytest.raises(ValueError, match="not materials"):
+        lumen.load(lined, models={"materials/Nope": "mylab:water_hg"})
+
+    @lumen.surface_model("test:leaky", params={"a": Param("", (0, 1), default=0.5)})
+    def leaky(surface, base):
+        def probs(p, ctx):
+            return lumen.surfaces.outcome_vector(specular=p["a"] * jnp.ones_like(ctx["lam"]))  # sums to a, not 1
+
+        return lumen.surfaces.SurfaceType("leaky", ("a",), (lumen.surfaces.SPECULAR,), probs)
+
+    with pytest.raises(models.ModelError, match="summing to 1"):
+        lumen.load(lined, models={"surfaces/Liner": "test:leaky"})
+    with pytest.raises(ValueError, match="registered already"):
+        lumen.surface_model("test:leaky")(lambda s, b: None)
+    with pytest.raises(ValueError, match="lumen's own"):
+        lumen.medium_model("geant4")(lambda m, b: b)
+    with pytest.raises(TypeError, match="scalar"):
+        lumen.medium_model("test:vec", params={"v": Param("", shape=(2,), default=(0, 0))})
+    assert "test:leaky" in plugins.optics_models.names()
+
+
+def test_a_lobe_is_checked_against_its_density():
+    from lumen.extend import check_lobe
+    from lumen.models import ModelError
+
+    hg = lumen.media.henyey_greenstein("g")
+    for g in (-0.5, 0.0, 0.9):
+        check_lobe(hg, {"g": g})
+    import dataclasses
+
+    wrong = dataclasses.replace(hg, name="wrong", logpdf=lambda p, wi, n, wo: hg.logpdf({"g": 0.5}, wi, n, wo))
+    with pytest.raises(ModelError, match="does not draw its density"):
+        check_lobe(wrong, {"g": 0.9})
+
+
+def test_lumen_s_own_models_never_read_the_registry(lined, monkeypatch):
+    """A detector naming only lumen's own models builds without looking at the registry (the same parts as 0.1.1)."""
+    from lumen import plugins
+
+    def refuse(name):
+        raise AssertionError(f"the registry was read for {name!r}")
+
+    monkeypatch.setattr(plugins.optics_models, "get", refuse)
+    det = lumen.load(lined)
+    assert det.pack() is not None and det.parts.library.surfaces["Liner"].surface_type.name == "specular_metal"
+
+
+def test_with_responses_adds_keys_and_refuses_a_taken_one(lined):
+    det = lumen.load(lined)
+    ex = _examples()
+    d2 = det.with_responses(ex.saturating_pe, ex.my_waveform)
+    assert d2.params()["sensors/pmt/adc_per_pe"] == 10.0 and "sensors/pmt/sat" in d2.params()
+    assert d2.with_responses(ex.saturating_pe).params()["sensors/pmt/sat"] == 300.0  # the same response again
+    taken = lumen.response(group="pmt", params={"gain": Param("ADC", default=1.0)})(lambda h, v: v["gain"])
+    with pytest.raises(ValueError, match="keys the detector has already"):
+        det.with_responses(taken)

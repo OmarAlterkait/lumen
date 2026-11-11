@@ -178,16 +178,19 @@ def _convert_registered(name: str, out: Path) -> Path:
     return convert(data / pkg.source_dataset, pkg.recipe, out, inputs=inputs)
 
 
-def load(name_or_path, *, sensors: str = "default", calibration: str | None = cal.NOMINAL) -> Detector:
+def load(name_or_path, *, sensors: str = "default", calibration: str | None = cal.NOMINAL,
+         models: dict | None = None) -> Detector:  # fmt: skip
     """Load a detector by path or registered name, with a sensor set and a calibration (see the module docstring).
 
-    ``calibration`` None is the nominal one (the detector file's own values).
+    ``calibration`` None is the nominal one (the detector file's own values). ``models``: {"materials/<M>" or
+    "surfaces/<S>": optics model name}, the records read by those models instead of the file's (``lumen.models``);
+    the loaded detector's file carries them, so its digest (and a calibration saved from it) records the choice.
     """
     calibration = cal.NOMINAL if calibration is None else calibration
     from lumen.build import build
 
     path = _resolve(name_or_path)
-    df = io.read(path)
+    df = _with_models(io.read(path), models or {})
     sset = sensorsets.read(path, sensors)
     columns = json.loads((path / "sensors" / f"{sensors}.ids.json").read_text())
     search = [path / "calibrations", *_env.detector_path()]
@@ -198,6 +201,24 @@ def load(name_or_path, *, sensors: str = "default", calibration: str | None = ca
     parts = build.build(df, sset)
     params = build.parameters(df, sset, parts, parents)
     return Detector(df.name, path, df, sset, parts, columns, calibration, params)
+
+
+def _with_models(df, models: dict):
+    """Return the detector file with each named record's optics model replaced (``load(..., models=)``)."""
+    from lumen import models as registry
+
+    out = {"materials": dict(df.materials), "surfaces": dict(df.surfaces)}
+    for target, name in models.items():
+        section, _, rec_name = str(target).partition("/")
+        if section not in out or rec_name not in out[section]:
+            raise ValueError(f"load(models=): {target!r} is not materials/<M> or surfaces/<S> of this detector")
+        kind = "medium" if section == "materials" else "surface"
+        builtin = registry.BUILTIN_MEDIA if kind == "medium" else registry.BUILTIN_SURFACES
+        if name not in builtin and registry.registered(name, kind) is None:
+            registry.lookup(name, kind, target)  # an unknown name, or a model of the other sort: the registry's error
+        rec = out[section][rec_name]
+        out[section][rec_name] = dataclasses.replace(rec, optics=dataclasses.replace(rec.optics, name=name))
+    return df if not models else dataclasses.replace(df, materials=out["materials"], surfaces=out["surfaces"])
 
 
 # ------------------------------------------------------------------------------------------------------ simulate

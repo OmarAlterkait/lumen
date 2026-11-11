@@ -148,3 +148,31 @@ def test_a_response_is_exact_after_tracking(tank, ex, response, key, theta0):
     rep = check_gradient(f, theta0, seeds=SEEDS, h=1e-2 * theta0)
     assert rep.passes, rep
     assert abs(rep.ad[-1] - rep.fd[-1]) <= 1e-3 * abs(rep.fd[-1]), rep
+
+
+# ------------------------------------------------------------------------------------------------ registered models
+@pytest.fixture(scope="module")
+def lined(ex, tmp_path_factory):
+    """The tank with a liner on the outside (the guide's lined_tank): a surface for a surface model to read."""
+    return ex.lined_tank(tmp_path_factory.mktemp("lined"))
+
+
+@pytest.mark.parametrize(("models", "key", "theta0"), [
+    ({"materials/Water": "mylab:water_hg"}, "materials/Water/g", 0.9),
+    ({"surfaces/Liner": "mylab:schlick"}, "surfaces/Liner/R0", 0.04),
+    ({"surfaces/CathodeSurface": "mylab:schlick_cathode"}, "surfaces/CathodeSurface/R0", 0.04),
+])  # fmt: skip
+def test_a_registered_model_parameter(lined, ex, models, key, theta0):
+    """The guide's HG water, Schlick liner and Schlick cathode: their declared keys are differentiable (reweight)."""
+    det = lumen.load(lined, models=models)
+    p0 = det.params()
+    assert p0[key] == theta0
+    src = sources.Point((0.05, 0.02, 0.1), n_photons=float(N), lam=420.0)
+
+    def f(theta, seed):
+        return arrivals(det, src, p0.set(key, theta), seed=seed)
+
+    r = check_gradient(f, theta0, seeds=SEEDS, h=0.02, stencil="central")
+    assert r.passes, r
+    assert abs(r.ad[-1]) > 3 * r.ad_sem[-1], r  # resolved: the parameter moves the light
+

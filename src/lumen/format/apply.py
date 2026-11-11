@@ -12,7 +12,8 @@ applies them to a sensor set's settings).
 A table keeps its knot count: a new knot count is a new detector file. One property may be added: a surface property
 the file omits whose Geant4 default the model reads (``lumen.rules.optics.surface_defaults``: TRANSMITTANCE on a
 polished dielectric_dielectric surface, ...), set to a number; it is a constant of origin ``GEANT4_DEFAULT``, which the
-exporter writes as the flat table Geant4 reads (an uncalibrated detector file never has one). Fails closed
+exporter writes as the flat table Geant4 reads (an uncalibrated detector file never has one). Likewise a parameter
+the record's registered optics model declares (``lumen.models``), of origin ``MODEL_DEFAULT``. Fails closed
 (ValueError): an unknown material, surface or property (any other added one), a table given for a constant or a number
 for a table, a new knot count, energies that are not strictly ascending, and any other kind of key.
 """
@@ -30,6 +31,7 @@ from lumen.format.calibrations import Table
 SENSOR_PREFIX = "sensors/"
 VALUE_KEYS = ("sigma_alpha", "polish")  # the opticalsurface value's key, by model (rules.optics.value_key)
 GEANT4_DEFAULT = "geant4_default"  # the origin of a property a parameter value added at a Geant4 default key
+MODEL_DEFAULT = "model_default"  # ... at a parameter a registered optics model declares (lumen.models)
 
 
 def check(key: str, old, new) -> None:
@@ -88,6 +90,9 @@ def _changes(df: schema.DetectorFile, values) -> dict:
             raise ValueError(f"parameter key {key!r}: no {section[:-1]} {name!r}")
         if section == "surfaces" and prop in (*VALUE_KEYS, "value"):
             prop = _surface_value(key, rec, prop, v)
+        elif prop not in rec.properties and _declared(rec, section, prop):
+            if np.ndim(v) or isinstance(v, Table):
+                raise ValueError(f"{key}: a declared parameter of model {rec.optics.name!r} is a number")
         elif prop not in rec.properties:
             if defaults is None:
                 from lumen.rules.optics import detector_defaults
@@ -102,6 +107,18 @@ def _changes(df: schema.DetectorFile, values) -> dict:
     return out
 
 
+def _declared(rec, section, prop) -> bool:
+    """Return whether ``prop`` is a parameter declared by the record's registered optics model (lumen.models)."""
+    from lumen import models
+
+    m = models.registered(rec.optics.name, "medium" if section == "materials" else "surface")
+    return m is not None and prop in dict(m.declared)
+
+
+def _added_origin(rec, section, prop) -> str:
+    return MODEL_DEFAULT if _declared(rec, section, prop) else GEANT4_DEFAULT
+
+
 def apply(df: schema.DetectorFile, values) -> schema.DetectorFile:
     """Return the detector file with every material and surface value of ``values`` (a mapping by key) applied."""
     out, toks = {}, {k: dict(d) for k, d in df.tokens.items()}
@@ -111,8 +128,10 @@ def apply(df: schema.DetectorFile, values) -> schema.DetectorFile:
             rec, keys = recs[name], set(props)
             extra = {"value": float(props.pop("value"))} if section == "surfaces" and "value" in props else {}
             reps = {k: _property(rec.properties[k], v, f"{section}/{name}/{k}") if k in rec.properties else
-                    schema.Property(k, np.asarray(float(v), np.float64), origin=GEANT4_DEFAULT,
-                                    note="a Geant4 default key set by a parameter value")
+                    schema.Property(k, np.asarray(float(v), np.float64), origin=_added_origin(rec, section, k),
+                                    note="a Geant4 default key set by a parameter value"
+                                    if _added_origin(rec, section, k) == GEANT4_DEFAULT else
+                                    f"a parameter declared by optics model {rec.optics.name}")
                     for k, v in props.items()}  # fmt: skip
             recs[name] = dataclasses.replace(rec, properties={**rec.properties, **reps}, **extra)
             if name in toks.get(section, {}):
