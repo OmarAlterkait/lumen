@@ -372,3 +372,19 @@ def test_check_source_compares_the_draws_with_a_density():
     assert good.passes, good
     bad = check_source(led, logpdf=lambda d: 2.0 * jnp.log(jnp.clip(-d[2], 1e-12)))
     assert not bad.passes and bad.dlogp_error > 0.1, bad
+
+
+def test_every_module_the_guide_names_resolves_after_a_bare_import():
+    """``lumen.X`` as the guide writes it (lumen.validate.check_gradient, lumen.extend, ...), in a fresh interpreter."""
+    import re
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    text = (root / "docs" / "howto" / "extending.md").read_text() + (root / "examples" / "extending.py").read_text()
+    names = sorted({m for m in re.findall(r"\blumen\.([a-z_]+)\b", text) if m != "optics_models"})  # a group name
+    assert {"validate", "extend", "sources", "media", "surfaces", "readout"} <= set(names)
+    code = "import lumen\n" + "".join(f"getattr(lumen, {n!r})\n" for n in names)
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=None)
+    assert r.returncode == 0, r.stderr[-2000:]

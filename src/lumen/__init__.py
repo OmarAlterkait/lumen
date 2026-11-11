@@ -10,12 +10,18 @@ from lumen.readout import response
 from lumen.recipe import Recipe
 from lumen.sources import Photons, concat, source
 
+LAZY_MODULES = ("diagnostics", "extend", "plugins", "validate")  # lumen.<name> after a bare ``import lumen``
 
-def __getattr__(name):  # lazily: the step's module loads the transport
+
+def __getattr__(name):  # lazily: these load the transport, the checks' statistics
     if name == "Controls":
         from lumen.transport.step import Controls
 
         return Controls
+    if name in LAZY_MODULES:
+        import importlib
+
+        return importlib.import_module(f"lumen.{name}")
     raise AttributeError(f"module 'lumen' has no attribute {name!r}")
 
 
