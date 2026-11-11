@@ -165,7 +165,7 @@ pe = lumen.readout.pe(light, p0)
    9 BarrelPV/WaterPV/PMT_side_1/PMT arrivals    224.0 +-   8.2   PE    57.0
   10 BarrelPV/WaterPV/PMT_side_2/PMT arrivals    205.8 +-   9.1   PE    52.3
   11 BarrelPV/WaterPV/PMT_side_3/PMT arrivals    211.5 +-   8.2   PE    53.8
-  health: {'lost': 0.0, 'abandoned': 0.0, 'escaped': 0.0, 'late': 0.0, 'truncated': 0.0, 'n_truncated': 0.0, 'stuck': 0.0}
+  health: {'lost': 0.0, 'abandoned': 0.0, 'escaped': 0.0, 'retired': 0.0, 'truncated': 0.0, 'n_truncated': 0.0, 'stuck': 0.0, 'overflow': 0.0}
 ```
 
 The tutorial explains each number: [the first hour, section 2](../tutorial/first-hour.md#2-simulate-and-what-the-numbers-mean).

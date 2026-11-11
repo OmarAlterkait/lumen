@@ -111,7 +111,7 @@ pe = lumen.readout.pe(light, p0)
   5    526.60   13.17        2.201          129.0
   6    306.04   22.27        2.850           75.0
   7    325.60   13.16        2.844           79.8
-health (photons): {'lost': 0.0, 'abandoned': 0.0, 'escaped': 0.0, 'late': 0.0, 'truncated': 0.0, 'n_truncated': 0.0, 'stuck': 0.0}
+health (photons): {'lost': 0.0, 'abandoned': 0.0, 'escaped': 0.0, 'retired': 0.0, 'truncated': 0.0, 'n_truncated': 0.0, 'stuck': 0.0, 'overflow': 0.0}
 ```
 
 | Output | Meaning | Unit |
@@ -277,14 +277,14 @@ mu1 = n_events * np.asarray(lumen.readout.pe(light, p0), np.float64)        # at
 eff = np.clip(np.asarray(data) / mu1, 0.0, 1.0)
 ```
 ```
-dNLL/d efficiency at 1: [32.5, 311.2, -39.0, 191.6, 136.3, 194.3, 207.6, 27.5]
-fitted efficiency: [0.982, 0.93, 1.0, 0.929, 0.947, 0.925, 0.862, 0.983]
-its error:         [0.023, 0.014, 0.02, 0.019, 0.019, 0.019, 0.024, 0.025]
+dNLL/d efficiency at 1: [7.5, 394.2, -45.0, 296.6, 110.3, 244.3, 194.6, 28.5]
+fitted efficiency: [0.996, 0.911, 1.0, 0.89, 0.957, 0.905, 0.87, 0.982]
+its error:         [0.024, 0.014, 0.02, 0.018, 0.019, 0.019, 0.024, 0.025]
 true efficiency:   [0.97, 0.92, 1.0, 0.88, 0.95, 0.9, 0.85, 0.99]
 ```
 
-The fitted efficiencies agree with the true ones within three statistical errors (√data / expected); the largest
-deviation, PMT 3, is 2.6 errors. PMT 2's true efficiency is 1, and the fit is clipped at the top of the allowed range.
+The fitted efficiencies agree with the true ones within two statistical errors (√data / expected); the largest
+deviation, PMT 0, is 1.1 errors. PMT 2's true efficiency is 1, and the fit is clipped at the top of the allowed range.
 
 A **calibration** saves fitted values by GDML name, without touching the detector file:
 
