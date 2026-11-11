@@ -78,4 +78,6 @@ what a fresh compile computes. On jax 0.5.3 it did not: the navigator missed fac
 the cache on XLA's thunk runtime; with the cache off, no process missed. On jax 0.6.2, the pinned version, a load from
 the cache is bitwise equal to a fresh compile on the CPU and the GPU (a photon-loop record and leaf-module outputs,
 three separate processes: cache off, writing, loading). The GPU tier checks it on every run
-(`tests/physics/test_persistent_cache.py`). See decision 7 in `decisions.md`.
+(`tests/physics/test_persistent_cache.py`). See decision 7 in `decisions.md`. JAX writes a program to the cache
+only when it took longer than `jax_persistent_cache_min_compile_time_secs` (1 s by default) to compile; every lumen
+program compiles faster, so `_env.xla_cache` sets the threshold to 0.

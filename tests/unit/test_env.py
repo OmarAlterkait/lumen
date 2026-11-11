@@ -61,3 +61,22 @@ def test_the_tallymap_cache_is_never_under_home(monkeypatch, tmp_path):
     monkeypatch.setenv("TALLYMAP_CUDA_CACHE", str(Path.home() / ".cache" / "tallymap"))
     with pytest.raises(RuntimeError, match="under HOME"):
         _env.tallymap_cache()
+
+
+def test_the_xla_cache_keeps_every_program(monkeypatch, tmp_path):
+    """lumen's programs each compile in under JAX's default 1 s threshold, so the cache takes every program."""
+    import jax
+
+    old = (jax.config.jax_compilation_cache_dir, jax.config.jax_persistent_cache_min_compile_time_secs)
+    try:
+        monkeypatch.setenv("JAX_COMPILATION_CACHE_DIR", str(tmp_path / "xla"))
+        monkeypatch.delenv("JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS", raising=False)
+        jax.config.update("jax_persistent_cache_min_compile_time_secs", 1.0)
+        assert _env.xla_cache() == tmp_path / "xla"
+        assert jax.config.jax_persistent_cache_min_compile_time_secs == 0.0
+        monkeypatch.setenv("JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS", "2.5")  # an explicit choice is kept
+        jax.config.update("jax_persistent_cache_min_compile_time_secs", 2.5)
+        _env.xla_cache()
+        assert jax.config.jax_persistent_cache_min_compile_time_secs == 2.5
+    finally:
+        jax.config.update("jax_persistent_cache_min_compile_time_secs", old[1])

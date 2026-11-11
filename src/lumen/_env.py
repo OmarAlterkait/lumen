@@ -10,8 +10,9 @@ What it reads, and the function that reads it:
   whether a GPU is expected, so a run that expects one never falls back to the CPU silently (``DeviceError``).
 - ``TALLYMAP_CUDA_CACHE`` (``tallymap_cache``): tallymap's CUDA kernel cache; unset, ``<LUMEN_CACHE>/tallymap`` (set
   here for tallymap), never under HOME.
-- ``JAX_COMPILATION_CACHE_DIR`` (``xla_cache``, at import): JAX's persistent compilation cache; unset, and none set in
-  ``jax.config``, ``<LUMEN_CACHE>/xla``, never under HOME (then it stays off). Why a cached program is safe on the
+- ``JAX_COMPILATION_CACHE_DIR`` and ``JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS`` (``xla_cache``, at import): JAX's
+  persistent compilation cache; unset, and none set in ``jax.config``, ``<LUMEN_CACHE>/xla``, never under HOME (then it
+  stays off); every program is cached, not only those slower than JAX's 1 s. Why a cached program is safe on the
   pinned jax: docs/dev/decisions.md, "jax pinned to 0.6.2".
 """
 
@@ -22,6 +23,7 @@ from pathlib import Path
 
 TALLYMAP_CACHE = "TALLYMAP_CUDA_CACHE"  # read by tallymap itself; set here when unset
 XLA_CACHE = "JAX_COMPILATION_CACHE_DIR"  # read by JAX itself; lumen's default set through jax.config when unset
+MIN_COMPILE_TIME = "JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS"  # read by JAX itself; lumen sets 0 when unset
 
 
 def data_dir() -> Path | None:
@@ -89,20 +91,27 @@ def xla_cache() -> Path | None:
 
     An explicit ``JAX_COMPILATION_CACHE_DIR`` (JAX reads it itself) or a directory already set in ``jax.config`` is
     respected as it is. Otherwise the cache goes to ``<LUMEN_CACHE>/xla``, never under HOME: when that default falls
-    under HOME (``LUMEN_CACHE`` unset), the cache stays off.
+    under HOME (``LUMEN_CACHE`` unset), the cache stays off. With the cache on, every program is written to it, not
+    only those that took JAX's default 1 s to compile (``MIN_COMPILE_TIME``, unless set in the environment): lumen's
+    programs each compile in under a second, so with the default nothing was cached and a new process compiled them
+    all again.
     """
     import jax
 
+    path: Path | None
     value = os.environ.get(XLA_CACHE)
-    if value:
-        return Path(value)
     current = getattr(jax.config, "jax_compilation_cache_dir", None)
-    if current:
-        return Path(current)
-    path = cache_dir() / "xla"
-    if _under_home(path):
-        return None
-    jax.config.update("jax_compilation_cache_dir", str(path))
+    if value:
+        path = Path(value)
+    elif current:
+        path = Path(current)
+    else:
+        path = cache_dir() / "xla"
+        if _under_home(path):
+            return None
+        jax.config.update("jax_compilation_cache_dir", str(path))
+    if not os.environ.get(MIN_COMPILE_TIME):
+        jax.config.update("jax_persistent_cache_min_compile_time_secs", 0.0)
     return path
 
 

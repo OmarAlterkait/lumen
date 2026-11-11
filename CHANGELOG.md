@@ -25,6 +25,11 @@ Changed:
 
 Fixed:
 
+- JAX's persistent compilation cache stayed empty: JAX writes only programs that took over 1 s to compile, and each of
+  lumen's compiles faster than that (the photon loop's heavy part is tallymap's CUDA kernel, cached by tallymap). lumen
+  now caches every program, unless `JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS` is set. On the toy tank a new
+  process's first `simulate` goes from about 22 s to about 9 s.
+
 - A surface type with a value fixed by its model kept only the outcomes it had with every other parameter at 0.5, so
   under Geant4's chained cuts a unified dielectric_metal surface with a fixed EFFICIENCY lost its backscatter and
   Lambertian outcomes (no shipped detector had such a surface).
