@@ -47,3 +47,10 @@ form (dQ/dT = exp(-0.75 / L) per photon at T = 0+).
 
 **Who is affected.** ANNIE until its LAPPDs are sensors (0.2); any detector whose transmitting surface leads only into
 volumes that are not sensors and from which light does not return.
+
+## A full detector on the CPU
+
+Without a GPU, lumen runs the photon loop on tallymap's plain-JAX CPU backend. There, building and compiling a full
+detector's loop (SBND-sized: 312 sensors) took over 30 minutes before the first photon ran (a 30-minute job at 2^10
+photons did not finish its first simulate). The CPU backend is meant for toys and tests; simulate full detectors on a
+GPU.
