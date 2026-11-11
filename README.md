@@ -34,22 +34,28 @@ the PMT values; refractive indices are calibrated by value only.
 ## Install
 
 lumen pins exact versions of JAX and tallymap. Other versions change the photon loop's results bit for bit, or break
-its reverse-mode derivatives.
+its reverse-mode derivatives. One line installs lumen with both, in a fresh environment:
 
 ```bash
-git clone --branch v0.1.1 https://github.com/OmarAlterkait/lumen.git
-python -m venv /path/to/envs/lumen && source /path/to/envs/lumen/bin/activate   # anywhere; not inside the clone
-pip install "jax[cuda12]==0.6.2"
-pip install "tallymap @ git+https://github.com/OmarAlterkait/tallymap.git@v0.6.0rc1"
-pip install -e lumen
-pip install matplotlib                                   # optional: the tutorial's figures
+python -m venv /path/to/envs/lumen && source /path/to/envs/lumen/bin/activate
+pip install "lumen[cuda] @ git+https://github.com/OmarAlterkait/lumen.git"
 python -c "import jax, lumen; print(lumen.__version__, jax.devices())"
 ```
 
-`jax[cuda12]` brings JAX's CUDA plugin and NVRTC, the compiler tallymap's CUDA backend uses; that is all
-`tallymap[cuda]` would add, so plain `tallymap` after `jax[cuda12]` is the same install. Without `jax[cuda12]` (plain
-`jax`), tallymap runs on its CPU backend only. The CUDA backend also builds a small C++ launch shim once, so a C++17
-compiler must be on the PATH the first time.
+That is the latest release: the repository's `main` moves only at releases. For a fixed version, name its tag:
+`pip install "lumen[cuda] @ git+https://github.com/OmarAlterkait/lumen.git@v0.1.2"`. Without `[cuda]` (plain `jax`),
+lumen runs on tallymap's CPU backend only. `pip install matplotlib` adds the tutorial's figures.
+
+To work on lumen itself, install a clone editable:
+
+```bash
+git clone https://github.com/OmarAlterkait/lumen.git
+pip install -e "lumen[cuda,dev]"
+```
+
+The `cuda` extra is `jax[cuda12]`: JAX's CUDA plugin and NVRTC, the compiler tallymap's CUDA backend uses; that is all
+`tallymap[cuda]` would add. tallymap is not on PyPI; lumen's dependency names its tag (v0.6.0rc1) on GitHub. The CUDA
+backend also builds a small C++ launch shim once, so a C++17 compiler must be on the PATH the first time.
 
 The last line should list a `CudaDevice`. If it lists only `CpuDevice`, JAX did not find the CUDA driver. lumen still
 runs in that case, on the CPU backend.

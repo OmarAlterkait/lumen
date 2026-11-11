@@ -19,17 +19,22 @@ dependencies = [
     "jax==0.6.2",
     "jaxlib==0.6.2",
     "scipy>=1.10",  # spatial search of sibling placements (scipy.spatial.cKDTree) in the geometry lowering
-    # The photon loop: tallymap v0.6.0rc1 (7a8f1f7), pinned by commit in the development lock.
-    "tallymap>=0.6.0rc1,<0.7",
+    # The photon loop: tallymap v0.6.0rc1 (7a8f1f7), not on PyPI: installed from its tag
+    "tallymap @ git+https://github.com/OmarAlterkait/tallymap.git@v0.6.0rc1",
 ]
 
 [project.scripts]
 lumen = "lumen.cli:main"
 
 [project.optional-dependencies]
+# the GPU: JAX's CUDA plugin and NVRTC, the compiler tallymap's CUDA backend uses
+cuda = ["jax[cuda12]==0.6.2"]
 # tier (a) runs on 4 workers (pytest tests/unit -n 4): pytest-xdist and its transport execnet
 test = ["pytest>=8", "pytest-xdist>=3.6,<4", "execnet>=2.1,<3"]
 dev = ["pytest>=8", "pytest-xdist>=3.6,<4", "execnet>=2.1,<3", "ruff>=0.8,<0.9", "mypy>=1.13,<2", "pre-commit>=4,<5"]
+
+[tool.hatch.metadata]
+allow-direct-references = true  # tallymap from its git tag
 
 [tool.hatch.version]
 source = "vcs"
