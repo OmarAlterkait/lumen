@@ -191,9 +191,10 @@ def test_a_registered_model_parameter(lined, ex, models, key, theta0):
 
 
 # --------------------------------------------------------------------------------------------- controls, diagnostics
-def test_simulate_takes_controls_and_diagnostics(tank):
+def test_simulate_takes_controls_and_diagnostics(lined):
     from lumen.diagnostics import TRACE_FIELDS, Trace
 
+    tank = lumen.load(lined)  # a liner (R = 0.5): light that reaches a PMT after its first event
     src = sources.Point((0.05, 0.02, 0.1), n_photons=4096.0, lam=420.0)
     n = 4096
     plain = lumen.simulate(tank, src, samples=n, seed=2)
