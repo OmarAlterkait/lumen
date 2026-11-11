@@ -75,6 +75,22 @@ How to fill it in for your detector:
 other groups (counting sensors) give arrivals only. Several PMT types in one group share one value set in 0.1
 (per-type values in one group come in 0.2).
 
+### Borders and skins at the detector volume's boundary
+
+lumen cuts the GDML world at the detector volume and binds the borders there as Geant4 binds them, so a recipe never
+needs to unbind or rebind them:
+
+- a border from a daughter into the detector volume's placement, or from that placement into its mother, is bound
+  and acts at that crossing as in Geant4;
+- a border from the mother into the detector volume is bound but never crossed: lumen's outside holds no photon;
+- a border whose first volume lies outside the detector volume (wholly outside, or from a neighbour into the detector
+  volume) is dropped, with a warning saying so. Geant4 consults a border only for a photon in its first volume, and
+  lumen tracks no light outside, so the drop changes nothing;
+- a border from the detector volume into a neighbour other than its mother is refused (`no adjacent world
+  instances`): lumen's outside is one region, so give the surface to every exit with the recipe's `outside_surface`.
+
+Skins bind wherever their logical volume is in the kept tree, as in Geant4.
+
 ## 2. Convert, and read the repair warnings
 
 ```python

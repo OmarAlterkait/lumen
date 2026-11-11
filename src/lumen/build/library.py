@@ -568,8 +568,12 @@ def border_bindings(df, tree) -> dict:
 
     A GDML physvol name matches every world instance whose placement segment (the path segment before the member
     volume) is that name (or that name + '#k': one physvol placed several times in one mother); a border applies to
-    each adjacent (mother/daughter or sibling) instance pair. Fail closed when a border matches nothing; a border
-    whose two volumes both lie outside the kept detector is dropped with a warning.
+    each adjacent (mother/daughter or sibling) instance pair. At the detector volume's boundary this is Geant4's own
+    binding: a daughter -> the detector placement, the detector placement -> its mother and the mother -> the
+    detector placement are bound (the last never crossed: the outside holds no photon). A border whose first volume
+    lies outside the kept detector is dropped with a warning: Geant4 consults a border only for a photon in its first
+    volume, and lumen tracks no light outside. Fail closed otherwise when a border matches nothing (the detector
+    placement -> a sibling outside it: the outside is one region, see ``outside_surface``).
     """
     seg = _segments(tree)
     lv_of = {p.name: p.volume for p in df.placements}  # physvol -> its LV
@@ -582,16 +586,20 @@ def border_bindings(df, tree) -> dict:
     for border in df.borders:
         a, b = alias(border.pv1), alias(border.pv2)
         pairs = _border_pairs(tree, seg, a, b, inside)
-        if not pairs and not seg.get(a) and not seg.get(b):
-            dropped.append(border.name)  # both volumes lie outside the kept detector
+        if not pairs and not seg.get(a):
+            dropped.append(border.name)  # its first volume lies outside the kept detector: never consulted
             continue
         if not pairs:
-            raise regions.OpticsError(f"bordersurface {border.name!r} ({a!r} -> {b!r}): no adjacent world instances")
+            raise regions.OpticsError(f"bordersurface {border.name!r} ({a!r} -> {b!r}): no adjacent world instances "
+                                      "(a border from the detector volume to a volume outside it other than its "
+                                      "mother: lumen's outside is one region, give it a surface with the recipe's "
+                                      "outside_surface)")  # fmt: skip
         for pr in pairs:
             out[pr] = border.surface
     if dropped:
-        warnings.warn(f"{len(dropped)} border surfaces lie wholly outside the kept detector and are dropped (e.g. "
-                      f"{dropped[:3]})", stacklevel=2)  # fmt: skip
+        warnings.warn(f"{len(dropped)} border surfaces start outside the kept detector and are dropped (e.g. "
+                      f"{dropped[:3]}): Geant4 consults them only for light outside the detector volume, which lumen "
+                      "does not track. This is correct; the recipe needs no action", stacklevel=2)  # fmt: skip
     return out
 
 

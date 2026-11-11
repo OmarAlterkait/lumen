@@ -59,3 +59,11 @@ before 0.1). A recipe written with `note=...` now fails with a `TypeError` on th
 (keep the note as a comment in the recipe file). WCSim's recipes also lost their `cathode_model` decision, a check
 that could not fail, and the sensor group's `name_prefix` setting, which equalled the default; converted detector
 files are unchanged except the sensor set's JSON, which no longer lists `name_prefix`.
+
+## Borders: one that starts outside the detector volume is dropped (0.1.2)
+
+A border from a volume outside the detector volume into it (a neighbour of the detector placement) used to raise
+"no adjacent world instances". It is now dropped with the same warning as a border wholly outside, because Geant4
+consults a border only for a photon in its first volume and lumen tracks no light outside. Every detector that
+converted before converts to the same file. The reverse case, the detector volume into such a neighbour, still
+raises. To do: nothing; a recipe decision that unbound such borders can go.

@@ -358,7 +358,10 @@ that converted cleanly. If you see one, report it with the GDML, the recipe and 
   border may name the sensor itself when its binding has entry='border')`; `border
   sensor <s> (<pre> -> <post>): <pre> is not a sensor PV, so a detection leaving it has no sensor to go to`; `sensor PV
   <name> has entry='border' but no border bound to <sensor> leads into it: it would never detect` (add a border
-  surface into the sensor, or use `any_entry`); `bordersurface <name> (<a> -> <b>): no adjacent world instances`;
+  surface into the sensor, or use `any_entry`); `bordersurface <name> (<a> -> <b>): no adjacent world instances (a
+  border from the detector volume to a volume outside it other than its mother: ...)` (lumen's outside is one region:
+  give the surface to every exit with the recipe's `outside_surface`; a border that starts outside the detector volume
+  is dropped with a warning instead, and needs no action: docs/howto/your-own-detector.md);
   `class <class> touches itself across a <surface type> boundary (<reason>; e.g. <pre> -> <post>): the crossing would be invisible. Declare the placements disjoint (bindings.disjoint) if they do not touch, or give the ...`; `class pair <a> -> <b> resolves to two surface types: ... The signature missed a distinction ...`
  ; `two different surface types share a name: <names>`;
   `wavelength domain must be finite with 0 < lam_min < lam_max, got <range>`; `medium <name>: missing params <names>`;

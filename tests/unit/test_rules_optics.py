@@ -298,6 +298,39 @@ def test_border_bindings_on_a_tree(df):
         glue.border_bindings(df, tree(*pvs[:3]))
 
 
+def _cut(*borders):
+    """A detector file's geometry cut at a placement: world Wld > tank (T) > det (D, the detector volume), sib (S);
+    det > d1 (X); with the given borders (pv1, pv2), and the tree of the detector volume."""
+    from types import SimpleNamespace as Ns
+
+    pl = [Ns(name=n, volume=v) for n, v in (("tank", "T"), ("det", "D"), ("sib", "S"), ("d1", "X"))]
+    vols = {"Wld": Ns(daughters=[0]), "T": Ns(daughters=[1, 2]), "D": Ns(daughters=[3]), "S": Ns(daughters=[]),
+            "X": Ns(daughters=[])}  # fmt: skip
+    bs = tuple(Ns(name=f"b{i}", surface=f"s{i}", pv1=a, pv2=b) for i, (a, b) in enumerate(borders))
+    t = tree(("<outside>", "<outside>", "Air"), ("det/D", "D", "Liq", "<outside>"), ("det/d1/X", "X", "Liq", "det/D"))
+    return Ns(placements=pl, volumes=vols, borders=bs), t
+
+
+@pytest.mark.parametrize(("border", "want"), [
+    (("d1", "det"), {("det/d1/X", "det/D"): "s0"}),    # a daughter -> the detector placement
+    (("det", "tank"), {("det/D", "<outside>"): "s0"}),  # the detector placement -> its mother
+    (("tank", "det"), {("<outside>", "det/D"): "s0"}),  # the mother -> the detector placement (never crossed)
+])  # fmt: skip
+def test_borders_at_the_detector_volume_are_bound_as_geant4_binds_them(border, want):
+    assert glue.border_bindings(*_cut(border)) == want
+
+
+@pytest.mark.parametrize("border", [("sib", "tank"), ("sib", "det")])  # wholly outside; from outside into it
+def test_a_border_from_outside_the_detector_volume_is_dropped(border):
+    with pytest.warns(UserWarning, match="needs no action"):
+        assert glue.border_bindings(*_cut(border)) == {}
+
+
+def test_a_border_from_the_detector_volume_to_a_sibling_raises():
+    with pytest.raises(regions.OpticsError, match="outside_surface"):
+        glue.border_bindings(*_cut(("det", "sib")))
+
+
 def test_coverage_lists_tables_short_of_the_range(df):
     lines = rules.coverage(df, (100.0, 900.0))
     assert any("material 'Liq'.RINDEX" in x for x in lines) and not any("WLSABSLENGTH" in x for x in lines)
