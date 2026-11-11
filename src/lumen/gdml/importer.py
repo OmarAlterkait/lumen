@@ -358,5 +358,5 @@ def import_gdml(path, recipe, inputs: dict | None = None) -> ImportResult:
 
     ``inputs`` gives the extra files the recipe's decisions read, by name.
     """
-    df = read_gdml(path, getattr(recipe, "material_keys", None))
+    df = read_gdml(path, recipe.material_keys)
     return recipe.apply(df, Path(path), inputs)

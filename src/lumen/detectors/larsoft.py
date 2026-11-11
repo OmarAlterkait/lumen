@@ -27,6 +27,7 @@ from pathlib import Path
 
 import numpy as np
 
+from lumen.build.import_rules import CONTACT
 from lumen.format import schema
 from lumen.format.sensorsets import SensorGroup
 from lumen.recipe import Recipe
@@ -34,11 +35,6 @@ from lumen.recipe import Recipe
 LAR = "LAr"
 CRYOSTAT_LV, MEMBRANE_LV, ENCLOSURE_LV = "volCryostat", "volCryoMembrane", "volDetEnclosure"
 SBND_WAVELENGTHS = (100.0, 900.0)  # nm: LAr scintillation (104-172) and TPB emission (350-826)
-GEOMETRY_TOLERANCE = 1e-12  # m: two GDML lengths that agree to this are equal (1e-9 mm)
-
-
-def _daughters(df, lv):
-    return {df.placements[i].volume: df.placements[i] for i in df.volumes[lv].daughters}
 
 
 def membrane_skin(df: schema.DetectorFile) -> str:
@@ -46,10 +42,10 @@ def membrane_skin(df: schema.DetectorFile) -> str:
     msol = df.solids[df.volumes[MEMBRANE_LV].solid]
     inner = df.solids.get(msol.refs[1]) if msol.type == "subtraction" else None
     cbox = df.solids[df.volumes[CRYOSTAT_LV].solid]
-    pos = {p.volume: p.position for p in _daughters(df, ENCLOSURE_LV).values()}
+    pos = {p.volume: p.position for p in _daughters_all(df, ENCLOSURE_LV)}
     skins = {k.volume: k.surface for k in df.skins}
     ok = (inner is not None and cbox.type == inner.type == "box"
-          and all(abs(cbox.params[k] - inner.params[k]) < GEOMETRY_TOLERANCE for k in "xyz")
+          and all(abs(cbox.params[k] - inner.params[k]) < CONTACT for k in "xyz")
           and np.allclose(pos[CRYOSTAT_LV], pos[MEMBRANE_LV]) and MEMBRANE_LV in skins)  # fmt: skip
     if not ok:
         raise ValueError(f"{CRYOSTAT_LV} is not enclosed by {MEMBRANE_LV}'s inner box")

@@ -60,7 +60,7 @@ def sensor_defaults(sensor_set, parts=None) -> dict:
     out = {}
     for g in sensor_set.groups:
         for field, v in g.settings.items():
-            if isinstance(v, (int, float)) and not isinstance(v, bool) and field != "name_prefix":
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
                 key = f"sensors/{g.name}/{field}"
                 out[key] = (float(v), ParamInfo(key, "", (0.0, 1.0), "reweight"))
         if g.model in plugins.sensor_models.names() and parts is not None:

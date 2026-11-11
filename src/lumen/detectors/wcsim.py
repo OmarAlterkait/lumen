@@ -32,25 +32,17 @@ from lumen.recipe import Recipe
 
 DETECTOR = "WCBarrel"  # WCSim's water volume (WC is air, expHall vacuum)
 SENSOR_LV = "InteriorWCPMT"
-CATHODE_MODEL = 0  # the reference's /WCSim/tuning/PMTCathodePara model
 WAVELENGTHS = (300.0, 600.0)  # nm
 ANNIE_TANK_TYPES = ("R7081", "D784KFLB", "R5912HQE", "R7081HQE")  # SetANNIEPhase2Geometryv7's tank collections
 QE_POINTS = 20  # WCSim's QE tables have 20 points
 
 
-def cathode_model(df: schema.DetectorFile, inputs: dict) -> schema.DetectorFile:
-    """Refuse a photocathode model other than WCSim's model 0 (see the module docstring)."""
-    if CATHODE_MODEL != 0:
-        raise ValueError(f"WCSim photocathode model {CATHODE_MODEL}: only model 0 is implemented")
-    return df
-
-
 def recipe(name: str, detector_volume: str = DETECTOR, decisions=(), inputs=(), **kw) -> Recipe:
     """Return a WCSim detector's recipe."""
     group = SensorGroup("pmt", "border_into", "lumen:geant4", lv_pattern=f"^{SENSOR_LV}",
-                        settings={"efficiency_on_entry": 1.0, "name_prefix": "pmt"})  # fmt: skip
+                        settings={"efficiency_on_entry": 1.0})  # fmt: skip
     return Recipe(name=name, detector_volume=detector_volume, wavelength_range=WAVELENGTHS, groups=(group,),
-                  decisions=(cathode_model, *decisions), inputs=tuple(inputs), **kw)  # fmt: skip
+                  decisions=tuple(decisions), inputs=tuple(inputs), **kw)  # fmt: skip
 
 
 # ------------------------------------------------------------------------------- ANNIE: tube types and QE tables

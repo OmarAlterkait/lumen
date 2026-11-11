@@ -42,7 +42,6 @@ class Recipe:
     inputs: tuple[str, ...] = ()
     sensor_columns: Callable | None = None
     calibrations: Callable | None = None
-    note: str = ""
     material_keys: frozenset | None = None  # the material keys to read (None: the Geant4 optical keys); others inert
 
     def apply(self, df: schema.DetectorFile, source: Path, inputs: dict | None = None):
@@ -54,8 +53,7 @@ class Recipe:
         missing = [k for k in self.inputs if k not in inputs]
         if missing:
             raise ValueError(f"recipe {self.name!r} needs the inputs {missing}")
-        lv = lowering.find_detector(df, self.detector_volume)
-        lv = lv if isinstance(lv, str) else lv[0]
+        lv = lowering.find_detector(df, self.detector_volume)[0]
         rep = list(df.report) + [f"detector volume: {lv} (recipe: {self.detector_volume})"]
         prov = dict(df.provenance, recipe=self.name, recipe_inputs={k: Path(v).name for k, v in inputs.items()})
         df = dataclasses.replace(df, name=self.name, detector_volume=lv, wavelength_range=self.wavelength_range,

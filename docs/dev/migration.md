@@ -51,3 +51,11 @@ any other (a cos^8 LED's position derivative was 5 times too small). To do: for 
 (`lumen.sources.grad_logpdf`), or write the source as a function (`@lumen.source`, docs/howto/extending.md). Every
 other source (`Point`, the scintillation and Cherenkov sources, `Geant4Steps`) and every detector file, sensor set and
 calibration is unchanged.
+
+## Recipes: `Recipe.note` removed (0.1.2)
+
+`lumen.Recipe` no longer has a `note` field: nothing read it, and no recipe set it (`Recipe.extra` went the same way
+before 0.1). A recipe written with `note=...` now fails with a `TypeError` on that keyword. To do: drop the argument
+(keep the note as a comment in the recipe file). WCSim's recipes also lost their `cathode_model` decision, a check
+that could not fail, and the sensor group's `name_prefix` setting, which equalled the default; converted detector
+files are unchanged except the sensor set's JSON, which no longer lists `name_prefix`.
