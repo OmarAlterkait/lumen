@@ -71,6 +71,10 @@ it on your detector:
 A photon that bounces many times between convex windows makes its path's sensitivities grow exponentially; lumen
 rescales them at every bounce, which changes no value or derivative.
 
+On a very large detector (about 40,000 sensors) a position derivative can run out of GPU memory before tracking, in the
+step that estimates the clearance about the source (`lumen.geometry.clearance`, 256 rays per batch). Smaller batches,
+sized to the free memory, are planned for 0.1.3.
+
 ## A user GROUPVEL
 
 Geant4 times photons in a material with a user-supplied GROUPVEL table (it replaces the one Geant4 computes from
