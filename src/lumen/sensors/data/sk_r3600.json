@@ -17,7 +17,7 @@
    "dark_rate": "WCSim src/WCSimPMTObject.cc:252-264 x WCSim src/WCSimPMTObject.cc:268-271",
    "frontend": "WCSimWCDigitizer.hh:97-100 (window 200 ns, no dead time); charge noise 0.03 pe: Threshold (WCSimWCDigitizer.hh:115); WCSim's 0.985 charge factor (WCSimWCDigitizer.cc:262) and 0.4 ns time truncation are its conventions, not physical values"
   },
-  "warning": "timing unverified until transcribed: the per-photoelectron time spread is WCSim's per-digit smear at 1 pe; CE unverified: WCSim's 2011 table, not SKDetSim's; its origin and coordinate are undocumented (docs/dev/design.md section 12)"
+  "warning": "timing unverified until transcribed: the per-photoelectron time spread is WCSim's per-digit smear at 1 pe; CE unverified: WCSim's 2011 table, not SKDetSim's; its origin and coordinate are undocumented (docs/explanation/known-limits.md)"
  },
  "qe": {
   "wavelength_nm": [

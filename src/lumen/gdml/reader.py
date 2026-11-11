@@ -37,6 +37,7 @@ import warnings
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from decimal import Decimal
+from pathlib import Path
 
 import numpy as np
 
@@ -444,10 +445,20 @@ class GDMLDocument:
         self.world = None
         self.report = []
         self._defs = {}
+        self._defects = {}  # (repair, object) -> [(where, done)]
+
+    def warn_repairs(self):
+        """Warn once per repair and object (``GDMLRepairWarning``): the first occurrence's text and the count."""
+        for (kind, _), hits in self._defects.items():
+            where, done = hits[0]
+            more = f" ({len(hits)} occurrences on this object)" if len(hits) > 1 else ""
+            warnings.warn(repair_message(kind, f"gdml {Path(self.path).name}: {where}", done) + more,
+                          GDMLRepairWarning, stacklevel=3)  # fmt: skip
 
     def defect(self, kind, where, done):
-        """Repair an exporter defect: a warning (``GDMLRepairWarning``) and a report line saying what was done."""
-        warnings.warn(repair_message(kind, f"gdml {self.path}: {where}", done), GDMLRepairWarning, stacklevel=3)
+        """Repair an exporter defect: a report line saying what was done, and a warning at the end of the read
+        (``warn_repairs``: one per repair and object, with its count)."""  # noqa: D205, D209
+        self._defects.setdefault((kind, where.split(":")[0]), []).append((where, done))
         self.repairs.add(kind)
         self.report.append(f"repaired ({kind}): {where}: {done}")
 
@@ -913,6 +924,13 @@ class GDMLDocument:
                                         self.transform(c)))  # fmt: skip
 
 
-def read(path) -> GDMLDocument:
-    """Read a GDML file, repairing its exporter defects (REPAIRS) with warnings; see the module docstring."""
-    return GDMLDocument(path).parse()
+def read(path, warn=True) -> GDMLDocument:
+    """Read a GDML file, repairing its exporter defects (REPAIRS) with warnings; see the module docstring.
+
+    With ``warn``, one ``GDMLRepairWarning`` per repair and object (the first occurrence's text and the count);
+    every occurrence is in the report.
+    """
+    doc = GDMLDocument(path).parse()
+    if warn:
+        doc.warn_repairs()
+    return doc

@@ -21,6 +21,7 @@ Before these, the reader repairs the exporter defects Geant4 refuses (``reader.R
 
 from __future__ import annotations
 
+import warnings
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -37,6 +38,10 @@ IMPORTER_VERSION = "1"
 LENGTH_KEYS = {"ABSLENGTH", "RAYLEIGH", "WLSABSLENGTH", "WLSABSLENGTH2", "MIEHG", "COATEDTHICKNESS"}
 NON_FINITE = 1e30  # a non-finite table value is stored as +-1e30 (Geant4 does not read inf), and reported
 MEV_TO_EV = "1000000"
+
+
+class InertKeysWarning(UserWarning):
+    """Material keys no Geant4 optical process reads, kept inert (unread, stored verbatim)."""
 
 
 class ImportRefused(ValueError):  # noqa: N818 (the name of the documented error catalogue)
@@ -218,9 +223,9 @@ def _properties(doc, props, what, rep, skip=(), inert: _Inert | None = None):
 def materials(doc: reader.GDMLDocument, rep: list, keys=None) -> tuple[dict, dict, dict]:
     """Return (materials, elements, isotopes); every material must name its composition.
 
-    ``keys``: the optical property keys to read (None: every key), or a mapping from material name to such keys (a
-    material it does not name reads every key; the GDML export's reader uses it); a material's other properties are
-    kept inert.
+    ``keys``: the optical property keys to read (None: ``lumen.rules.optics.MATERIAL_KEYS``, every key a Geant4 optical
+    process reads), or a mapping from material name to such keys (a material it does not name reads the default; the
+    GDML export's reader uses it); a material's other properties are kept inert, unread.
     """
     isotopes = {n: schema.Isotope(n, i.z, i.n, i.molar_mass_g_mol) for n, i in doc.isotopes.items()}
     elements = {n: schema.Element(n, e.formula, e.z, e.molar_mass_g_mol,
@@ -237,10 +242,12 @@ def materials(doc: reader.GDMLDocument, rep: list, keys=None) -> tuple[dict, dic
             if c.ref not in doc.elements and c.ref not in doc.materials:
                 raise ImportRefused(f"material {name!r}: component {c.ref!r} is neither an element nor a material")
         comp = schema.Composition(m.density_g_cm3, comps, m.z, m.molar_mass_g_mol)
+        from lumen.rules import optics  # (lazily: the rules import the build, which imports the importer)
+
         keep = keys.get(name) if isinstance(keys, Mapping) else keys
-        sink = None if keep is None else _Inert(frozenset(keep))
+        sink = _Inert(frozenset(optics.MATERIAL_KEYS if keep is None else keep))
         props = _properties(doc, m.props, f"material {name!r}", rep, inert=sink)
-        inert = {} if sink is None else sink.found
+        inert = sink.found
         if inert:
             rep.append(f"material {name!r}: {len(inert)} non-optical propert(ies) kept inert: {sorted(inert)}")
         out[name] = schema.Material(name, m.state, comp, m.temperature, m.pressure, props, inert=inert,
@@ -304,20 +311,32 @@ def _known(surfaces_, surf, name):
 
 
 # ----------------------------------------------------------------------------------------------------- the import
-def read_gdml(path, material_keys=None) -> schema.DetectorFile:
+def read_gdml(path, material_keys=None, warn=True) -> schema.DetectorFile:
     """Return the detector file of a GDML file before any recipe decision (the detector volume is the world).
 
-    ``material_keys``: the material property keys to read as optical properties (None: all); see ``materials``.
+    ``material_keys``: the material property keys to read as optical properties (None: the Geant4 optical keys,
+    ``lumen.rules.optics.MATERIAL_KEYS``); see ``materials``. With ``warn``, the keys kept inert are named in one
+    ``InertKeysWarning`` (keys x materials).
     The exporter defects found are repaired with warnings (``reader.REPAIRS``; recorded in the provenance and report).
     """
     import hashlib
 
-    doc = reader.read(path)
+    doc = reader.read(path, warn=warn)
     rep = list(doc.report)
     sol, meshes, r2 = solids(doc)
     rep += r2
     vols, pls = structure(doc)
     mats, els, isos = materials(doc, rep, material_keys)
+    held = {k for m in mats.values() for k in m.inert}
+    if warn and held:
+        n, nm = sum(len(m.inert) for m in mats.values()), sum(bool(m.inert) for m in mats.values())
+        warnings.warn(
+            f"gdml {Path(path).name}: {len(held)} material key(s) in {nm} "
+            f"material(s) ({n} properties) are read by no Geant4 optical process and are kept inert: "
+            f"{sorted(held)[:12]}; Recipe(material_keys=...) reads others (docs/reference/errors.md)",
+            InertKeysWarning,
+            stacklevel=2,
+        )
     surfs, skins, borders = surfaces(doc, pls, rep)
     toks, r3 = tokens.collect(doc, sol, meshes, pls, mats, surfs)
     rep += r3

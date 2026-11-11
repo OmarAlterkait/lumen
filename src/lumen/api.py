@@ -159,8 +159,12 @@ def _convert_registered(name: str, out: Path) -> Path:
     return convert(data / pkg.source_dataset, pkg.recipe, out, inputs=inputs)
 
 
-def load(name_or_path, *, sensors: str = "default", calibration: str = cal.NOMINAL) -> Detector:
-    """Load a detector by path or registered name, with a sensor set and a calibration (see the module docstring)."""
+def load(name_or_path, *, sensors: str = "default", calibration: str | None = cal.NOMINAL) -> Detector:
+    """Load a detector by path or registered name, with a sensor set and a calibration (see the module docstring).
+
+    ``calibration`` None is the nominal one (the detector file's own values).
+    """
+    calibration = cal.NOMINAL if calibration is None else calibration
     from lumen.build import build
 
     path = _resolve(name_or_path)

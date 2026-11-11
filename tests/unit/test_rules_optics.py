@@ -43,7 +43,8 @@ def test_reading_units_and_keys(df):
     assert [(b.surface, b.pv1, b.pv2) for b in df.borders] == [("paint", "blk1", "other")]
     txt = "\n".join(rules.key_report(df.materials))
     print("\n" + txt)
-    assert "Geant4-10 keys" in txt and "RADLENGTH" in txt
+    assert "Geant4-10 keys" in txt and "RADLENGTH" not in txt  # a user key: kept inert by default, unread
+    assert "RADLENGTH" in df.materials["Liq"].inert
 
 
 def test_enum_valued_surface_attributes(df):
@@ -189,9 +190,9 @@ def test_geant4_rayleigh_for_water(df):
     assert np.allclose(rules.geant4_rayleigh(other).value, ray.value / 2.0, rtol=1e-12)
 
 
-def test_groupvel_export_is_accepted_a_user_table_refused(df):
+def test_groupvel_export_is_accepted_a_user_table_not_read(df):
     """G4GDMLWriteMaterials writes Geant4's computed GROUPVEL: that table is an export and is accepted; any other
-    GROUPVEL is a user table and is refused."""
+    GROUPVEL is a user table, not read, with a warning (photons timed by RINDEX's group index, unlike Geant4)."""
     liq = df.materials["Liq"]
     r = liq.properties["RINDEX"]
     eg, ng = (
@@ -201,8 +202,8 @@ def test_groupvel_export_is_accepted_a_user_table_refused(df):
     assert rules.geant4_groupvel_export(exported.properties)
     assert rules.medium(exported).medium.index.form == "g4_rindex"
     user = _with(liq, GROUPVEL=schema.Property("GROUPVEL", 0.99 * 299.792458 / ng, eg))
-    with pytest.raises(rules.OpticsRefused, match="user GROUPVEL"):
-        rules.medium(user)
+    with pytest.warns(UserWarning, match="user GROUPVEL"):
+        assert rules.medium(user).medium.index.form == "g4_rindex"
 
 
 SUPPORTED = {"glis": legacy.GLISUR_METAL, "glispol": legacy.SPECULAR_METAL, "glis1": legacy.SPECULAR_METAL,

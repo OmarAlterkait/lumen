@@ -1,8 +1,8 @@
 # Parameters
 
-Every optical value lumen tracks with is a parameter: you can calibrate it, and it has a derivative (D39). The only
+Every optical value lumen tracks with is a parameter: you can calibrate it, and it has a derivative. The only
 exceptions are the geometry, and a value the model never reads. The model never reads a value when Geant4's process,
-given the surface's or material's type, model and finish, has no code path that uses it. Such a value is OUT (D68): it
+given the surface's or material's type, model and finish, has no code path that uses it. Such a value is OUT: it
 is folded into the surface type (`painted{f_spec=0}`), it is not packed as a parameter, and it is never a reported or
 gated gradient family.
 

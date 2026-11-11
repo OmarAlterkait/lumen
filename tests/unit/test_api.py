@@ -145,3 +145,8 @@ def test_dropped_exact_emits_raise_when_concrete_and_stay_in_health_under_jit():
         return {"overflow": n}
 
     assert int(jax.jit(under_jit)(jnp.int32(3))["overflow"]) == 3
+
+
+def test_load_with_calibration_none_is_the_nominal_one(converted):
+    a, b = lumen.load(converted), lumen.load(converted, calibration=None)
+    assert b.calibration == "nominal" and sorted(a.params()) == sorted(b.params())

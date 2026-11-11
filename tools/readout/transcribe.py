@@ -138,7 +138,7 @@ SK_CE = (
 )
 SK_CE_WARNING = (
     "CE unverified: WCSim's 2011 table, not SKDetSim's; its origin and coordinate are undocumented "
-    "(docs/dev/design.md section 12)"
+    "(docs/explanation/known-limits.md)"
 )
 
 
@@ -240,8 +240,9 @@ def sk_sets(src, hh):
         "(WCSimWCDigitizer.hh:115); WCSim's 0.985 charge factor (WCSimWCDigitizer.cc:262) and 0.4 ns time "
         "truncation are its conventions, not physical values")  # fmt: skip
     d["provenance"]["warning"] = ("timing unverified until transcribed: the per-photoelectron time spread is WCSim's "
-                                  "per-digit smear at 1 pe; CE unverified: WCSim's 2011 table, not SKDetSim's; its "
-                                  "origin and coordinate are undocumented (docs/dev/design.md section 12)")  # fmt: skip
+                                  "per-digit smear at 1 pe; CE unverified: WCSim's 2011 table, not SKDetSim's; "
+                                  "its origin and coordinate are undocumented "
+                                  "(docs/explanation/known-limits.md)")  # fmt: skip
     return d, s1
 
 

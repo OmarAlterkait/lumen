@@ -27,6 +27,7 @@ Most lumen errors are subclasses of Python's own, so `except ValueError` still c
 | `DeviceError` | `RuntimeError` | a GPU was expected but JAX is not using it |
 | `ClosedOverValues` | `ValueError` | a plug-in's code captured a parameter value instead of taking it as an input |
 | `ReferenceStoreError` | `LookupError` | a validation check cannot find its reference data |
+| `InertKeysWarning` | `UserWarning` | the GDML's materials carry keys no Geant4 optical process reads (a collaboration's own constants, for example); they are kept inert, unread, as Geant4 ignores them. `Recipe(material_keys=frozenset({...}))` chooses the keys to read instead |
 | `CalibrationMismatch` | `ValueError` | a calibration was made for another detector file (its digest differs) |
 | `SumOverflow` | `RuntimeError` | the GPU's exact sums dropped a value or derivative too large to represent (`Light.health["overflow"]` counts them under `jax.jit`); the result is wrong, usually because a derivative is taken at a point where the quantity is singular |
 | `BoundaryError`, `TreeError`, `GeometryError`, `DescriptionError`, `OpticsError` | `ValueError` | internal consistency checks of the geometry and surface build; see [the last section](#internal-consistency-checks) |
@@ -42,7 +43,7 @@ Some GDML files, often written by detector software's own exporters, contain con
 or reads differently from what they say. lumen repairs each of them, warns once per repair (the object, how many,
 and what Geant4 does), and records the repair in the detector file. Read the warnings: a repair keeps lumen and
 Geant4 reading the same file, but it can mean the file does not say what its author meant. The guide
-[Your own detector](../howto/your-own-detector.md#2-read-the-repair-warnings) shows the loop.
+[Your own detector](../howto/your-own-detector.md#2-convert-and-read-the-repair-warnings) shows the loop.
 
 | Repair | The construct | What stock Geant4 does | lumen's repair | What to do |
 |---|---|---|---|---|
@@ -104,7 +105,7 @@ The file reads, but converting it would change what Geant4 does.
 | `surface <name> refers to <ref>, which is not an opticalsurface` | point the skin or border at an `<opticalsurface>` |
 | `<what>: property <key> given twice` | remove one |
 | `<what>.<key>: matrix <ref> has <n> columns (a property needs 1 or 2)` | a property is a constant (1 column) or a table (energy, value) |
-| `<what>.<key>: energies must be strictly ascending with >= 2 knots (got <energies>)` | sort the table, remove repeated energies |
+| `<what>.<key>: energies must be strictly ascending with >= 2 knots (got <energies>)` | sort the table, remove repeated energies. A key Geant4's optical processes never read (a collaboration's own constant) is kept inert by default; this error then comes only from a key you asked for with `Recipe(material_keys=...)`: drop it from that set |
 | `<what>.<key>: <detail>` | a property value that does not evaluate |
 | `tessellated <name>: no facets` | an empty mesh |
 
@@ -119,7 +120,7 @@ or surface.
 | `<what>: model <model> is not supported` · `<what>: finish <finish> is not supported` · `<what>: surface type <type> is not supported` | a surface form outside 0.1's legacy types (refused: ground dielectric_dielectric, backpainted finishes, Geant4's `coated` type, LUT, LUTDAVIS, dichroic). Use a supported form |
 | `<what>: ground dielectric_dielectric (facet refraction) is not supported` | as above |
 | `<what>: <key> is not supported` · `<what>: <key> (<why>) is not supported` | a property lumen does not read (SURFACEROUGHNESS, for example). Remove it, or ask for it |
-| `<what>: GROUPVEL (a user GROUPVEL, not Geant4's own from RINDEX) is not supported` | remove GROUPVEL; lumen computes it from RINDEX as Geant4 does |
+| warning `<what>: a user GROUPVEL (not Geant4's own from RINDEX) is not read: photons are timed by RINDEX's group index, unlike Geant4` | the counts are Geant4's; the arrival times in that material follow RINDEX, where Geant4 uses your table ([known limits](../explanation/known-limits.md#a-user-groupvel)) |
 | `<what>: polish <value> outside [0, <max>] (or exactly 1)` · `<what>: sigma_alpha <value> outside [<min>, <max>]` | the opticalsurface `value` is outside what float32 resolves |
 | `<what>: TRANSMITTANCE on a metal would put the photon into it` | remove TRANSMITTANCE from the dielectric_metal surface |
 | `<what>: EFFICIENCY > 0 makes it a detecting surface; bind a sensor instead` | put the volume behind it in a sensor group, or set EFFICIENCY to 0 |
@@ -225,9 +226,7 @@ A value set whose status is `unverified`, or which carries a `warning`, loads wi
 
 | Message | Error | Meaning and fix |
 |---|---|---|
-| `simulate: one sensor group with a sensor model (lumen.sensors) is supported, the sensor set has <names>` | `ValueError` | 0.1 simulates one sensor group with a sensor model per detector |
-| `simulate: sensor group <name> must contain every sensor of the detector` | `ValueError` | as above |
-| `simulate: wrt takes the source's keys (source/<field>), got <keys>` | `ValueError` | in this build `wrt` takes only source keys |
+| `simulate: one sensor group with a sensor model (lumen.sensors) is supported, the sensor set has <names>` | `ValueError` | 0.1 reads at most one group with a sensor model; the other groups (counting) give arrivals only, and a detector without one gives arrivals and no histograms. Several PMT types in one group share one value set in 0.1 |
 | `simulate: <keys> move the photons of a source whose directions are not drawn from a density (drawn_direction False)` | `GradientNotAvailable` | a beam, a sharp Cherenkov cone or a photon list has no source-position derivative; use an isotropic source |
 | `<source> moves photons whose directions are not drawn from a density (drawn_direction False): no derivative (docs/explanation/known-limits.md)` | `GradientNotAvailable` | as above |
 | `the histograms need <x> GB, over the device budget of <y> GB: <n> sensors x <m> time nodes (<span> ns at <dt> ns), <k> replicas, <d> derivative directions. Shorten the readout gate, widen the time spread's declared lower range (coarser nodes), use fewer replicas or fewer derivative directions (wrt).` | `MemoryError` | lumen refuses before launch. Do what the message lists |
@@ -240,6 +239,27 @@ A value set whose status is `unverified`, or which carries a `warning`, loads wi
 | `<name>: ascending wavelengths and a non-negative, non-zero spectrum of the same length` · `spectrum <name>: needs a non-negative intensity with positive integral` · `spectrum <name>: negative intensities` | `ValueError` | fix the source spectrum |
 | `the photon loop (<name>) closes over <n> float array(s) <names>: pass every value through the Operands (lumen.transport.step.operands)` | `ClosedOverValues` | a plug-in captured a number in a closure; such a number would silently get a zero derivative. Declare it as a parameter |
 | `max_vertices must be >= 1, got <n>` · `photon_chunks: samples >= 0 and chunk > 0, got <a>, <b>` | `ValueError` | invalid run settings |
+
+## Health
+
+`Light.health` says what happened to the light that was not counted at a sensor. All but the counts are weights in
+the units of the source's photons; a healthy run has them at zero or tiny.
+
+| Key | Meaning | What to do |
+|---|---|---|
+| `escaped` | met no surface and no bulk event within the maximum step distance | a hole in the detector volume, or a detector volume chosen too small |
+| `abandoned` | stopped on a surface after repeated zero-length steps (Geant4's stuck-track rule) | none if tiny; many: a degenerate surface |
+| `stuck` | two counts: photons pushed off a surface after repeated zero-length steps, and photons abandoned there | as above |
+| `truncated`, `n_truncated` | the weight, and the number of photons, still bouncing at the step limit (`max_vertices`) | raise the limit, or check for a reflective trap |
+| `retired` | stopped past the time limit | expected with a short time limit |
+| `lost` | a crossing whose pair of volumes has no surface in lumen's tables. The known case: a reflection where two volumes touch leaves the photon in a medium without RINDEX (known limits), where stock Geant4 kills it too | about 1e-4 of the weight in a large PMT detector is this case; much more: find where (below) |
+| `overflow` | emits the GPU's exact sums dropped | `simulate` raises `SumOverflow`; see that row |
+
+**Where `lost` photons end.** `lumen.diagnostics.Trace(steps, n)` passed to `lumen.run.run` records each photon's
+first `steps` steps (position, direction, volume, class, the class pair crossed, and the lost weight). The class pair at
+the step with nonzero lost weight names the two volumes; the position says where. `lumen.validate.geometry` checks
+lumen's point location against Geant4's on the same GDML: if it finds no mismatch, the geometry reads the same in
+both, and the lost light comes from a junction of touching surfaces (known limits).
 
 ## Readout
 

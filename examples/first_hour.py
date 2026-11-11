@@ -143,7 +143,8 @@ KEY = "sensors/pmt/efficiency"
 true_eff = jnp.asarray([0.97, 0.92, 1.0, 0.88, 0.95, 0.9, 0.85, 0.99], jnp.float32)
 n_events = 20                                             # 20 flashes of the same source, summed per PMT
 truth_p = p0.set(KEY, true_eff)
-data = sum(lumen.readout.sample(light, truth_p, seed=100 + k).pe for k in range(n_events))
+rng = np.random.default_rng(100)                         # PE counts as readout.pe describes them: no electronics
+data = rng.poisson(n_events * np.asarray(lumen.readout.pe(light, truth_p), np.float64))
 
 
 def nll(p):

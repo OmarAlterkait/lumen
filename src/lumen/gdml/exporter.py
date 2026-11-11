@@ -1381,7 +1381,7 @@ def read_export(path) -> importer.ImportResult:
     path = Path(path)
     side_path = Path(str(path) + SIDECAR_SUFFIX)
     if not side_path.exists():
-        df = importer.read_gdml(path)
+        df = importer.read_gdml(path, warn=False)
         return importer.ImportResult(df, report=df.report)
     side = json.loads(side_path.read_text())
     if side.get("schema") != SIDECAR_SCHEMA:
@@ -1389,7 +1389,7 @@ def read_export(path) -> importer.ImportResult:
     if side["gdml"]["sha256"] != io.sha256_bytes(path.read_bytes()):
         raise ExportError(f"{side_path} belongs to another GDML (its sha256 differs from {path.name}'s)")
     keys = {m: frozenset(k) for m, k in side["read"]["material_keys"].items()}
-    df = _restore(importer.read_gdml(path, material_keys=keys or None), side)
+    df = _restore(importer.read_gdml(path, material_keys=keys or None, warn=False), side)
     sets = {n: sensorsets.from_json(s["set"], s["ids"]) for n, s in side["sensor_sets"].items()}
     cols: dict = next((s["columns"] for s in side["sensor_sets"].values()), {})
     return importer.ImportResult(df, sets, dict(side["data"]), df.report, cols)

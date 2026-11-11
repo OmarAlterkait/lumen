@@ -144,3 +144,26 @@ def test_non_optical_keys_are_kept_inert_and_unbound_borders_round_trip(tmp_path
     df = dataclasses.replace(df, borders=tuple(dataclasses.replace(b, bound=False, note="outside") for b in df.borders))
     back = io.read(io.save(df, tmp_path / "inert.lumen"))
     assert io.equal(df, back) and not back.borders[0].bound and back.borders[0].note == "outside"
+
+
+def test_a_user_material_key_is_kept_inert_with_one_warning(tmp_path):
+    """A key no Geant4 optical process reads (here a one-row table Geant4 never reads) is kept inert, unread, with one
+    grouped warning; Recipe.material_keys reads it explicitly (and refuses the one-row table)."""
+    import warnings
+
+    from lumen.gdml.importer import ImportRefused, InertKeysWarning, read_gdml
+
+    text = GDML.replace(
+        '<matrix name="REF"', '<matrix name="MYKEY" coldim="2" values="1.5*MeV 3.0"/>\n  <matrix name="REF"'
+    )
+    prop = '<property name="ABSLENGTH" ref="ABS0x2"/>'
+    text = text.replace(prop, prop + '\n    <property name="MYCONSTANT" ref="MYKEY"/>')
+    path = write(tmp_path, text)
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always")
+        df = read_gdml(path)
+    held = [w for w in seen if issubclass(w.category, InertKeysWarning)]
+    assert len(held) == 1 and "1 material key(s) in 1 material(s)" in str(held[0].message)
+    assert "MYCONSTANT" in df.materials["Water"].inert and "MYCONSTANT" not in df.materials["Water"].properties
+    with pytest.raises(ImportRefused, match="MYCONSTANT"):
+        read_gdml(path, material_keys=frozenset({"RINDEX", "ABSLENGTH", "MYCONSTANT"}))

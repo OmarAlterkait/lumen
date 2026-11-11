@@ -54,14 +54,26 @@ How to fill it in for your detector:
   sensor and that surface detects it (Geant4's own detection; with `model="lumen:pmt"` every photon absorbed on its
   way in is counted, and the PMT's QE is applied after tracking). This is the rule for PMTs with a photocathode
   surface. `any_entry`: every entry into the volume counts, for sensitive volumes without a detecting surface.
-- **The surface reader**: `lumen:geant4` reads the detecting surface as stock Geant4 does.
+- **A PMT whose interior is split into several volumes** (for example a vacuum volume behind the photocathode and
+  another behind the dynode, each a daughter of the glass body): choose the volume the photocathode's border surface
+  leads into. With `border_into` the photon is counted when it crosses that border surface from the body into the
+  selected volume, so select the volume on the far side of the photocathode surface (the GDML's
+  `<bordersurface>` names the pair: its second physical volume is the one to select); the other interior volumes
+  stay ordinary volumes. Select the same volume name in every PMT type with one regular expression (`lv_pattern`).
+- **The surface reader**: `lumen:geant4` reads the detecting surface as stock Geant4 does. `lumen:complex_index` is
+  for a photocathode surface whose GDML carries a complex refractive index (`RINDEX` and `KINDEX` tables, as some
+  experiments' software writes for a thin-film cathode, which stock Geant4 10.7 ignores on a surface): it treats the
+  cathode as a thick absorbing layer of index RINDEX + i KINDEX, with Fresnel reflection off it and the absorbed
+  share detected with `EFFICIENCY`. It does not model the thin film's interference; it is an approximation of it, and
+  it needs both tables flat over the wavelength range.
 - **The sensor model and its values.** `lumen:pmt` with a shipped value set (`lumen:sk_r3600@2`,
   `lumen:wcte_r14374@2`, `lumen:sbnd_pmt@1`, the ANNIE sets, ...) or your own. To start your own, copy one with
   `lumen.sensors.write_defaults("lumen:wcte_r14374@2", "my_pmt.json")`, edit it, set `provenance.source` and
   `provenance.status`, and pass the file's path as `defaults`.
 
-0.1 supports one `border_into` group per detector, and `simulate` reads out one group with a sensor model, which must
-contain every sensor.
+0.1 supports one `border_into` group per detector, and `simulate` reads out at most one group with a sensor model;
+other groups (counting sensors) give arrivals only. Several PMT types in one group share one value set in 0.1
+(per-type values in one group come in 0.2).
 
 ## 2. Convert, and read the repair warnings
 

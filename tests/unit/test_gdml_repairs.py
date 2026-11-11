@@ -47,7 +47,7 @@ def test_lumen_repairs_what_geant4_refuses_with_a_warning(name):
         with pytest.warns(reader.GDMLRepairWarning) as seen:
             df = importer.read_gdml(path)
         msgs = [str(w.message) for w in seen if issubclass(w.category, reader.GDMLRepairWarning)]
-        assert all(f"exporter defect {t['case']!r}" in m and "Stock Geant4" in m and str(path) in m
+        assert all(f"exporter defect {t['case']!r}" in m and "Stock Geant4" in m and path.name in m
                    and "python -m lumen.gdml.repair SRC DST" in m for m in msgs), msgs  # fmt: skip
         assert df.provenance["repairs"] == [t["case"]]
         return
@@ -117,3 +117,15 @@ def test_the_tool_keeps_every_other_byte():
     assert text == src.replace("2.2305392e-316", "0")
     clean = (DATA / "clean.gdml").read_text()
     assert gdml_repair.repair(clean, list(gdml_repair.REPAIRS)) == (clean, [])
+
+
+def test_repair_warnings_are_grouped_by_repair_and_object():
+    """Two occurrences of one repair on one object give one warning with the count; the report keeps both."""
+    doc = reader.GDMLDocument("toy.gdml")
+    doc.defect("matrix_tail", "matrix 'A': 5 values", "dropped 1")
+    doc.defect("matrix_tail", "matrix 'A': 7 values", "dropped 1")
+    doc.defect("matrix_tail", "matrix 'B': 3 values", "dropped 1")
+    with pytest.warns(reader.GDMLRepairWarning) as seen:
+        doc.warn_repairs()
+    msgs = [str(w.message) for w in seen]
+    assert len(msgs) == 2 and "(2 occurrences on this object)" in msgs[0] and len(doc.report) == 3

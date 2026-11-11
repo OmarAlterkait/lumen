@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use lumen, please cite it as below."
+title: "lumen: differentiable optical photon transport for neutrino detectors"
+type: software
+authors:
+  - family-names: Alterkait
+    given-names: Omar
+version: 0.1.1
+repository-code: "https://github.com/OmarAlterkait/lumen"
+license: Apache-2.0

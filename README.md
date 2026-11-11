@@ -37,29 +37,45 @@ lumen pins exact versions of JAX and tallymap. Other versions change the photon 
 its reverse-mode derivatives.
 
 ```bash
-git clone https://github.com/OmarAlterkait/lumen.git
-cd lumen
-python -m venv .venv && source .venv/bin/activate
+git clone --branch v0.1.1 https://github.com/OmarAlterkait/lumen.git
+python -m venv /path/to/envs/lumen && source /path/to/envs/lumen/bin/activate   # anywhere; not inside the clone
 pip install "jax[cuda12]==0.6.2"
 pip install "tallymap @ git+https://github.com/OmarAlterkait/tallymap.git@v0.6.0rc1"
-pip install -e .
+pip install -e lumen
 pip install matplotlib                                   # optional: the tutorial's figures
 python -c "import jax, lumen; print(lumen.__version__, jax.devices())"
 ```
+
+`jax[cuda12]` brings JAX's CUDA plugin and NVRTC, the compiler tallymap's CUDA backend uses; that is all
+`tallymap[cuda]` would add, so plain `tallymap` after `jax[cuda12]` is the same install. Without `jax[cuda12]` (plain
+`jax`), tallymap runs on its CPU backend only. The CUDA backend also builds a small C++ launch shim once, so a C++17
+compiler must be on the PATH the first time.
 
 The last line should list a `CudaDevice`. If it lists only `CpuDevice`, JAX did not find the CUDA driver. lumen still
 runs in that case, on the CPU backend.
 
 lumen keeps compiled kernels and converted detectors in a cache. Point the cache at a disk with some space, and name a
-directory for your calibrations:
+directory for your calibrations. The variables, in one place:
+
+| Variable | What | Default |
+|---|---|---|
+| `LUMEN_CACHE` | lumen's cache root | `$XDG_CACHE_HOME/lumen` (`~/.cache/lumen`) |
+| `TALLYMAP_CUDA_CACHE` | tallymap's compiled CUDA kernels | `$LUMEN_CACHE/tallymap` (lumen sets it; tallymap's own default is `~/.cache/tallymap`) |
+| `JAX_COMPILATION_CACHE_DIR` | JAX's persistent compilation cache | `$LUMEN_CACHE/xla` (never under HOME) |
+| `CUDA_CACHE_PATH` | the NVIDIA driver's own cache | `~/.nv/ComputeCache` (set it if HOME is small) |
+| `LUMEN_DETECTORS` | where detector files and calibrations are saved and found (a search path) | none |
+| `LUMEN_DATA` | shared reference data (the validation checks) | none |
 
 ```bash
-export LUMEN_CACHE=/path/with/space/lumen-cache          # default: ~/.cache/lumen
-export LUMEN_DETECTORS=/path/to/your/calibrations        # where calibrations are saved and found
+export LUMEN_CACHE=/path/with/space/lumen-cache
+export LUMEN_DETECTORS=/path/to/your/calibrations
 ```
 
 The first run of a detector compiles its photon loop, which takes a few minutes. Later runs reuse the cache, in new
-processes too.
+processes too. A measured large detector (43,212 sensors, one NVIDIA L40S): convert and first load about 10 minutes,
+the first `simulate` 31 s, later ones 2.2 s at 2^18 photons. At 2^18 photons from a point at the centre, 45 % of
+those sensors saw no light: choose the photon count from the light per sensor you need (the Monte Carlo error of a
+sensor's expected light falls as 1 / sqrt(photons)), and check `Light.arrivals_error`.
 
 ## Quick start
 

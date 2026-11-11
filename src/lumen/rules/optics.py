@@ -18,9 +18,10 @@ kill), ABSLENGTH the absorption, RAYLEIGH a Rayleigh channel (for a material nam
 table: ``geant4_rayleigh``), MIEHG with MIEHG_FORWARD, MIEHG_BACKWARD and MIEHG_FORWARD_RATIO a Mie channel (a double
 Henyey-Greenstein, ``phase.MIE_HG``: ``mie``), WLSABSLENGTH with WLSCOMPONENT a re-emitting channel (one photon,
 isotropic, Geant4's sampler: ``spectra.geant4_spectrum``); the channels in the order rayleigh, mie, wls. Refused: the
-second WLS, WLSMEANNUMBERPHOTONS on a bulk medium (lowered only on a film: ``wls_film``), a complex index, a user
-GROUPVEL (one that is not Geant4's own from RINDEX, which a GDML export writes: ``geant4_groupvel_export``), a nonzero
-WLSTIMECONSTANT without a declared time profile, and a Mie constant Geant4 would read but the material lacks.
+second WLS, WLSMEANNUMBERPHOTONS on a bulk medium (lowered only on a film: ``wls_film``), a complex index, a nonzero
+WLSTIMECONSTANT without a declared time profile, and a Mie constant Geant4 would read but the material lacks. A user
+GROUPVEL (one that is not Geant4's own from RINDEX, which a GDML export writes: ``geant4_groupvel_export``) is not read,
+with a warning: photons are timed by RINDEX's group index, where Geant4 uses the table.
 
 Surfaces (G4OpBoundaryProcess::PostStepDoIt, DielectricMetal, DoReflection; no table: R = 1, T = 0, efficiency 0):
 
@@ -70,6 +71,8 @@ Spectral surface parameters (REFLECTIVITY(E), ...) are (law, law parameters) pai
 """
 
 from __future__ import annotations
+
+import warnings
 
 import jax.numpy as jnp
 import numpy as np
@@ -139,6 +142,10 @@ G4_10_KEYS = {
     "SLOWSCINTILLATIONRISETIME": "SCINTILLATIONRISETIME2",
     "YIELDRATIO": "(fast fraction of the yield)",
 }
+
+# the material keys lumen reads by default (Recipe.material_keys None): every key a Geant4 optical process or lumen's
+# rules read, implemented or refused; any other key is a user key no Geant4 optical process reads, kept inert
+MATERIAL_KEYS = TABLE_KEYS | CONST_KEYS | frozenset(G4_10_KEYS) | {"ISOTHERMAL_COMPRESSIBILITY", "RS_SCALE_FACTOR"}
 
 REFUSED_MEDIUM = {"WLSCOMPONENT2": "a second WLS (G4OpWLS2)",
                   "WLSABSLENGTH2": "a second WLS (G4OpWLS2)", "WLSMEANNUMBERPHOTONS": "a Poisson WLS count",
@@ -296,7 +303,15 @@ def _check_medium(props: dict, what: str):
         if k in props:
             raise OpticsRefused(f"{what}: {k} ({why}) is not supported")
     if "GROUPVEL" in props and not geant4_groupvel_export(props):
-        raise OpticsRefused(f"{what}: GROUPVEL (a user GROUPVEL, not Geant4's own from RINDEX) is not supported")
+        # Geant4 times photons with a user GROUPVEL (it replaces the one computed from RINDEX, whichever comes
+        # first: G4MaterialPropertiesTable::AddProperty, CalculateGROUPVEL); lumen 0.1 times them by RINDEX's
+        # group index: the counts agree with Geant4, the times in this medium do not (0.2: read it)
+        warnings.warn(
+            f"{what}: a user GROUPVEL (not Geant4's own from RINDEX) is not read: photons are timed by "
+            "RINDEX's group index, unlike Geant4, which uses the table (docs/explanation/known-limits.md)",
+            UserWarning,
+            stacklevel=2,
+        )
 
 
 def _index_law(props: dict, index: str):
