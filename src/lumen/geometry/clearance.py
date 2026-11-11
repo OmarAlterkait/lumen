@@ -17,7 +17,10 @@ import numpy as np
 N_RAYS = 4096  # directions per point (~3.5 deg apart): a feature thinner than that at that distance can be missed
 SAFETY = 0.9  # the estimate is scaled by this
 T_MAX = 1e3  # m: the farthest crossing looked for
-RAY_CHUNK = 256  # rays per batch: the vmapped navigator's lanes keep their own stacks (all 4096 at once: ~50 GB on SK)
+BYTES = 1 << 30  # the ray batch's working memory: the vmapped navigator's lanes keep their own stacks (4096 at once
+# took ~50 GB on SK), so a batch holds as many rays as fit in this
+PROBE_RAYS = 8  # rays of the batch whose compiled working memory sizes the batch
+RAY_CHUNK = 256  # rays per batch when the backend reports no memory use
 
 
 def fibonacci_sphere(n):
@@ -29,8 +32,27 @@ def fibonacci_sphere(n):
     return np.stack([r * np.cos(ph), r * np.sin(ph), z], 1).astype(np.float32)
 
 
-def ray_clearance(nav, points, n_rays=N_RAYS, safety=SAFETY):
-    """Return each point's estimated distance (m) to the nearest surface the light sees, times ``safety``."""
+def ray_chunk(program, x, d, budget=BYTES):
+    """Return the rays per batch whose working memory fits ``budget`` bytes (at least 1, at most ``len(d)``).
+
+    ``program(x, d)`` is compiled on ``PROBE_RAYS`` rays; its temporary and output bytes per ray, times the batch,
+    stay within the budget. Without a memory report (a backend that gives none) the batch is ``RAY_CHUNK``.
+    """
+    k = min(PROBE_RAYS, len(d))
+    try:
+        mem = program.lower(x, d[:k]).compile().memory_analysis()
+        per_ray = (mem.temp_size_in_bytes + mem.output_size_in_bytes) / k
+    except Exception:  # no memory analysis on this backend
+        return min(RAY_CHUNK, len(d))
+    return int(min(len(d), max(1, budget // max(per_ray, 1.0))))
+
+
+def ray_clearance(nav, points, n_rays=N_RAYS, safety=SAFETY, budget=BYTES):
+    """Return each point's estimated distance (m) to the nearest surface the light sees, times ``safety``.
+
+    The rays run in batches whose working memory fits ``budget`` bytes (``ray_chunk``); the last batch repeats
+    directions to the batch size, which leaves the minimum unchanged, so one program serves every batch.
+    """
     X = np.asarray(points, np.float32).reshape(-1, 3)
     D = fibonacci_sphere(n_rays)
 
@@ -40,8 +62,11 @@ def ray_clearance(nav, points, n_rays=N_RAYS, safety=SAFETY):
         q = jax.vmap(lambda d_: nav.query(x, d_, v, t_max=T_MAX))(d)
         return jnp.min(jnp.minimum(jnp.where(q["hit"], q["t"], jnp.inf), q["t_pass0"]))
 
-    c = [min(float(nearest(jnp.asarray(x), jnp.asarray(D[i : i + RAY_CHUNK]))) for i in range(0, n_rays, RAY_CHUNK))
-         for x in X]  # fmt: skip
+    if not len(X):
+        return np.zeros(0, np.float32)
+    chunk = ray_chunk(nearest, jnp.asarray(X[0]), jnp.asarray(D), budget)
+    Dp = jnp.asarray(np.concatenate([D, D[: -n_rays % chunk]]))  # padded to whole batches with repeated directions
+    c = [min(float(nearest(jnp.asarray(x), Dp[i : i + chunk])) for i in range(0, len(Dp), chunk)) for x in X]
     return safety * np.asarray(c, np.float32)
 
 

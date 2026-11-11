@@ -20,6 +20,9 @@ Fixed:
 - A surface type with a value fixed by its model kept only the outcomes it had with every other parameter at 0.5, so
   under Geant4's chained cuts a unified dielectric_metal surface with a fixed EFFICIENCY lost its backscatter and
   Lambertian outcomes (no shipped detector had such a surface).
+- A source-position derivative on a very large detector (about 40,000 sensors) could run out of GPU memory in the
+  clearance estimate about the source: its rays now run in batches sized to a memory budget
+  (`lumen.geometry.clearance.BYTES`, 1 GiB). The clearance values are unchanged.
 
 ## 0.1.2 (2026-11-11)
 
