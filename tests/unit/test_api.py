@@ -150,3 +150,29 @@ def test_dropped_exact_emits_raise_when_concrete_and_stay_in_health_under_jit():
 def test_load_with_calibration_none_is_the_nominal_one(converted):
     a, b = lumen.load(converted), lumen.load(converted, calibration=None)
     assert b.calibration == "nominal" and sorted(a.params()) == sorted(b.params())
+
+
+def test_simulate_guards_callable_rows_and_rescales_small_weights():
+    """A callable's rows: a tangent on x, d or lam is refused, one on w passes; weights below 2^-6 are rescaled by an
+    exact power of 2 (their largest in [1, 2)) and weights of order 1 are left as they are."""
+    import jax
+    import jax.numpy as jnp
+
+    from lumen import api, sources
+    from lumen.transport.state import Emission
+
+    def rows(z, w=1.0):
+        n = 4
+        x = jnp.stack([jnp.zeros(n), jnp.zeros(n), jnp.full(n, z)], 1)
+        d = jnp.tile(jnp.array([0.0, 0, 1]), (n, 1))
+        t, lam, pol = jnp.zeros(n), jnp.full(n, 400.0), jnp.zeros((n, 2, 3))
+        return Emission(x, d, t, lam, jnp.full(n, w), pol, jnp.zeros(n, bool))
+
+    with pytest.raises(sources.GradientNotAvailable, match="subclass lumen.sources.Source"):
+        jax.jvp(lambda z: api._guard_rows(rows(z)).x.sum(), (1.0,), (1.0,))
+    _, dw = jax.jvp(lambda w: api._guard_rows(rows(0.5, w)).w.sum(), (1.0,), (1.0,))
+    assert float(dw) == 4.0
+    small, unit = api._unit_weights(rows(0.0, 1.0 / 65536))
+    assert float(small.w.max()) == 1.0 and float(unit) == 1.0 / 65536
+    same, unit1 = api._unit_weights(rows(0.0, 0.8))
+    assert float(unit1) == 1.0 and np.asarray(same.w).tobytes() == np.asarray(rows(0.0, 0.8).w).tobytes()

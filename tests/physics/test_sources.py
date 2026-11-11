@@ -157,3 +157,34 @@ def test_the_hit_angle_is_smooth_in_a_source_at_the_detector_centre(pmt_sphere, 
     v, d0 = jax.jvp(pe, (F32(0.0),), (F32(1.0),))
     _, d1 = jax.jvp(pe, (F32(1e-6),), (F32(1.0),))
     assert np.isfinite(float(d0)) and abs(float(d0) - float(d1)) <= 1e-3 * float(v), (v, d0, d1)  # per m
+
+
+def test_a_callable_source_refuses_a_derivative_that_moves_its_photons(pmt_sphere):
+    """A callable source closing over a traced position has no density for its photons' positions: simulate refuses
+    the derivative (it was silently ~140x too small, the solid-angle term missing)."""
+    base = point(Z0).emit(None, jax.random.PRNGKey(0), 4096, 0, 4096)
+
+    def run(z):
+        rows = lambda first, count: base._replace(x=base.x.at[:, 2].set(z))  # noqa: E731
+        return lumen.simulate(pmt_sphere, rows, samples=4096, seed=1).arrivals.sum()
+
+    assert float(run(F32(Z0))) > 0.0
+    with pytest.raises(sources.GradientNotAvailable, match="subclass lumen.sources.Source"):
+        jax.jvp(run, (F32(Z0),), (F32(1.0),))
+
+
+def test_weights_of_a_source_normalised_to_one_photon_are_unbiased(pmt_sphere):
+    """n_photons = 1 (w = 1 / samples) and n_photons = samples (w = 1) agree within the Monte Carlo error, and the
+    health and overflow scale with them (the photon loop's roulette and fixed-point sums act on absolute weights)."""
+    n = 1 << 16
+    one = lumen.simulate(pmt_sphere, sources.Point((0.0, 0.0, Z0), n_photons=1.0, lam=400.0), samples=n, seed=3,
+                         replicas=16)  # fmt: skip
+    full = lumen.simulate(pmt_sphere, sources.Point((0.0, 0.0, Z0), n_photons=float(n), lam=400.0), samples=n,
+                          seed=3, replicas=16)  # fmt: skip
+    a1, an = float(np.asarray(one.arrivals).sum()), float(np.asarray(full.arrivals).sum()) / n
+    e = float(np.asarray(full.arrivals_error).sum()) / n
+    assert abs(a1 - an) < Z_MAX * e, (a1, an, e)
+    assert int(one.health["overflow"]) == 0 and int(full.health["overflow"]) == 0
+    assert float(np.asarray(one.health["lost"]).sum()) * n == pytest.approx(
+        float(np.asarray(full.health["lost"]).sum()), abs=1e-3
+    )

@@ -238,6 +238,36 @@ def _model(det, hit_angle: bool, moving=False, origins=None, edge=()):
     return _MODELS[k][1]
 
 
+COUNTS = ("n_truncated", "stuck")  # the outputs that count photons, not weights
+WEIGHT_FLOOR_LOG2 = -6  # rows whose largest weight is below 2^-6 are rescaled (_unit_weights)
+
+
+def _guard_rows(rows):
+    """Refuse a derivative that moves a callable's or an array source's photons (no density: a silent wrong value)."""
+    from lumen.sources import _base
+
+    g = _base._guard(
+        "a callable or array source (subclass lumen.sources.Source, with drawn_direction, to "
+        "differentiate a position)"
+    )
+    return rows._replace(x=g(rows.x), d=g(rows.d), lam=g(rows.lam))
+
+
+def _unit_weights(rows):
+    """Return (rows with weights times 2^k, 2^-k): the largest weight in [1, 2) when it is below 2^WEIGHT_FLOOR_LOG2.
+
+    The photon loop's roulette (below 1e-4) and its fixed-point sums (2^-32) act on absolute weights, so a source
+    normalised to one photon (w ~ 1 / samples) would be rouletted at its first event and rounded per deposit (a bias);
+    the scaling is a power of 2, exact in float32, and the outputs are scaled back by its inverse. Weights of order 1
+    (k = 0) run unchanged, bit for bit.
+    """
+    w_max = jnp.max(jnp.abs(jax.lax.stop_gradient(rows.w)))
+    _, e = jnp.frexp(w_max)
+    k = jnp.where((w_max > 0.0) & (e - 1 < WEIGHT_FLOOR_LOG2), 1 - e, 0)
+    up = jax.lax.stop_gradient(jnp.ldexp(jnp.float32(1.0), k))
+    return rows._replace(w=rows.w * up), jax.lax.stop_gradient(jnp.ldexp(jnp.float32(1.0), -k))
+
+
 class SumOverflow(RuntimeError):  # noqa: N818 -- named for what happened, like ClosedOverValues
     """An exact (GPU) sum dropped emits it could not represent: the arrivals or their derivative are wrong."""
 
@@ -358,19 +388,23 @@ def simulate(det, source, params=None, *, samples: int, seed: int, replicas: int
     packed = jax.tree_util.tree_map(jnp.asarray, det.pack(params))
     ops = steps.operands(model, packed, None, steps.Controls(), None)
     key = jax.random.key_data(jax.random.PRNGKey(int(seed)))
-    if hasattr(source, "emit"):
+    emitted = hasattr(source, "emit")
+    if emitted:
         src, skey = source, jax.random.fold_in(key, SOURCE_STREAM)
         source = lambda first, count: src.emit(params, skey, count, first, int(samples))  # noqa: E731
     size, acc, overflow = min(int(chunk), int(samples)), None, jnp.int32(0)
     for first, count in ro.photon_chunks(int(samples), size):
         rows = source(first, count) if callable(source) else \
             jax.tree_util.tree_map(lambda a, f=first, c=count: a[f:f + c], source)  # fmt: skip
+        if not emitted:  # a callable or arrays: no density for the positions, so no derivative moving them
+            rows = _guard_rows(rows)
+        rows, unit = _unit_weights(rows)
         if count < size:  # the last chunk keeps the shape: padded, its extra rows inactive
             pad = lambda a, c=count: jnp.concatenate([a, jnp.repeat(a[-1:], size - c, 0)])  # noqa: E731
             rows = jax.tree_util.tree_map(pad, rows)
         t = runner.run(item.readout(r), model, ops, rows, key, replicas=int(replicas), first_id=first, backend=backend,
                        n_active=count)  # fmt: skip
-        out = {k: jnp.asarray(v, jnp.float32) for k, v in t.outputs.items()}
+        out = {k: jnp.asarray(v, jnp.float32) * (1.0 if k in COUNTS else unit) for k, v in t.outputs.items()}
         overflow = overflow + jnp.asarray(t.overflow, jnp.int32)
         acc = out if acc is None else {k: acc[k] + v for k, v in out.items()}
     per = acc["arrival"].reshape(int(replicas), n)
