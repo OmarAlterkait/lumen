@@ -27,6 +27,8 @@ Most lumen errors are subclasses of Python's own, so `except ValueError` still c
 | `DeviceError` | `RuntimeError` | a GPU was expected but JAX is not using it |
 | `ClosedOverValues` | `ValueError` | a plug-in's code captured a parameter value instead of taking it as an input |
 | `ReferenceStoreError` | `LookupError` | a validation check cannot find its reference data |
+| `SourceError` | `ValueError` | a source function's output breaks its declaration (docs/howto/extending.md) |
+| `ModelError` | `ValueError` | a registered optics model's output breaks the rules of model code (docs/howto/extending.md) |
 | `InertKeysWarning` | `UserWarning` | the GDML's materials carry keys no Geant4 optical process reads (a collaboration's own constants, for example); they are kept inert, unread, as Geant4 ignores them. `Recipe(material_keys=frozenset({...}))` chooses the keys to read instead |
 | `CalibrationMismatch` | `ValueError` | a calibration was made for another detector file (its digest differs) |
 | `SumOverflow` | `RuntimeError` | the GPU's exact sums dropped a value or derivative too large to represent (`Light.health["overflow"]` counts them under `jax.jit`); the result is wrong, usually because a derivative is taken at a point where the quantity is singular |
@@ -174,6 +176,12 @@ or surface.
 |---|---|---|
 | `<path> is schema <schema>; this lumen reads lumen-detector/1.1. Upgrade lumen, or open it with the version that wrote it.` | `FormatError` | the detector file was written by another lumen version |
 | `<path>: <file> does not match the manifest (changed since it was written)` | `FormatError` | a file inside the detector file was edited. Convert again; never edit a detector file by hand |
+| `load(models=): <target> is not materials/<M> or surfaces/<S> of this detector` | `ValueError` | name a material or surface record of the detector |
+| `<record>: optics model <name> is not lumen's own nor registered (...)` | `LibraryError` | import the module that registers the model (or install its package) before `lumen.load` |
+| `<record>: optics model <name> is not a medium model` (or surface) | `LibraryError` | a surface model bound to a material, or the reverse |
+| `surface model <name> (<type>): outcome probabilities outside [0, 1] or not summing to 1 at <params>` | `ModelError` | the model's `probs` over the ten outcomes, checked at its first build over incidences and its parameters' range corners |
+| `medium model <name> (<lobe>): its sampler does not draw its density (chi2/ndf <x>)` | `ModelError` | the lobe's `sample` and `logpdf` disagree; fix one |
+| `with_responses: <name> declares <keys>, keys the detector has already (rename them)` | `ValueError` | a response parameter named like a sensor model's value (lumen:pmt has `gain`, `qe`, ...): rename it |
 | `<path> exists: a detector file is never overwritten (pass overwrite=True)` | `FormatError` | `lumen.convert(..., overwrite=True)`, or another path |
 | `non-finite number <x>: the detector file stores finite numbers only` · `cannot store <type> in JSON` · `two arrays at <path>` | `FormatError` | a recipe decision produced a value the format cannot store |
 | `sensor set <name>: schema <schema>, this lumen reads lumen-sensors/2` | `ValueError` | the sensor set was written by another lumen version. Convert again |
@@ -231,6 +239,14 @@ A value set whose status is `unverified`, or which carries a `warning`, loads wi
 | `<source> moves photons whose directions are not drawn from a density (drawn_direction False): no derivative (docs/explanation/known-limits.md)` | `GradientNotAvailable` | as above. A callable or an array of photons passed to `simulate` is treated the same way: its positions, directions and wavelengths cannot carry a derivative (their weights can, as score weights); subclass `lumen.sources.Source`, with `drawn_direction`, to differentiate a position |
 | `the histograms need <x> GB, over the device budget of <y> GB: <n> sensors x <m> time nodes (<span> ns at <dt> ns), <k> replicas, <d> derivative directions. Shorten the readout gate, widen the time spread's declared lower range (coarser nodes), use fewer replicas or fewer derivative directions (wrt).` | `MemoryError` | lumen refuses before launch. Do what the message lists |
 | `the photon loop expects the GPU (<why>) but JAX runs on <backend>: the CUDA plugin did not load (see JAX's log above); run on a working GPU node, or pass backend='cpu'` | `DeviceError` | a GPU job whose JAX did not start CUDA. Check `jax.devices()` |
+| `simulate: <keys> move the photons of FromArrays(drawn=True) without its direction density's gradient: pass dlogp=jnp.zeros((N, 3)) when the directions are isotropic, else grad_d log p of their density (or write a source function, lumen.source)` | `GradientNotAvailable` | new in 0.1.2 (docs/dev/migration.md): an array list cannot say its directions are isotropic. Pass what the message says |
+| `source <name>: density='direction' needs dlogp (lumen.sources.grad_logpdf)` | `SourceError` | a source function declared a direction density but returned no gradient: return `dlogp=lumen.sources.grad_logpdf(logp, d)` |
+| `source <name>: density='isotropic' has no dlogp (declare density='direction')` | `SourceError` | a gradient given for an isotropic source: declare the density it has |
+| `source <name>: dlogp is zero on every photon. ...` | `GradientNotAvailable` | an isotropic source declared `density="direction"` (declare `"isotropic"`), or a uniform density inside a hard angular edge, whose edge term the method does not carry: smooth the edge (the guide's soft cone) |
+| `source <name>: a parameter that moves its photons (declare it moves=True and give it in wrt)` | `GradientNotAvailable` | a tangent reached the photons' position, direction or wavelength without the moving-source method: declare the parameter `moves=True` and list its key in `wrt`; a wavelength or intensity parameter enters by `reweight` |
+| `source <name>: Photons.<field> has shape <s>, expected <s> float (n = 256)` | `SourceError` | the function's output, checked at first use with n = 256 |
+| `source <name>: host callbacks [...] (a source is plain JAX)` | `SourceError` | remove `jax.pure_callback` / `io_callback` from the source |
+| `simulate: diagnostics run in one chunk (their cells are indexed by the photon); samples <n> > chunk <c>` | `ValueError` | give `chunk >= samples` with `diagnostics=` |
 | `<source> reads <key>: pass the detector's parameters` | `KeyError` | a source that reads detector values (scintillation yields) was emitted without them |
 | `<material>: no <keys> (Geant4 <version> emits none)` | `KeyError` | a scintillation source in a material without scintillation properties |
 | `Point: give a wavelength (lam) or a spectrum, not both` | `ValueError` | give exactly one |

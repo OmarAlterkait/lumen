@@ -40,3 +40,14 @@ for none). A `lumen-sensors/1` file is read as /2 says it: `model: "lumen:pmt"` 
 `model: "lumen:pmt"`; any other name becomes the surface reader with no sensor model. To do: nothing for files
 (convert again to write /2); in scripts, `dataclasses.replace(group, model="lumen:pmt", defaults=...)` is unchanged,
 and a group built with `model=` as a keyword for the surface reader takes `surface=`.
+
+## Sources: `FromArrays(drawn=True)` and a position derivative (0.1.2)
+
+The one change of behaviour in 0.1.2. A `FromArrays(..., drawn=True)` list given a derivative that moves its photons
+(`wrt=["source/x"]`) now raises `GradientNotAvailable` unless it carries its direction density's gradient,
+`dlogp=` (N, 3). Before, lumen assumed every drawn list was isotropic: right for an isotropic list, silently wrong for
+any other (a cos^8 LED's position derivative was 5 times too small). To do: for isotropic directions pass
+`dlogp=jnp.zeros((N, 3))` and the result is the one 0.1.1 gave; for any other density pass grad_d log p
+(`lumen.sources.grad_logpdf`), or write the source as a function (`@lumen.source`, docs/howto/extending.md). Every
+other source (`Point`, the scintillation and Cherenkov sources, `Geant4Steps`) and every detector file, sensor set and
+calibration is unchanged.

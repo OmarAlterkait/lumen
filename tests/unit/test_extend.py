@@ -339,3 +339,31 @@ def test_with_responses_adds_keys_and_refuses_a_taken_one(lined):
     taken = lumen.response(group="pmt", params={"gain": Param("ADC", default=1.0)})(lambda h, v: v["gain"])
     with pytest.raises(ValueError, match="keys the detector has already"):
         det.with_responses(taken)
+
+
+def test_the_guide_shows_the_examples_as_they_are_tested():
+    """Every worked example of docs/howto/extending.md is examples/extending.py's code, verbatim."""
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    ex = (root / "examples" / "extending.py").read_text()
+    guide = (root / "docs" / "howto" / "extending.md").read_text()
+    names = re.findall(r"<!-- example: (\w+) -->", guide)
+    assert set(names) == set(re.findall(r"^# example: (\w+)$", ex, re.M)) and len(names) >= 8
+    for name in names:
+        i = ex.index(f"# example: {name}\n") + len(f"# example: {name}\n")
+        code = ex[i : ex.index("# end example", i)].rstrip()
+        assert f"<!-- example: {name} -->\n```python\n{code}\n```" in guide, name
+
+
+def test_check_source_compares_the_draws_with_a_density():
+    import jax.numpy as jnp
+
+    from lumen.extend import check_source
+
+    led = _examples().cos_m_led(4.0)
+    good = check_source(led, logpdf=lambda d: 4.0 * jnp.log(jnp.clip(-d[2], 1e-12)))
+    assert good.passes, good
+    bad = check_source(led, logpdf=lambda d: 2.0 * jnp.log(jnp.clip(-d[2], 1e-12)))
+    assert not bad.passes and bad.dlogp_error > 0.1, bad
