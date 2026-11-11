@@ -41,6 +41,69 @@ class ParamInfo:
     default: str = ""
 
 
+@dataclass(frozen=True)
+class Param:
+    """A parameter an extension declares: its unit, allowed range, shape, default and whether it moves the light.
+
+        Param("m", shape=(3,), moves=True, default=(0.0, 0.0, 0.2))    # a source position
+        Param("", (0.0, 50.0), default=4.0)                            # a dimensionless value in [0, 50]
+
+    A declared parameter becomes a ``Params`` key (``source/<source>/<name>``, ``sensors/<group>/<name>``,
+    ``materials/<M>/<name>``, ``surfaces/<S>/<name>``), so ``Params.set``, ``wrt``, calibrations and the gradient check
+    take it as they take lumen's own. ``moves``: a source parameter that moves where the light starts (a position),
+    differentiated by the moving-source method; every other parameter is reweighted or applied after tracking.
+    """
+
+    unit: str = ""
+    range: tuple = (-float("inf"), float("inf"))
+    shape: tuple = ()
+    default: object = None
+    moves: bool = False
+
+    def __post_init__(self):
+        """Check the declaration; store the range, shape and default as hashable tuples of floats."""
+        lo, hi = (float(x) for x in self.range)
+        if not lo <= hi:
+            raise ValueError(f"Param: range {self.range} is not (lo, hi) with lo <= hi")
+        object.__setattr__(self, "range", (lo, hi))
+        object.__setattr__(self, "shape", tuple(int(n) for n in self.shape))
+        if self.default is not None:
+            d = np.asarray(self.default, np.float64)
+            if d.shape != self.shape:
+                raise ValueError(f"Param: default {self.default!r} has shape {d.shape}, declared {self.shape}")
+            if np.any(d < lo) or np.any(d > hi):
+                raise ValueError(f"Param: default {self.default!r} is outside its range [{lo}, {hi}]")
+            object.__setattr__(self, "default", float(d) if not d.shape else tuple(d.reshape(-1).tolist()))
+
+    def value(self):
+        """Return the default: a float, or a float32 array of the declared shape (None without a default)."""
+        if self.default is None:
+            return None
+        return self.default if not self.shape else np.asarray(self.default, np.float32).reshape(self.shape)
+
+    def info(self, key: str, method: str | None = None, note: str = "") -> ParamInfo:
+        """Return the ParamInfo of this declaration under ``key`` (default method: moving_paths if it moves, else
+        reweight)."""  # noqa: D205, D209
+        method = method or ("moving_paths" if self.moves else "reweight")
+        return ParamInfo(key, self.unit, self.range, method, True, False, note)
+
+
+def declared(prefix: str, params: Mapping, method: str | None = None, note: str = "") -> tuple[dict, dict]:
+    """Return (values, spec) of declared parameters ``{name: Param}`` as keys ``prefix + name`` (values: defaults).
+
+    A parameter without a default has no value here: set it (``Params.set`` refuses an unknown key, so a source
+    function's parameter without a default is given to ``simulate`` in its ``params``).
+    """
+    values, spec = {}, {}
+    for name, p in params.items():
+        if not isinstance(p, Param):
+            raise TypeError(f"{prefix}{name}: declare a lumen.Param, not {type(p).__name__}")
+        spec[prefix + name] = p.info(prefix + name, method, note)
+        if p.default is not None:
+            values[prefix + name] = p.value()
+    return values, spec
+
+
 class UnknownParamKey(KeyError):  # noqa: N818 (the name of the documented error catalogue)
     """A key that is not a parameter of this detector."""
 
