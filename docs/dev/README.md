@@ -75,6 +75,8 @@ content, commit messages and every pushed commit. The guard reads its patterns f
 
 - `docs/validation/report.md`: `lumen validate report <record dirs> --out docs/validation/report.md`, from the JSON
   records the checks write. Never edit it by hand.
+- `docs/reference/api.md`: `python tools/docs/api_reference.py`, from the docstrings (a unit test fails when it is
+  out of date).
 - The outputs printed in the tutorial and the how-to guides: rerun the example scripts and paste their outputs.
 
 ## Release checklist

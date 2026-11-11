@@ -69,7 +69,9 @@ Then follow the tutorial.
   a fit and a waveform.
 - [Your own detector](docs/howto/your-own-detector.md): import your GDML, read the repair warnings, simulate,
   calibrate, export, and check against Geant4.
+- [Light sources](docs/howto/sources.md) and [the shipped detectors](docs/howto/shipped-detectors.md).
 - [Extending lumen](docs/howto/extending.md): your own source, sensor response, medium or surface model.
+- Reference: [the API](docs/reference/api.md), [PMT value sets](docs/reference/value-sets.md).
 - [Errors](docs/reference/errors.md): the errors lumen raises, what each means, and the fix.
 - [Vocabulary](docs/reference/vocabulary.md): the words lumen uses.
 - Background: [parameters](docs/explanation/parameters.md), [known limits](docs/explanation/known-limits.md) and
