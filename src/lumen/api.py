@@ -13,6 +13,7 @@ defaults, then the calibration and its parents). No recipe code runs at load.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -77,6 +78,24 @@ class Detector:
             raise ValueError("save_calibration: give a directory (LUMEN_DETECTORS is not set)")
         c = cal.Calibration(name, self.name, self.digest, changed, self.calibration, self.sensor_set.name, note)
         return cal.save(c, d)
+
+    def with_responses(self, *responses):
+        """Return this detector with the parameters of sensor responses (``lumen.response``) added at their defaults.
+
+        Each response's keys ``sensors/<group>/<name>`` join ``params()``; a key already there keeps its value.
+        """
+        groups = {g.name for g in self.sensor_set.groups}
+        p = self._params
+        for r in responses:
+            if r.group not in groups:
+                raise ValueError(f"with_responses: {r.name!r} reads group {r.group!r}; the groups are {sorted(groups)}")
+            taken = [r.prefix + k for k, _ in r.declared if r.prefix + k in p
+                     and p.explain(r.prefix + k) != f"response {r.name}"]  # fmt: skip
+            if taken:
+                raise ValueError(f"with_responses: {r.name!r} declares {taken}, keys the detector has already "
+                                 "(rename them)")  # fmt: skip
+            p = r.parameters(p)
+        return dataclasses.replace(self, _params=p)
 
     def pack(self, params=None):
         """Return the engine's packed parameter arrays for ``params`` (default: this detector's)."""

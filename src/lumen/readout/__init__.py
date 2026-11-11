@@ -5,11 +5,16 @@
     eh = lumen.readout.expected_hits(light, params)          # hit probability, charge distribution, first-hit terms
     nll = lumen.readout.hits_nll(eh, lumen.readout.Hits.from_list(sensor, t, q, n_sensors))
     ev = lumen.readout.sample(light, params, seed=1)         # one simulated event (not differentiable)
+    q = lumen.readout.time_nodes(light, params)[0]           # expected photoelectrons on the time nodes
+
+A response of your own is one function of the histograms, its parameters declared as keys (``lumen.response``,
+``lumen.readout.custom``).
 
 Every function is plain JAX of the histograms and the sensor values, so derivatives in every sensor value are exact
 (after-tracking derivatives) and changing a value never recompiles.
 """
 
+from lumen.readout.custom import Response, response, time_nodes
 from lumen.readout.detection import pe, pe_error
 from lumen.readout.events import SampledEvent, electronics, photoelectrons, sample
 from lumen.readout.grid import (
@@ -31,6 +36,7 @@ __all__ = [
     "Hits",
     "Histograms",
     "PEDensity",
+    "Response",
     "SampledEvent",
     "Waveform",
     "charge_cells",
@@ -46,7 +52,9 @@ __all__ = [
     "pe_error",
     "photoelectrons",
     "photon_chunks",
+    "response",
     "sample",
     "time_cells",
+    "time_nodes",
     "waveform_nll",
 ]

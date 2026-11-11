@@ -123,3 +123,28 @@ def test_simulate_refuses_a_position_derivative_it_cannot_give(tank, ex):
 
     with pytest.raises(sources.GradientNotAvailable, match="moves=True"):
         jax.jvp(f, (F32(0.0),), (F32(1.0),))
+
+
+# ------------------------------------------------------------------------------------------------ sensor responses
+@pytest.mark.parametrize(("response", "key", "theta0"), [("saturating_pe", "sat", 300.0),
+                                                          ("saturating_pe", "qe_scale", 1.0),
+                                                          ("my_waveform", "tau_r", 2.0),
+                                                          ("my_waveform", "tau_f", 8.0)])  # fmt: skip
+def test_a_response_is_exact_after_tracking(tank, ex, response, key, theta0):
+    """The guide's saturating PE and waveform: their keys join the detector's, and their derivatives (no new
+    simulation) agree with the FD to float32 on every seed."""
+    r = getattr(ex, response)
+    det = tank.with_responses(r)
+    k = f"sensors/pmt/{key}"
+    assert k in det.params() and det.params().explain(k) == f"response {r.name}"
+    lights = {}
+
+    def f(theta, seed):
+        if seed not in lights:
+            src = sources.Point((0.05, 0.02, 0.1), n_photons=1e5, lam=420.0)
+            lights[seed] = lumen.simulate(det, src, samples=1 << 16, seed=seed)
+        return r(lights[seed], det.params().set(k, theta))
+
+    rep = check_gradient(f, theta0, seeds=SEEDS, h=1e-2 * theta0)
+    assert rep.passes, rep
+    assert abs(rep.ad[-1] - rep.fd[-1]) <= 1e-3 * abs(rep.fd[-1]), rep

@@ -78,3 +78,25 @@ def soft_cone(v, key, n):
     return lumen.Photons(jnp.broadcast_to(v["x"], (n, 3)), d, jnp.zeros(n), jnp.full(n, 420.0),
                          jnp.exp(jax.vmap(logp)(d)), dlogp=grad_logpdf(logp, d))
 # end example
+
+
+# ---------------------------------------------------------------- 3. a sensor response: one function after tracking
+# example: saturating_pe
+@lumen.response(group="pmt", params={"sat": Param("pe", (1, 1e4), default=300.0),
+                                     "qe_scale": Param("", (0, 2), default=1.0)})
+def saturating_pe(h, v):                    # h: lumen.readout.Histograms; v: this response's and the group's values
+    pe = v["qe_scale"] * lumen.readout.pe(h, v)                            # reuse lumen's pieces freely
+    return v["sat"] * (1.0 - jnp.exp(-pe / v["sat"]))
+# end example
+
+
+# example: my_waveform
+@lumen.response(group="pmt", params={"tau_r": Param("ns", (0.5, 20), default=2.0),
+                                     "tau_f": Param("ns", (1, 100), default=8.0),
+                                     "adc_per_pe": Param("ADC", default=10.0)})  # not "gain": lumen:pmt has that key
+def my_waveform(h, v):
+    nodes, _, _ = lumen.readout.time_nodes(h, v)          # (S, nt) expected photoelectrons on t0 + j dt
+    t = h.grid.dt * jnp.arange(64)
+    pulse = jnp.exp(-t / v["tau_f"]) - jnp.exp(-t / v["tau_r"])
+    return v["adc_per_pe"] * jax.vmap(lambda q: jnp.convolve(q, pulse)[: q.shape[0]])(nodes)
+# end example

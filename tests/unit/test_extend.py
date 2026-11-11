@@ -181,3 +181,36 @@ def test_concat_reweight_and_the_beam():
     c = concat(a, spot(0.0))
     assert c.x.shape == (4104, 3) and c.dlogp.shape == (4104, 3) and float(np.abs(c.dlogp[8:]).max()) == 0.0
     assert c.pol is None
+
+
+# ------------------------------------------------------------------------------------------------ sensor responses
+def test_a_response_reads_the_histograms_with_its_keys():
+    import jax
+    import jax.numpy as jnp
+    import readout_toys as rt
+
+    from lumen import readout as rd
+
+    m = rt.model()
+    h = rt.hist(m)
+    p = rt.params(m)
+
+    @lumen.response(group="pmt", params={"sat": Param("pe", (1, 1e4), default=300.0), "k": Param("", default=1.0)})
+    def sat_pe(h_, v):
+        pe = v["k"] * rd.pe(h_, v)
+        return v["sat"] * (1.0 - jnp.exp(-pe / v["sat"]))
+
+    pe = np.asarray(rd.pe(h, p))
+    y = np.asarray(sat_pe(h, p))  # unset keys: the defaults
+    np.testing.assert_allclose(y, 300.0 * (1 - np.exp(-pe / 300.0)), rtol=1e-5)
+    q = sat_pe.parameters(Params({}, {}, {}))
+    assert set(q) == {"sensors/pmt/sat", "sensors/pmt/k"} and q.info("sensors/pmt/sat").method == "after_tracking"
+    g = jax.grad(lambda s: sat_pe(h, {**p, "sensors/pmt/sat": s}).sum())(300.0)
+    want = np.sum(1 - np.exp(-pe / 300.0) - pe / 300.0 * np.exp(-pe / 300.0))
+    assert float(g) == pytest.approx(want, rel=1e-4)
+    nodes, late, early = rd.time_nodes(h, p)
+    tot = np.asarray(nodes.sum(-1) + late[:, 0] + early[:, 0])
+    np.testing.assert_allclose(tot, pe, rtol=1e-5)  # the time nodes carry pe
+    wrong = lumen.response(group="other")(lambda h_, v: 0.0)
+    with pytest.raises(ValueError, match="reads group"):
+        wrong(h, p)
