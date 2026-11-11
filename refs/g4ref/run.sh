@@ -5,12 +5,12 @@
 #
 # Writes OUTDIR/chunk<k>_{hits.npy,sensors.csv,totals.csv,summary.txt} and chunk<k>.log (g4ref's common format,
 # refs/README.md). PENCIL=dx,dy,dz sends every photon along that direction (g4ref's G4REF_PENCIL). The binary is
-# G4REF (default: the group's current build); its sha256 goes into OUTDIR/g4ref.json, which refs/reduce.py copies
+# G4REF, the binary (required); its sha256 goes into OUTDIR/g4ref.json, which refs/reduce.py copies
 # into the reference manifest with the flags.
 set -euo pipefail
 OUT=$1; GDML=$2; CFG=$3; SENS=$4; SEED=$5; N=$6; shift 6
-G4REF=${G4REF:-$LUMEN_SITE_DATA/lumen/g4ref/build/g4ref}
-IMAGE=${IMAGE:-$IMAGE}
+G4REF=${G4REF:?the g4ref binary}
+IMAGE=${IMAGE:?the container image}
 K=${SLURM_ARRAY_TASK_ID:-0}
 mkdir -p "$OUT"
 cd "$OUT"
@@ -26,6 +26,6 @@ EOF
 fi
 ENVS=()
 [ -n "${PENCIL:-}" ] && ENVS=(env G4REF_PENCIL="$PENCIL")
-singularity exec -B "$BIND" "$IMAGE" "${ENVS[@]}" "$G4REF" --gdml "$GDML" --config "$CFG" --sens-regex "$SENS" \
+singularity exec -B "${BIND:?the paths to bind into the container}" "$IMAGE" "${ENVS[@]}" "$G4REF" --gdml "$GDML" --config "$CFG" --sens-regex "$SENS" \
   --seed "$SEED" --batch 1000 --chunk "$K" --nchunks "$N" --split-ev 6.19 --out "chunk$K" "$@" > "chunk$K.log" 2>&1
 grep -E "^hits" "chunk${K}_summary.txt"

@@ -93,7 +93,7 @@ src/lumen/
 ```
 
 Line budgets count code lines only (no blanks, comments or docstrings). Outside `src/`: `tests/` (unit, physics,
-toys), `refs/` (reference production, never packaged), `docs/`, `cluster/s3df/`, `tools/` (hooks). Detector files,
+toys), `refs/` (reference production, never packaged), `docs/`, `tools/` (hooks, the readout transcription). Detector files,
 caches and reference outputs are not in the repo.
 
 ## 5. Data flow and signatures
@@ -517,7 +517,7 @@ products. The report is generated from the JSON records every `lumen validate` r
 
 | Item | Rule |
 |---|---|
-| tallymap | pinned by SHA (`pyproject.toml` range, `cluster/s3df/constraints-develop.txt`), installed from one wheel; FFMA contraction off (it changes bits) |
+| tallymap | pinned by SHA (`pyproject.toml` range, the development lock), installed from one wheel; FFMA contraction off (it changes bits) |
 | backend | `backend="auto"`: CUDA on a GPU, the CPU backend elsewhere; CPU sums are inexact, compared with the GPU at ~2.5e-4 |
 | environment | the library reads only `LUMEN_DATA`, `LUMEN_DETECTORS`, `LUMEN_CACHE` (in `_env.py`) |
 | tooling | src layout, hatchling + hatch-vcs, ruff at 120 columns, pre-commit, mypy on host code, type hints on the public API |

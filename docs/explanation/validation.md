@@ -63,8 +63,8 @@ what a fresh compile computes. On jax 0.5.3 it did not: the navigator's face mis
 20 processes) came from programs loaded from the cache on XLA's thunk runtime; with the cache off, no process missed.
 On jax 0.6.2, the pinned version, a load from the cache is bitwise equal to a fresh compile on the CPU and the GPU
 (a photon-loop record and leaf-module outputs, three separate processes: cache off, writing, loading). The GPU tier
-checks it on every run (`tests/physics/test_persistent_cache.py`), and `tools/port/xla_runtime_probe.py check
---cache` checks the navigator on the CPU.
+checks it on every run (`tests/physics/test_persistent_cache.py`), and the port's runtime probe
+(`xla_runtime_probe.py check --cache`, kept outside the repository) checks the navigator on the CPU.
 
 ## References
 

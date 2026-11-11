@@ -8,9 +8,9 @@
 set -euo pipefail
 OUT=$1; shift
 HERE=$(cd "$(dirname "$0")" && pwd)
-D=$LUMEN_SITE_DATA
-SUB=$JOBSUB
-LOGS=$D/lumen/port/logs
+D=${LUMEN_SITE_DATA:?the directory holding lumen/g4ref and lumen/wcsim}
+SUB=${JOBSUB:?the Slurm submit command}
+LOGS=${LOGS:-$OUT/logs}
 SLURM=(--partition milano --account mli:cider-ml --qos preemptable --cpus-per-task 1 --mem 4G)
 NAMES=${*:-wcte_g4 annie_g4 sbnd microboone overlap_toys}
 

@@ -55,7 +55,7 @@ def main(argv):
     ap.add_argument("--photons", type=int, default=1 << 22)
     ap.add_argument("--replicas", type=int, default=8)
     ap.add_argument("--seed", type=int, default=20261109)
-    ap.add_argument("--work", default="$LUMEN_SITE_DATA/lumen/port/a9f3/y1ce")
+    ap.add_argument("--work", required=True)
     ap.add_argument("--out")
     a = ap.parse_args(argv)
     import lumen

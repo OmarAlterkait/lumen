@@ -1,4 +1,4 @@
-# Every hook is local and runs from the environment made by cluster/s3df/make_env.sh, so nothing is fetched at
+# Every hook is local and runs from lumen's development environment (ruff, mypy, pre-commit), so nothing is fetched at
 # commit time. Install with:  pre-commit install --hook-type pre-commit --hook-type commit-msg --hook-type pre-push
 default_install_hook_types: [pre-commit, commit-msg, pre-push]
 repos:

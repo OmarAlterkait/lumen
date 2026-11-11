@@ -1,6 +1,6 @@
 """The transport's host-free pieces: the estimator (proposal, choice, edge rows and floor), the photon's parts, the
 default item's cells and the trace's integer halves. The step itself is gated against the baseline on six detectors
-(tools/port/check_a6.py) and by the physics tier (tests/physics)."""
+(the port's check_a6.py) and by the physics tier (tests/physics)."""
 
 import types
 

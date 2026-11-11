@@ -15,11 +15,11 @@ classifiers = ["Private :: Do Not Upload"]
 dependencies = [
     "numpy>=1.24",
     # jax is pinned exactly (port/gates/jax_versions.json: 0.5.3's CPU thunk runtime misses faces with the persistent
-    # cache on; tallymap 0.6.0rc1 is tested on 0.6.2, 0.11.2 measured); the S3DF lock is cluster/s3df/requirements-jax062.lock
+    # cache on; tallymap 0.6.0rc1 is tested on 0.6.2, 0.11.2 measured); the development lock is kept with the site tooling, outside the repository
     "jax==0.6.2",
     "jaxlib==0.6.2",
     "scipy>=1.10",  # spatial search of sibling placements (scipy.spatial.cKDTree) in the geometry lowering
-    # The photon loop: tallymap v0.6.0rc1 (7a8f1f7), pinned by commit in cluster/s3df/requirements-jax062.lock.
+    # The photon loop: tallymap v0.6.0rc1 (7a8f1f7), pinned by commit in the development lock.
     "tallymap>=0.6.0rc1,<0.7",
 ]
 
@@ -63,10 +63,6 @@ ignore = ["N806"]
 "tests/**" = ["D", "T20", "B023", "N803", "PLR0913", "PLR0915"]
 "tools/**" = ["D", "T20", "TID251", "B023", "PLR0912", "PLR0913", "PLR0915", "C901"]
 # imports the baseline's modules under the baseline's own short names, so the case code reads like the baseline's
-"tools/port/leaf_goldens.py" = ["N812"]
-"tools/port/import_goldens.py" = ["N812"]
-"tools/port/harness/b0_run.py" = ["N812"]
-"tools/port/a9s_source_goldens.py" = ["N803", "N812"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"

@@ -6,7 +6,7 @@
 #   overlap_toys.sh OUTDIR RUN_SH
 set -euo pipefail
 OUT=$1; RUN=$2
-G=$LUMEN_SITE_DATA/lumen/g4ref
+G=${G4REF_DIR:?the g4ref directory (geom/, build/)}
 TOYS=(coinT_AB coinT_BA cs_AB cs_A cs_BA cs_B partT_AB partT_BA partTm_AB partTm_BA single_B3 single_B vx3_ABC vx3_ACB
       vxc_AB vxc_BA xl_AS xl_SA)
 toy=${TOYS[${SLURM_ARRAY_TASK_ID:-0}]}

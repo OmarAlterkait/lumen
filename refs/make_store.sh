@@ -8,7 +8,8 @@
 set -euo pipefail
 STORE=$1; RUNS=$2
 HERE=$(cd "$(dirname "$0")" && pwd)
-D=$LUMEN_SITE_DATA
+D=${LUMEN_SITE_DATA:?the directory holding lumen/wcsim and lumen/g4ref}
+export IMAGE=${IMAGE:?the container image the g4ref runs used} G4REF_SRC=${G4REF_SRC:?the g4ref source file the runs were built from}
 W=$D/lumen/wcsim
 TMP=$(mktemp -d -p "${STORE_TMP:-/tmp}")
 trap 'rm -rf "$TMP"' EXIT
@@ -42,8 +43,9 @@ g4() {   # g4 NAME ID [--input ...]: a g4ref run of references.sh
   python3 - "$RUNS/$name/g4ref.json" "$TMP/$name.json" << 'EOF'
 import json, sys
 p = json.load(open(sys.argv[1]))
-p.update(tool="g4ref", geant4="10.7.4", image="$IMAGE",
-         source="$LUMEN_SITE_DATA/lumen/g4ref/src/g4ref.cc", physics="G4OpticalPhysics, photons as primaries")
+import os
+p.update(tool="g4ref", geant4="10.7.4", image=os.environ["IMAGE"],
+         source=os.environ["G4REF_SRC"], physics="G4OpticalPhysics, photons as primaries")
 json.dump(p, open(sys.argv[2], "w"), indent=1)
 EOF
   local cfg
@@ -59,7 +61,8 @@ python3 - "$RUNS/overlap_toys/coinT_AB/g4ref.json" "$TMP/toys.json" << 'EOF'
 import json, sys
 p = json.load(open(sys.argv[1]))
 p = {k: v for k, v in p.items() if k in ("binary", "binary_sha256", "seed", "flags")}
-p.update(tool="g4ref", geant4="10.7.4", image="$IMAGE", sens_regex="^volS",
+import os
+p.update(tool="g4ref", geant4="10.7.4", image=os.environ["IMAGE"], sens_regex="^volS",
          sources="the cs_ toys: isotropic photons (coinc_sib/src.cfg); the others a pencil beam along +x "
                  "(G4REF_PENCIL=1,0,0), from x = -800 mm, 2.95 eV, the photon count of each toy's config")
 json.dump(p, open(sys.argv[2], "w"), indent=1)

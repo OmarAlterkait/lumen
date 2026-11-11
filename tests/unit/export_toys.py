@@ -1,7 +1,7 @@
 """GDML toys for the exporter's tests (gdml_export.md section 7.2, toys a-k, and one per supported solid type).
 
 Each toy is a GDML string; ``TOYS`` maps a name to it. They are small enough to load in Geant4 as well
-(tools/port/check_export.py writes them out for the Geant4 load and probe check).
+(the port's check_export.py writes them out for the Geant4 load and probe check).
 """
 
 HEAD = """<?xml version="1.0" encoding="UTF-8"?>

@@ -17,7 +17,7 @@ error of about 1e-7, so at nk = 1e-6 its relative error is a few per cent. No re
 regions the derivative is accurate to 1e-3 for every nk. At grazing incidence the derivative also goes to 0 as R goes
 to 1, so its float32 value is an absolute ~1e-7 against a float64 ~1e-16: harmless.
 
-**The toy.** `python tools/port/fresnel_dnk_toy.py [DETECTOR.lumen ...]` prints, per nk from 1e-6 to 1.5, how many of
+**The toy** (the port's gate tooling, kept outside the repository) prints, per nk from 1e-6 to 1.5, how many of
 815 (incidence, index) points have a float32 derivative more than 1e-3 from float64, away from and at grazing
 incidence, and for each detector file the smallest IMAGINARYRINDEX or KINDEX of its surfaces. Measured (2026-11-09):
 away from grazing incidence, 10 points above 1e-3 at nk = 1e-6 (largest 6 %), 7 at 1e-5 (0.4 %), none from 1e-4
@@ -38,7 +38,7 @@ T only sends photons into that interior. The gradient check reports it as "zero"
 FD and FDX totals being consistent with 0. That is the physics of this sensor set, not the "edge rows missing" bug
 (an exactly-zero AD with the outcome never proposed, which the check still fails).
 
-**The measurement.** `python tools/port/a10_edge.py after annie --photons 1048576`: of 2^20 photons from the
+**The measurement** (the port's gate tooling, 2^20 photons): of 2^20 photons from the
 gradient check's sources, 93,382 enter an LAPPD interior at T = 0 and 127,019 at T = 1 - R = 0.68; the charge they
 deposit afterwards is exactly 0 in both, with no lost weight. With the edge rows on, the transmitted outcome is
 drawn 481 times in 92,740 crossings of that surface (2^19 photons) and the AD stays exactly 0; the FD is

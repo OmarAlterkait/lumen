@@ -11,7 +11,7 @@
   ratio at its edge r = 1 (both lobes defined: WITHIN), with the edge rule's moved reference.
 - M-T8, the g4ref ring toy: a pencil beam at the centre of a sphere cut into 36 polar rings of 5 degrees, one counting
   sensor per ring; the per-ring charge and mean time against Geant4 10.7.4 and 11.2.2 (tests/data/g4ref_mie, reduced
-  from g4ref's one-shell runs by tools/port/mie_rings_reduce.py), cases A (0.6, 0.3, 0.7) and B (0, 0.8, 0.5).
+  from g4ref's one-shell runs by the port's mie_rings_reduce.py), cases A (0.6, 0.3, 0.7) and B (0, 0.8, 0.5).
 """
 
 import json
