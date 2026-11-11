@@ -222,21 +222,6 @@ def coverage(df: schema.DetectorFile, lam_domain) -> list[str]:
     return out
 
 
-def key_report(materials: dict) -> list[str]:
-    """Return report lines naming the Geant4-10 keys and the keys no Geant4 optical process reads, per material."""
-    out = []
-    for m, rec in sorted(materials.items()):
-        legacy_keys = sorted(k for k in rec.properties if k in G4_10_KEYS)
-        user = sorted(k for k in rec.properties if k not in TABLE_KEYS | CONST_KEYS | set(G4_10_KEYS))
-        if legacy_keys:
-            out.append(
-                f"  {m!r}: Geant4-10 keys {legacy_keys}: inert user keys under Geant4 >= 11 (scintillation(...))"
-            )
-        if user:
-            out.append(f"  {m!r}: user keys {user}: read by no Geant4 optical process")
-    return out
-
-
 # ---------------------------------------------------------------------------------------------------------- media
 def geant4_groupvel_export(props: dict, rtol: float = GROUPVEL_RTOL) -> bool:
     """Return whether a material's GROUPVEL table is Geant4's own CalculateGROUPVEL of its RINDEX.
@@ -625,18 +610,6 @@ def sensor(s: schema.Surface, lam_domain=None, model=None, eff: float | None = N
     if eff is not None:
         k = "eff" if "eff" in e.params else "qe"
         e = SensorEntry(e.surface_type, dict(e.params, **{k: float(eff)}))
-    return e
-
-
-def rt_sensor(s: schema.Surface, eff: float | None = None) -> SensorEntry:
-    """Return the sensor form of a polished dielectric_dielectric surface (DIELECTRIC_RT_SENSOR).
-
-    Its absorbed share is detected with ``eff``: by default the surface's EFFICIENCY (Geant4's Detection status); a
-    sensitive detector that counts every absorption (WCSim's) passes 1.
-    """
-    e = sensor(s, eff=eff)
-    if e.surface_type is not legacy.DIELECTRIC_RT_SENSOR:
-        raise OpticsRefused(f"opticalsurface {s.name!r}: {e.surface_type.name}, not a polished dielectric_dielectric")
     return e
 
 

@@ -20,7 +20,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-VARIABLES = ("LUMEN_DATA", "LUMEN_DETECTORS", "LUMEN_CACHE")
 TALLYMAP_CACHE = "TALLYMAP_CUDA_CACHE"  # read by tallymap itself; set here when unset
 XLA_CACHE = "JAX_COMPILATION_CACHE_DIR"  # read by JAX itself; lumen's default set through jax.config when unset
 

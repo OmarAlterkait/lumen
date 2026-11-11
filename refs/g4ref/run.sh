@@ -1,10 +1,9 @@
 #!/bin/bash
-# One chunk of a g4ref reference run (a Slurm array task: chunk = SLURM_ARRAY_TASK_ID), in develop.sif (Geant4 10.7.4).
+# One chunk of a g4ref reference run (a Slurm array task: chunk = SLURM_ARRAY_TASK_ID), in IMAGE (Geant4 10.7.4).
 #
 #   run.sh OUTDIR GDML CONFIG SENS_REGEX SEED NCHUNKS [g4ref flags ...]
 #
-# Writes OUTDIR/chunk<k>_{hits.npy,sensors.csv,totals.csv,summary.txt} and chunk<k>.log (g4ref's common format,
-# refs/README.md). PENCIL=dx,dy,dz sends every photon along that direction (g4ref's G4REF_PENCIL). The binary is
+# Writes OUTDIR/chunk<k>_{hits.npy,sensors.csv,totals.csv,summary.txt} and chunk<k>.log (g4ref's common format). PENCIL=dx,dy,dz sends every photon along that direction (g4ref's G4REF_PENCIL). The binary is
 # G4REF, the binary (required); its sha256 goes into OUTDIR/g4ref.json, which refs/reduce.py copies
 # into the reference manifest with the flags.
 set -euo pipefail

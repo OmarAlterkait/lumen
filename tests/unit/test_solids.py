@@ -5,6 +5,7 @@ The float32 ray kernels are tested with the navigator; these test the host model
 
 import math
 
+import helpers
 import numpy as np
 import pytest
 
@@ -236,7 +237,7 @@ def test_shared_planes_are_bit_identical():
     kb = int(np.flatnonzero(np.isclose(lb.N[:, 0], -1.0))[0])
     assert np.array_equal(la.N[ka], -lb.N[kb]) and la.H[ka] == -lb.H[kb]
     assert c.inside_np(np.array([[0.0, 0.0, 0.0]])).tolist() == [True]  # the seam is inside
-    assert not c.is_single_convex() and solids.Compiled(solids.g4_orb(0.1)).is_single_convex()
+    assert not helpers.is_single_convex(c) and helpers.is_single_convex(solids.Compiled(solids.g4_orb(0.1)))
 
 
 def test_box_proofs():

@@ -1,9 +1,9 @@
 #!/bin/bash
-# Build the reference store (port step A7): every product lumen's checks read, reduced by refs/reduce.py, read-only.
+# Build the reference store: every product lumen's checks read, reduced by refs/reduce.py, read-only.
 #
-#   make_store.sh STORE G4REF_RUNS        (a milano job: it hashes the WCSim images, 3.6 GB)
+#   make_store.sh STORE G4REF_RUNS        (run it as a batch job: it hashes the WCSim images, 3.6 GB)
 #
-# The WCSim products reuse the existing runs (refs/README.md: hk-software for SK and WCTE, anniesoft for ANNIE); the
+# The WCSim products reuse existing WCSim runs (hk-software's image for SK and WCTE, anniesoft's for ANNIE); the
 # g4ref products are the runs refs/g4ref/references.sh made into G4REF_RUNS. Prints each product's manifest entry.
 set -euo pipefail
 STORE=$1; RUNS=$2

@@ -14,7 +14,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from importlib import import_module, metadata
 
-GROUPS = ("lumen.detectors", "lumen.sensor_models", "lumen.optics_models")
 BUILTINS = {"lumen.sensor_models": "lumen.sensors", "lumen.optics_models": "lumen.models"}  # registers lumen's own
 
 

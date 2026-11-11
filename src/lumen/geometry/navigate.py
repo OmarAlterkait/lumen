@@ -613,11 +613,11 @@ class Navigator:
                     item=jnp.where(hit, bi, -1), leaf=bl, face=bf, zero=hit & zero, t_pass0=pz[0], t_pass1=pz[1],
                     n_pass=pz[2], srf=srf)  # fmt: skip
 
-    def query(self, o, d, vol, last=-1, t_max=1e3, pass_tab=None, counts=False, max_rounds=MAX_ROUNDS, sn=None):  # noqa: PLR0913 -- the step's query
+    def query(self, o, d, vol, last=-1, t_max=1e3, pass_tab=None, sn=None):  # noqa: PLR0913 -- the step's query
         """Return the first visible crossing along (o, d) for a photon in volume vol, as a dict.
 
         Keys: t, hit, cont, vol_after, vol_before, vol_reflect, vol_start, cls_before, cls_start, cls_after, normal,
-        sensor, item, leaf, face, zero, t_pass0, t_pass1, n_pass, srf (+ nodes, evals, rounds with ``counts``).
+        sensor, item, leaf, face, zero, t_pass0, t_pass1, n_pass, srf.
         ``last``: the srf a query returned (the item with its face and outward sign: the side is the state, the
         direction decides), or a plain item, or -1. ``sn``: the normal that query gave (s = d . n_out from it).
         ``pass_tab``: (C, C) bool, the class pairs crossed without a vertex.
@@ -629,18 +629,15 @@ class Navigator:
         cls0 = D["cls"][vol]
         snv = None if sn is None else sg(jnp.asarray(sn, F32))
         P = None if pass_tab is None else jnp.asarray(pass_tab)
-        q = _Query(od, dd, F32(t_max), jnp.max(jnp.abs(od)), snv, P, max_rounds)
+        q = _Query(od, dd, F32(t_max), jnp.max(jnp.abs(od)), snv, P, MAX_ROUNDS)
         rec0 = jnp.stack([lax.bitcast_convert_type(F32(INF), I32), I32(-1), I32(-1), I32(-1), I32(0), vol, I32(0),
                           I32(0), vol])  # fmt: skip
         c0 = (F32(0.0), vol, jnp.asarray(last, I32), jnp.bool_(False), I32(0), rec0, I32(0), I32(0), cls0,
               (F32(INF), F32(INF), I32(0), vol, jnp.bool_(False)))  # fmt: skip
-        _, v_after, _, _, rounds, rec, nb, ne, cls_after, pz = lax.while_loop(
+        _, v_after, _, _, rounds, rec, _, _, cls_after, pz = lax.while_loop(
             lambda c: ~c[3], lambda c: self._round(q, c), c0
         )
-        out = self._finish(q, o, d, (vol, cls0, v_after, rounds, rec, cls_after, pz))
-        if counts:
-            out.update(nodes=nb, evals=ne, rounds=rounds)
-        return out
+        return self._finish(q, o, d, (vol, cls0, v_after, rounds, rec, cls_after, pz))
 
 
 # ------------------------------------------------------------------------------------------------- the functions

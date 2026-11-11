@@ -143,14 +143,6 @@ def node_spacing(sigma_min: float, split: str = "cubic") -> float:
     return float(sigma_min) / (4.0 if split == "cubic" else 10.0)
 
 
-def window_end(t_hi: float, t_offset_min: float = 0.0, reach: float = 0.0) -> float:
-    """Return the arrival time (ns) after which a photon never counts in a gate ending at t_hi.
-
-    ``reach`` is how far the time kernels spread a photoelectron earlier (ns, >= 0).
-    """
-    return float(t_hi) - min(float(t_offset_min), 0.0) + float(reach)
-
-
 def make_grid(model, gate: tuple[float, float], split: str = "cubic") -> Grid:
     """Return a group's static grid from its model's structure and declared ranges and the readout gate (ns)."""
     lam = dict(lam_knots=model.qe_knots, lam_edges=model.qe_bands, theta_knots=model.ce_knots)
@@ -276,5 +268,5 @@ def photon_chunks(samples: int, chunk: int) -> list[tuple[int, int]]:
 
 __all__ = [
     "Grid", "Histograms", "charge_cells", "check_memory", "from_photons", "histogram_bytes", "make_grid",
-    "node_spacing", "photon_chunks", "time_cells", "window_end",
+    "node_spacing", "photon_chunks", "time_cells",
 ]  # fmt: skip

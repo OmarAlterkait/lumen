@@ -7,6 +7,11 @@ now, and what to do.
 
 - The developer documentation moved to `docs/dev/` (entry page `docs/dev/README.md`); this file replaces
   `docs/dev/migration.md`.
+- Removed, unused by lumen and undocumented: `lumen.readout.grid.window_end`; `lumen.readout.hits.window_mass`,
+  `window_horizon`, `poisson_nll_dark` and `first_hit_terms(horizon=)`; `Navigator.query(counts=, max_rounds=)`;
+  `lumen.rules.optics.key_report` and `rt_sensor`, `lumen.validate.oracle.oracle_first_visible` and `mismatch`,
+  `lumen.build.scene.check_partition`, `lumen.surfaces.polar.jones`, `lumen._core.safe.safe_norm` and
+  `Compiled.is_single_convex` (test helpers, now in `tests/unit/helpers.py`).
 
 ## 0.1.2 (2026-11-11)
 

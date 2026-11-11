@@ -1,6 +1,7 @@
 """The float64 oracle: the batched point location equals the per-point one, a daughter is clipped to its mother, the
 query's first visible change (the thin-layer contract), an opaque mesh, and the torus roots."""
 
+import helpers
 import numpy as np
 import scene_fixture as fixture
 
@@ -66,9 +67,9 @@ def test_oracle_thin_layer_contract():
             assert abs(r["t"] - t_glass) < 1e-9
     med, sen = orc.label(np.array([[0, 0, 0], [0.5000005, 0, 0], [0.9, 0, 0], [2, 0, 0]]))
     assert med.tolist() == [3, 2, 1, 0] and sen.tolist() == [0, -1, -1, -1]
-    rec = oracle.oracle_first_visible(orc, origins, dirs, 1e-4)
+    rec = helpers.oracle_first_visible(orc, origins, dirs, 1e-4)
     assert rec["hit"].all() and (rec["after"] == 3).all() and (rec["start"] == "ok").all()
-    assert not oracle.mismatch(rec, rec, push=1e-4).any()
+    assert not helpers.mismatch(rec, rec, push=1e-4).any()
 
 
 def test_query_through_the_fixture(tmp_path):

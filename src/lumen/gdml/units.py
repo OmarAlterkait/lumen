@@ -68,7 +68,6 @@ ENERGY_EV = {
     "megaelectronvolt": "1000000", "GeV": "1e9", "gigaelectronvolt": "1e9", "TeV": "1e12", "PeV": "1e15",
 }  # fmt: skip
 MM_PER_M = 1000.0  # Geant4's internal length unit is the mm
-MEV_PER_EV = 1.0e-6  # Geant4's internal energy unit is the MeV
 LITERAL = re.compile(r"^\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?\s*$")
 PRODUCT = re.compile(r"^\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*\*\s*([A-Za-z_][A-Za-z0-9_]*)\s*$")
 

@@ -16,6 +16,7 @@ import json
 import math
 from pathlib import Path
 
+import helpers
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -290,7 +291,7 @@ def test_mie_constants_read_as_geant4_reads_them(liq):
     inert = _with(liq, {k: schema.Property(k, np.asarray(0.5)) for k in rules.MIE_KEYS})
     assert [c.name for c in rules.medium(inert).medium.channels] == ["rayleigh"]
     assert spec.not_parameters(inert) == set(rules.MIE_KEYS)
-    assert not any("MIEHG" in line for line in rules.key_report({"inert": inert}))  # Geant4's keys, not user keys
+    assert not any("MIEHG" in line for line in helpers.key_report({"inert": inert}))  # Geant4's keys, not user keys
 
 
 MIE_GDML = GDML.replace(

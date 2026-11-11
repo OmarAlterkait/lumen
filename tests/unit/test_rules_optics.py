@@ -5,8 +5,8 @@ scintillation sampler against literal numpy translations, the WLS film (its numb
 params through the compiler, and border surfaces on a tree."""
 
 import dataclasses
-import math
 
+import helpers
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -40,7 +40,7 @@ def test_reading_units_and_keys(df):
     assert np.allclose(df.materials["Shifter"].properties["WLSABSLENGTH"].value, [100, 100, 1e-6, 1e-14])
     assert [(k.surface, k.volume) for k in df.skins] == [("glis", "Blk")]
     assert [(b.surface, b.pv1, b.pv2) for b in df.borders] == [("paint", "blk1", "other")]
-    txt = "\n".join(rules.key_report(df.materials))
+    txt = "\n".join(helpers.key_report(df.materials))
     print("\n" + txt)
     assert "Geant4-10 keys" in txt and "RADLENGTH" not in txt  # a user key: kept inert by default, unread
     assert "RADLENGTH" in df.materials["Liq"].inert
@@ -59,74 +59,21 @@ def test_scintillation_reading_conventions(df):
     assert s["f_fast"] == 0.27 and s["tau_fast"] == 6.0 and s["same_spectra"] and abs(s["yield_per_MeV"] - 720) < 1e-9
 
 
-def g4_sampler(energy, intensity, u):
-    """G4OpWLS::BuildPhysicsTable (trapezoid CII at the knots) + G4PhysicsVector::GetEnergy (linear inverse)."""
-    cii = np.concatenate([[0.0], np.cumsum(0.5 * np.diff(energy) * (intensity[1:] + intensity[:-1]))])
-    v = u * cii[-1]
-    b = np.clip(np.searchsorted(cii, v, side="left") - 1, 0, len(cii) - 2)
-    d = cii[b + 1] - cii[b]
-    return energy[b] + np.where(d > 0, (v - cii[b]) * (energy[b + 1] - energy[b]) / np.where(d > 0, d, 1), 0.0)
-
-
-def chi2_two(a, b, edges):
-    """two-sample chi2/ndf for samples of any sizes."""
-    ha, hb = np.histogram(a, edges)[0].astype(float), np.histogram(b, edges)[0].astype(float)
-    ka, kb = math.sqrt(hb.sum() / ha.sum()), math.sqrt(ha.sum() / hb.sum())
-    ok = ha + hb > 0
-    return float(np.sum((ka * ha[ok] - kb * hb[ok]) ** 2 / (ha[ok] + hb[ok])) / max(ok.sum() - 1, 1))
-
-
-def test_geant4_spectrum_sampler_is_geant4s(df):
-    """WLSCOMPONENT through the Geant4 sampler vs the literal Geant4 inverse (two-sample chi2 in energy)."""
-    p = df.materials["Shifter"].properties["WLSCOMPONENT"]
-    sp = spectra.geant4_spectrum("t", p.energy, p.value)
-    u = jax.random.uniform(jax.random.PRNGKey(0), (400_000,), F32, 1e-7, 1 - 1e-7)
-    E = HC / np.asarray(jax.vmap(sp.sample)(u), np.float64)
-    Eg = g4_sampler(p.energy, p.value, np.random.default_rng(1).random(400_000))
-    c2 = chi2_two(E, Eg, np.linspace(2.5, 3.4, 61))
-    grid = np.linspace(2.5, 3.4, 9001)
-    norm = np.trapezoid(sp.density_energy(grid), grid)
-    print(f"\n[g4 spectrum] chi2/ndf vs Geant4 {c2:.2f}; density integral {norm:.5f}")
-    assert c2 < 1.6 and abs(norm - 1) < 2e-3 and E.min() >= 2.5 - 1e-4 and E.max() <= 3.4 + 1e-4
-
-
-def g4_groupvel(E, n):
-    """CalculateGROUPVEL, literally (float64): -> (energies, v_g / c)."""
-    eg, vg = [E[0]], [1.0 / (n[0] + (n[1] - n[0]) / math.log(E[1] / E[0]))]
-    if vg[0] < 0 or vg[0] > 1.0 / n[0]:
-        vg[0] = 1.0 / n[0]
-    E0, n0, E1, n1 = E[0], n[0], E[1], n[1]
-    for i in range(2, len(E)):
-        v = 1.0 / (0.5 * (n0 + n1) + (n1 - n0) / math.log(E1 / E0))
-        if v < 0 or v > 1.0 / (0.5 * (n0 + n1)):
-            v = 1.0 / (0.5 * (n0 + n1))
-        eg.append(0.5 * (E0 + E1))
-        vg.append(v)
-        E0, n0, E1, n1 = E1, n1, E[i], n[i]
-    v = 1.0 / (n1 + (n1 - n0) / math.log(E1 / E0))
-    if v < 0 or v > 1.0 / n1:
-        v = 1.0 / n1
-    eg.append(E1)
-    vg.append(v)
-    return np.array(eg), np.array(vg)
-
-
-def test_geant4_rindex_group_index_is_geant4s_groupvel(df):
-    """medium(index='geant4'): n = RINDEX (linear in E, clamped) and group_index = c / GROUPVEL; finite gradients."""
+def test_media_read_geant4s_rindex_law_and_wls_spectrum(df):
+    """The wiring: rules.medium reads RINDEX with laws.geant4_rindex and WLSCOMPONENT with spectra.geant4_spectrum
+    (each checked against Geant4's own code in test_laws.py and test_spectra.py)."""
     r = df.materials["Liq"].properties["RINDEX"]
-    E, n = r.energy, r.value
+    p = {"energy": jnp.asarray(r.energy, F32), "value": jnp.asarray(r.value, F32)}
+    lam = jnp.asarray(np.linspace(HC / (r.energy[-1] * 1.05), HC / (r.energy[0] * 0.95), 401), F32)
     law = rules.medium(df.materials["Liq"]).medium.index
-    p = {"energy": jnp.asarray(E, F32), "value": jnp.asarray(n, F32)}
-    lam = np.linspace(HC / (E[-1] * 1.05), HC / (E[0] * 0.95), 4001)
-    got_n = np.asarray(law(p, jnp.asarray(lam, F32)), np.float64)
-    got_g = np.asarray(laws.group_index(law)(p, jnp.asarray(lam, F32)), np.float64)
-    eg, vg = g4_groupvel(np.asarray(E, np.float64), np.asarray(n, np.float64))
-    want_g = 1.0 / np.interp(HC / lam, eg, vg)
-    want_n = np.interp(HC / lam, E, n)
-    gr = jax.grad(lambda v: jnp.sum(laws.group_index(law)({"energy": p["energy"], "value": v},
-                                                          jnp.asarray(lam[::50], F32))))(p["value"])  # fmt: skip
-    assert np.max(np.abs(got_n - want_n)) < 1e-5 and np.max(np.abs(got_g / want_g - 1)) < 1e-5
-    assert np.all(np.isfinite(np.asarray(gr)))
+    assert np.array_equal(np.asarray(law(p, lam)), np.asarray(laws.geant4_rindex()(p, lam)))
+    assert np.array_equal(np.asarray(laws.group_index(law)(p, lam)),
+                          np.asarray(laws.group_index(laws.geant4_rindex())(p, lam)))  # fmt: skip
+    w = df.materials["Shifter"].properties["WLSCOMPONENT"]
+    got = rules.medium(df.materials["Shifter"], "shifter").medium.channels[0].reemit
+    want = spectra.geant4_spectrum("shifter.WLSCOMPONENT", w.energy, w.value)
+    grid = np.linspace(w.energy[0], w.energy[-1], 101)
+    assert np.array_equal(np.asarray(got.density_energy(grid)), np.asarray(want.density_energy(grid)))
 
 
 def test_media(df):
@@ -223,11 +170,11 @@ def test_surfaces_supported_and_refused(df):
     assert rules.surface(s["paintT"]).params["f_spec"] == 1.0
     rt = rules.surface(s["pdieR"])  # absorption before Fresnel (WCSim's PMT cathode surface)
     assert rt.ignored_between_same_material and rt.params["T"] == 0.0 and set(rt.params) == {"R", "T"}
-    sen = rules.rt_sensor(s["pdieR"], eff=1.0)
+    sen = helpers.rt_sensor(s["pdieR"], eff=1.0)
     assert sen.surface_type is legacy.DIELECTRIC_RT_SENSOR and sen.params["eff"] == 1.0
-    assert rules.rt_sensor(s["pdieR"]).params["eff"] == 0.0  # the surface's EFFICIENCY (none here)
+    assert helpers.rt_sensor(s["pdieR"]).params["eff"] == 0.0  # the surface's EFFICIENCY (none here)
     with pytest.raises(rules.OpticsRefused, match="not a polished dielectric_dielectric"):
-        rules.rt_sensor(dataclasses.replace(s["eff"], name="effm"))
+        helpers.rt_sensor(dataclasses.replace(s["eff"], name="effm"))
     for name, why in REFUSED.items():
         with pytest.raises(rules.OpticsRefused, match=why):
             rules.surface(s[name])

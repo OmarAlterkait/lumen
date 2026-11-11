@@ -4,6 +4,7 @@ boolean rotation, reflection by a negative scale, assemblies), the envelope diss
 
 import math
 
+import helpers
 import numpy as np
 import pytest
 import scene_fixture as fixture
@@ -111,7 +112,7 @@ def test_check_partition_flags_equal_rank_overlaps():
             scene.Member(solids.g4_box(0.02, 0.02, 0.02), scene.Label(3, -1, "c"), 1),
         ],
     )
-    out = scene.check_partition(scene.Scene({"d": D}, "d", scene.Label(0)), n=4000)
+    out = helpers.check_partition(scene.Scene({"d": D}, "d", scene.Label(0)), n=4000)
     amb, ranked = out["d"]
     assert amb > 0 and ranked >= amb
 

@@ -109,13 +109,6 @@ def recombine(e_s, e_p, a_s, a_p, s, k):
     return normalise(er, ei)
 
 
-def jones(er, ei, wi, n, k, amplitudes):
-    """Return the state after an outcome with amplitudes (a_s, a_p) into direction k (n the facing normal)."""
-    s = s_axis(wi, n, er)
-    e_s, e_p = components(er, ei, wi, s)
-    return recombine(e_s, e_p, amplitudes[0], amplitudes[1], s, k)
-
-
 def fractions(er, ei, wi, n):
     """Return (|E_s|^2, |E_p|^2), which sum to |E|^2."""
     s = s_axis(wi, n, er)

@@ -20,11 +20,6 @@ def safe_sqrt(x):
     return jnp.where(ok, jnp.sqrt(sanitize(ok, x, 1.0)), 0.0)
 
 
-def safe_norm(v, axis=-1):
-    """Return |v|, with derivative 0 (not NaN) at v = 0."""
-    return safe_sqrt(jnp.sum(v * v, axis=axis))
-
-
 def unit(v, axis=-1, fallback=None):
     """Return v / |v|; at v = 0 return ``fallback`` (default: v itself, i.e. 0), with finite derivatives."""
     s = jnp.sum(v * v, axis=axis, keepdims=True)

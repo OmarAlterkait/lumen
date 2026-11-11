@@ -2,6 +2,7 @@
 
 import math
 
+import helpers
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -34,7 +35,7 @@ def test_basis_is_orthonormal_and_right_handed():
 def test_safe_ops_have_finite_values_and_gradients_at_their_singular_points():
     z3 = jnp.zeros(3, F32)
     for f, x in (
-        (safe.safe_norm, z3),
+        (helpers.safe_norm, z3),
         (lambda v: jnp.sum(safe.unit(v)), z3),
         (safe.safe_sqrt, F32(0.0)),
         (safe.safe_sqrt, F32(-1.0)),
@@ -44,9 +45,9 @@ def test_safe_ops_have_finite_values_and_gradients_at_their_singular_points():
         v, g = f(x), jax.grad(f)(x)
         assert np.all(np.isfinite(np.asarray(v))) and np.all(np.isfinite(np.asarray(g))), f
     x = jnp.asarray([3.0, 4.0, 0.0], F32)
-    assert abs(float(safe.safe_norm(x)) - 5.0) < 1e-6
+    assert abs(float(helpers.safe_norm(x)) - 5.0) < 1e-6
     np.testing.assert_allclose(np.asarray(safe.unit(x)), [0.6, 0.8, 0.0], atol=1e-7)
-    np.testing.assert_allclose(np.asarray(jax.grad(safe.safe_norm)(x)), [0.6, 0.8, 0.0], atol=1e-7)
+    np.testing.assert_allclose(np.asarray(jax.grad(helpers.safe_norm)(x)), [0.6, 0.8, 0.0], atol=1e-7)
 
 
 def test_clip01_derivative_is_the_linear_one_on_the_closed_interval():

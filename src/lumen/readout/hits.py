@@ -24,7 +24,6 @@ from dataclasses import dataclass
 from typing import Any
 
 import jax.numpy as jnp
-import jax.scipy.special as jsp
 import numpy as np
 
 from lumen.readout.detection import expected_pe, histograms, nodes, values
@@ -36,28 +35,13 @@ FLOOR = 1e-30
 
 
 # ------------------------------------------------------------------------------------------------ first-hit terms
-def window_mass(a, b):
-    """Return Phi(b sqrt 2) - Phi(a sqrt 2) for a <= b without cancellation (each edge in its accurate tail)."""
-    left = 0.5 * (jsp.erfc(-b) - jsp.erfc(-a))
-    right = 0.5 * (jsp.erfc(a) - jsp.erfc(b))
-    mid = 0.5 * (jsp.erf(b) - jsp.erf(a))
-    return jnp.where(b <= 0.0, left, jnp.where(a >= 0.0, right, mid))
-
-
-def first_hit_terms(H, grid, tq, t_window, cdf, sf, T0=0.0, late=None, early=None, horizon=None):  # noqa: PLR0913, N803
+def first_hit_terms(H, grid, tq, t_window, cdf, sf, T0=0.0, late=None, early=None):  # noqa: PLR0913, N803
     """Return (mu, U, W) per sensor: all the light, the light after tq - t_window / 2, the light in the window.
 
     H (S, nt) node masses on ``grid``; ``cdf`` / ``sf`` the delay's CDF and survival function (callables of the lag,
     ns); T0 the transit offset (scalar or (S,)); late / early optional (q, q t) overflow cells (S,) each, entered at
     their mean times. The window mass is a difference of CDFs, or of survival functions right of the median.
-    ``horizon`` (a static node count): nodes from it on, and the late cell, are light still to come at every window,
-    added to mu and U as plain masses (exact when grid.t0 + horizon dt >= max(tq) + t_window / 2 + the spread's
-    reach - min(T0); ``window_horizon``).
     """
-    tail = 0.0
-    if horizon is not None and horizon < grid.nt:
-        tail = H[:, horizon:].sum(-1) + (0.0 if late is None else late[0])
-        H, late = H[:, :horizon], None
     nt = H.shape[-1]
     tn = grid.t0 + grid.dt * jnp.arange(nt)
     masses, times = [H], [jnp.broadcast_to(tn, H.shape)]
@@ -74,13 +58,7 @@ def first_hit_terms(H, grid, tq, t_window, cdf, sf, T0=0.0, late=None, early=Non
     Sa, Sb = sf(a), sf(b)
     Fa, Fb = cdf(a), cdf(b)
     m = jnp.where(Fa < 0.5, Fb - Fa, Sa - Sb)
-    return Hm.sum(-1) + tail, (Hm * Sa).sum(-1) + tail, (Hm * m).sum(-1)
-
-
-def window_horizon(grid, tq_max, t_window, reach, T0_min=0.0):  # noqa: N803
-    """Return the smallest exact ``first_hit_terms`` horizon (a node count) for windows up to tq_max (ns)."""
-    t = float(tq_max) + 0.5 * float(t_window) + float(reach) - min(float(T0_min), 0.0)
-    return int(min(grid.nt, max(0, math.ceil((t - grid.t0) / grid.dt) + 1)))
+    return Hm.sum(-1), (Hm * Sa).sum(-1), (Hm * m).sum(-1)
 
 
 def first_arrival_nll(mu, Ulo, Wwin, obs_counts, dark_rate=0.0, t_lo=None, gate=None, t_window=1.0, floor=FLOOR):  # noqa: PLR0913, N803
@@ -109,13 +87,6 @@ def first_arrival_nll(mu, Ulo, Wwin, obs_counts, dark_rate=0.0, t_lo=None, gate=
     lfirst = jnp.log(-jnp.expm1(n * jnp.log1p(-jnp.minimum(q, 1.0 - 1e-7))))
     nll = -n * (jnp.log(U) - jnp.log(mu_t)) - lfirst
     return jnp.where(hit, nll, 0.0)
-
-
-def poisson_nll_dark(mu, obs_counts, dark_rate=0.0, gate=None):
-    """Return the Poisson charge negative log-likelihood (without log n!) with the dark expectation r (g1 - g0)."""
-    mu_t = mu if dark_rate <= 0.0 else mu + dark_rate * (gate[1] - gate[0])
-    mu_t = jnp.maximum(mu_t, FLOOR)
-    return mu_t - obs_counts * jnp.log(mu_t)
 
 
 # ------------------------------------------------------------------------------------------------ expected hits

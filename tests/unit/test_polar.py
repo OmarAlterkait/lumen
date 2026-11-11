@@ -3,6 +3,7 @@ sampler, and the Cherenkov state."""
 
 import math
 
+import helpers
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -82,7 +83,7 @@ def test_perfect_mirror_on_the_sp_basis():
     nrm = jnp.where(jnp.sum(nrm * wi, -1, keepdims=True) > 0, -nrm, nrm)  # facing: wi . n < 0
     er, ei = rand_state(jax.random.fold_in(key, 2), wi)
     wo = wi - 2 * jnp.sum(wi * nrm, -1, keepdims=True) * nrm
-    got = jax.vmap(lambda a, b, w, n_, k: polar.jones(a, b, w, n_, k, polar.MIRROR))(er, ei, wi, nrm, wo)
+    got = jax.vmap(lambda a, b, w, n_, k: helpers.jones(a, b, w, n_, k, polar.MIRROR))(er, ei, wi, nrm, wo)
     want = jax.vmap(polar.mirror)(er, ei, nrm)
     overlap = jnp.abs(jnp.sum((got[0] - 1j * got[1]) * (want[0] + 1j * want[1]), -1))  # equal up to a phase
     assert float(jnp.min(overlap)) > 1 - 1e-5

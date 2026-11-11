@@ -1,4 +1,4 @@
-"""Reduce a reference run (refs/README.md's common format) into a read-only store product, and print its manifest entry.
+"""Reduce a reference run (g4ref's chunk files, refs/g4ref/run.sh) into a store product; print its manifest entry.
 
     python refs/reduce.py hits RUN_DIR STORE ID --config SOURCES.cfg --producer PRODUCER.json [--input NAME=FILE ...]
     python refs/reduce.py toys RUN_DIR STORE ID --producer PRODUCER.json --gdml-dir DIR
@@ -9,7 +9,7 @@ sensor table (the chunks' tables joined by placement path: g4ref appends replica
 launched per source, the source config. ``toys``: one ``<toy>.npz`` (times, energies) per overlap toy run directory
 with its photons launched and the toy's GDML. ``files``: plain copies (datasets such as GDMLs). Each product gets
 ``MANIFEST.json`` (sha256 per file and the producer); files and directory are made read-only, and an existing product
-is never overwritten (D50). The printed entry goes into src/lumen/detectors/references.json.
+is never overwritten. The printed entry goes into src/lumen/detectors/references.json.
 """
 
 from __future__ import annotations

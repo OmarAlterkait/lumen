@@ -162,19 +162,6 @@ def quad_frame(lf):
     return qo, lf.b + lf.A @ qo, float(qo @ lf.A @ qo + 2.0 * lf.b @ qo + lf.c)
 
 
-class SurfaceIdentity:
-    """Canonical surface values shared across solids (the members of one definition, say).
-
-    A fixed common origin, and one representative per geometric plane and quadric, so coincident faces of different
-    bodies compute bit-identical roots and carry one parameter.
-    """
-
-    def __init__(self, origin):
-        self.origin = np.asarray(origin, float)
-        self.planes = []  # (n, h)
-        self.quads = []  # (A, b, c, qo)
-
-
 def _move_origin(lf, new_origin):
     dlt = new_origin - lf.origin
     lf.c = float(dlt @ lf.A @ dlt + 2.0 * lf.b @ dlt + lf.c)
@@ -252,12 +239,6 @@ class Compiled:
         """Return whether each point of ``x`` (n, 3) lies in the closed solid (float64, no tolerance)."""
         x = np.asarray(x, float)
         return _inside(self.expr, self.leaves, x)
-
-    def is_single_convex(self):
-        """Return whether the solid is one convex leaf (a convex quadric, or planes only)."""
-        lf = self.leaves[0]
-        return isinstance(self.expr, int) and lf.kind == "q" and (
-            not lf.has_q or bool(np.all(np.linalg.eigvalsh(lf.A) >= -CONVEX_TOL)))  # fmt: skip
 
 
 def _leaf_inside(lf, x):

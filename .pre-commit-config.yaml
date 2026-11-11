@@ -50,8 +50,8 @@ repos:
         files: ^(README\.md|docs/(tutorial|howto|reference|explanation)/.*\.md|src/lumen/(api|params|extend|units)\.py)$
         stages: [pre-commit]
       - id: no-site-paths
-        name: no absolute site paths in src/ or tests/ (style rule 9)
-        entry: '(/sdf/|/lscratch|/fs/ddn|/fs/gpfs|/afs/|/home/)'
+        name: no absolute site paths or Slurm accounts in src/, tests/, refs/ or tools/ (style rule 9)
+        entry: '(/sdf/|/lscratch|/fs/ddn|/fs/gpfs|/afs/|/home/|--account[ =][a-z]|--partition[ =][a-z]|--qos[ =][a-z])'
         language: pygrep
-        files: ^(src|tests)/
+        files: ^(src|tests|refs|tools)/
         stages: [pre-commit]

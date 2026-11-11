@@ -40,11 +40,9 @@ GLOBAL_FRAC = 0.125  # an instance covering more than this fraction of the grid'
 MAX_CELLS = 2_000_000  # the grid has at most about this many cells
 CHUNK_CELLS = 4.0  # the ray is scanned in chunks of this many cells
 MAX_SKIPS = 64  # invisible changes passed before a ray gives up
-T_FAR = 1e3  # m: oracle_first_visible's ray length
 AMBIGUOUS_BAND = 1e-6  # m: a second change this close after a visible one marks the hit ambiguous
 F32_REL = 8 * 2.0**-23  # start_ambiguous: a ball of this many float32 ulps of |x|_inf
 TORUS_SCALE_FLOOR = 1e-12  # m: the smallest torus scale the real-root test uses
-DN_FLOOR = 1e-3  # mismatch: |d.n| below this is taken as this (grazing crossings)
 
 
 # ===================================================================================================== leaf roots
@@ -536,39 +534,3 @@ class _Ray:
             return self._record(mh[0], self._mesh_label(mh))
         return dict(hit=False, t=float(t_max), before=self.lab_b, after=self.lab_b, skipped=self.skipped,
                     ambiguous=False)  # fmt: skip
-
-
-# ========================================================================================================= checks
-def oracle_first_visible(orc, origins, dirs, push, t_min=1e-7, medium=None):
-    """Return the oracle's first visible change of each ray, as arrays (hit, t, after, sensor, before, amb, start)."""
-    recs = [orc.query(origins[i], dirs[i], t_min, T_FAR, push=push, medium=None if medium is None else int(medium[i]))
-            for i in range(len(origins))]  # fmt: skip
-    return dict(hit=np.array([r["hit"] for r in recs]), t=np.array([r["t"] if r["hit"] else np.inf for r in recs]),
-                after=np.array([r["after"][0] for r in recs]), sensor=np.array([r["after"][1] for r in recs]),
-                before=np.array([r["before"][0] for r in recs]), amb=np.array([r["ambiguous"] for r in recs]),
-                start=np.array([r["start"] for r in recs]))  # fmt: skip
-
-
-def mismatch(e, o, t_tol=2e-5, push=0.0, early=None, ulps=8):
-    """Return, per ray, whether an engine's first visible crossing disagrees with the oracle's.
-
-    A crossing reported earlier than the oracle's by at most the push, with the same medium and sensor after, is the
-    push contract consuming a layer of the starting medium (the engine stops at an object surface that is not a label
-    change, the real change lies within the push after it): not a mismatch; ``early`` (a dict) receives its mask. The
-    t tolerance is the larger of t_tol * max(1, t) and ``ulps`` float32 ulps of the hit's coordinates along the normal
-    (|dt| |d.n|): a grazing crossing's t is only resolved to ulp / |d.n|.
-    """
-    bad = (e["hit"] != o["hit"]) | (e["before"] != o["before"])
-    both = e["hit"] & o["hit"]
-    tol = t_tol * np.maximum(1.0, np.where(np.isfinite(o["t"]), o["t"], 1.0))
-    if "dn" in e:
-        ulp = np.spacing(np.maximum(e["xabs"], 1.0).astype(np.float32)).astype(float)
-        tol = np.maximum(tol, ulps * ulp / np.maximum(e["dn"], DN_FLOOR))
-    dt = np.where(both, e["t"] - o["t"], 0.0)
-    same = (e["after"] == o["after"]) & (e["sensor"] == o["sensor"])
-    ok_t = np.abs(dt) <= tol
-    early_ok = (dt < -tol) & (dt >= -(push + tol))
-    bad |= both & ~(same & (ok_t | early_ok))
-    if early is not None:
-        early["mask"] = both & same & early_ok
-    return bad

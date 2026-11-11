@@ -497,8 +497,8 @@ branches in Python on a parameter value, never closes over a parameter array and
 | gradients | same-random-number and fixed-reference finite differences | K = 32 replicas, the (K−1)/(K−3) null, roulette off, automatic edge h-scans with a fixed-reference stencil, "FD unresolved" by the median rule, declared parameters only; forward on six detectors, reverse on SK and SBND |
 | geometry import | g4ref `--probe` point location | 100 % |
 | overlaps | the 18 g4ref overlap toys; the overlap census | detected fraction and mean time within errors |
-| WCSim digits, SK consistency | digits from the charge-check runs; QE/CE-on runs with WCSim's 2011 CE table patched in | yields 1 %, timing 0.02 ns and 1 %, threshold loss; digit times truncated on a 0.4 ns grid, applied on the reference side |
-| SBND PMT waveforms | sbndcode OpDetSim; photon lists from the SBND reference | mean and variance per channel |
+| WCSim digits, SK consistency (tools kept outside the repository) | digits from the charge-check runs; QE/CE-on runs with WCSim's 2011 CE table patched in | yields 1 %, timing 0.02 ns and 1 %, threshold loss; digit times truncated on a 0.4 ns grid, applied on the reference side |
+| SBND PMT waveforms (tools kept outside the repository) | sbndcode OpDetSim; photon lists from the SBND reference | mean and variance per channel |
 | Mie | Bulk processes and sources | Bulk processes and sources |
 | export | Geant4 10.7.4 round trip on toys | `import(export(df)) == df`; Geant4 hits equal |
 

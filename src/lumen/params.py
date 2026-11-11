@@ -21,8 +21,6 @@ import numpy as np
 from lumen.format.apply import check
 from lumen.format.calibrations import Table
 
-METHODS = ("reweight", "moving_paths", "moving_paths+reweight", "after_tracking")
-
 
 @dataclass(frozen=True)
 class ParamInfo:

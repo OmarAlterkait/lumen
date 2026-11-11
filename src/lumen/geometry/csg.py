@@ -43,11 +43,6 @@ def pick(p, a, b):
     return lax.cond(p, lambda _: a(), lambda _: b(), None)
 
 
-def tau_at(o, t):
-    """Return the float32 band of a crossing at t on a ray from o: endpoints closer than this are one crossing."""
-    return rules.band(jnp.max(jnp.abs(o)), t)
-
-
 class _Scan(NamedTuple):
     """The fixed inputs of one first_change call."""
 

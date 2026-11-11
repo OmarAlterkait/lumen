@@ -2,9 +2,9 @@
 
     python refs/gdml_repair.py SRC DST REPAIR [REPAIR ...]
 
-The repairs (and the rule: the same repair on lumen's side, ``Recipe.repairs``, and on every Geant4 reference input
-made from the same GDML) are documented in ``lumen.gdml.repair``, which this runs; ``lumen.validate.geometry`` uses the
-same module for its Geant4 side.
+The repairs (and the rule: lumen repairs every defect on import, and every Geant4 reference input made from the same
+GDML gets the same repair) are documented in ``lumen.gdml.repair``, which this runs; ``lumen.validate.geometry`` uses
+the same module for its Geant4 side.
 """
 
 import sys

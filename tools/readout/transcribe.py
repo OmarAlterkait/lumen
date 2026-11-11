@@ -1,14 +1,17 @@
-"""Write lumen's shipped PMT value sets (and the WCSim-emulating test sets) from the authorities' sources.
+"""Write lumen's shipped PMT value sets (and the WCSim-emulating sets) from the authorities' sources.
 
     python tools/readout/transcribe.py --wcsim WCSIM_SRC --annie ANNIE_SRC --spline SPLINE_TXT
         --out src/lumen/sensors/data
-        --tests tests/references/wcsim_emulation --sbnd-fcl SBNDCODE_FCL --sbnd-calib CALIB.npz --sbnd-tpb timeTPB.npy
+        --tests EMULATION_DIR --sbnd-fcl SBNDCODE_FCL --sbnd-calib CALIB.npz --sbnd-tpb timeTPB.npy
+
+EMULATION_DIR receives the WCSim-emulating sets, which only the readout validation against WCSim reads (kept outside
+the repository).
 
 WCSIM_SRC: WCSim develop e2dc7a4; ANNIE_SRC: WCSim annie e88314b; SPLINE_TXT: ROOT's TGraph::Eval(Q, 0, "S") of
 PMT3inchR14374_WCTE's resolution graph at Q = 0.5, 0.55, ..., 4.0 (WCSimPMTObject.cc:3811-3823, evaluated with the
 hk-software image's ROOT). Every array is parsed from the source (comments removed); every field records file:line.
 
-Rules (DECISIONS 40, 46, 55; SPEC 12):
+Rules (docs/dev/decisions.md, 11):
 - physical QE: WCSim's table without WCSim's x4/3 (SensitiveDetector_Only) nor WCTE's 1/0.73 correction factor;
   WCSim interpolates linearly, extrapolates linearly below the first knot and returns 0 at or above 660 nm (and
   below 200 nm): knots are added where that differs from Geant4's constant-beyond-the-ends rule.

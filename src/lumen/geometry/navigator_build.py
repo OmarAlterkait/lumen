@@ -36,7 +36,6 @@ BOX_PAD_ABS = 1e-9  # ... plus this (m)
 NORMAL_FLOOR = 1e-30  # a degenerate triangle's normal length floor
 MORTON_BITS = 10  # mesh chunks: triangles ordered along a Morton curve of this many bits per axis
 SRF_LIMIT = 2**31  # surface codes are int32
-PATH_RE = r"\|pc\d+(\||$)"  # a split union's piece: '<definition>|pc<k>'
 HOLES = "|holes:"  # a definition variant with its holes dropped
 
 

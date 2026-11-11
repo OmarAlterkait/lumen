@@ -35,7 +35,6 @@ import numpy as np
 from jax.scipy.special import log_ndtr, ndtr
 
 SPREAD = 8.0  # Gaussian widths a time kernel reaches: below 1e-15 of its mass lies beyond
-FWHM_PER_SIGMA = 2.3548200450309493  # 2 sqrt(2 ln 2)
 
 
 # ------------------------------------------------------------------------------- scintillation profile (exact)
