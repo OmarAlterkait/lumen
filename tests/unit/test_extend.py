@@ -42,3 +42,36 @@ def test_declared_parameters_become_keys_with_their_info():
     assert s["source/f/x"].method == "moving_paths" and v["source/f/x"].dtype == np.float32
     with pytest.raises(TypeError, match="lumen.Param"):
         declared("x/", {"a": 1.0})
+
+
+# ------------------------------------------------------------------------------------------------ check_gradient
+def _noisy(bias=0.0):
+    """f(theta, seed): a noisy quadratic per observable; AD carries ``bias`` (a wrong derivative when nonzero)."""
+    import jax
+    import jax.numpy as jnp
+
+    @jax.custom_jvp
+    def g(th):
+        return th**2
+
+    g.defjvp(lambda p, t: (p[0] ** 2, (2.0 * p[0] + bias) * t[0]))
+
+    def f(theta, seed):
+        noise = jax.random.normal(jax.random.PRNGKey(seed), (6,)) * 0.1
+        return g(theta) * jnp.arange(1.0, 7.0) + noise * (1.0 + theta)
+
+    return f
+
+
+def test_check_gradient_passes_a_right_derivative_and_fails_a_wrong_one():
+    from lumen.validate import check_gradient
+
+    good = check_gradient(_noisy(), 1.5, seeds=8)
+    assert good.passes, good
+    assert good.ad.shape == (7,) and abs(good.ad[-1] - 21 * (3.0 + 0.1 * 0)) < 3.0
+    assert "passes" in str(good)
+    bad = check_gradient(_noisy(bias=0.3), 1.5, seeds=8, stencil="central")
+    assert not bad.passes and abs(bad.z_total) > 3.0, bad
+    with pytest.raises(ValueError, match="stencil"):
+        check_gradient(_noisy(), 1.5, stencil="forward")
+
