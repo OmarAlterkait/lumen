@@ -14,8 +14,7 @@ and whose inner nodes are ``Op`` (union, inter, sub) and ``Xf`` (a child placed 
 
 The ``g4_*`` constructors build Geant4's solids from GDML's parameters, in metres and radians as the detector file
 holds them (full lengths where GDML gives full lengths). Constructors attach an exact axis-aligned box
-(``node.bbox``); ``node_bbox`` combines boxes by the CSG rules, and ``box_inside`` / ``box_outside`` prove a box
-inside or outside a solid (sufficient tests, used to prove placements contained or disjoint).
+(``node.bbox``); ``node_bbox`` combines boxes by the CSG rules.
 
 The device kernels (the interval sets along a ray, the CSG interval algebra, the torus root finder) live with the
 navigator (``lumen.geometry``). Lengths are in metres.
@@ -425,64 +424,6 @@ def union_all(nodes):
 
 
 # ================================================================================================= bounding boxes
-def _is_convex_leaf(node):
-    return not (node.has_q and np.any(np.linalg.eigvalsh(0.5 * (node.A + node.A.T)) < -CONVEX_TOL))
-
-
-def box_inside(node, x):
-    """Return True when the convex hull of the points ``x`` (k, 3; a box's corners) is proven inside the solid.
-
-    A sufficient test (False: not proven), exact recursion over the CSG tree: A - B needs inside A and outside B,
-    A | B inside either, A & B inside both; a leaf only when it is convex, by its corners.
-    """
-    if isinstance(node, Xf):
-        return box_inside(node.child, (x - node.t) @ np.linalg.inv(node.L).T)
-    if isinstance(node, Op):
-        if node.op == "sub":
-            return box_inside(node.a, x) and box_outside(node.b, x)
-        if node.op == "union":
-            return box_inside(node.a, x) or box_inside(node.b, x)
-        return box_inside(node.a, x) and box_inside(node.b, x)
-    if isinstance(node, QLeaf):
-        if not _is_convex_leaf(node):
-            return False  # not convex: corners inside do not prove the hull inside
-        xl = x - node.origin
-        ok = np.all(xl @ node.N.T <= node.H[None, :]) if len(node.N) else True
-        if node.has_q:
-            q = np.einsum("ki,ij,kj->k", xl, node.A, xl) + 2.0 * xl @ node.b + node.c
-            ok = ok and bool(np.all(q <= 0.0))
-        return bool(ok)
-    return False
-
-
-def box_outside(node, x):
-    """Return True when the convex hull of ``x`` is proven to miss the solid.
-
-    Disjoint boxes, a separating face plane, or the CSG recursion: A - B misses if A misses or B holds the box,
-    A | B if both miss, A & B if either.
-    """
-    bb = getattr(node, "bbox", None)
-    if bb is not None and (np.any(x.max(0) < bb[0]) or np.any(x.min(0) > bb[1])):
-        return True
-    if isinstance(node, Xf):
-        return box_outside(node.child, (x - node.t) @ np.linalg.inv(node.L).T)
-    if isinstance(node, Op):
-        if node.op == "sub":
-            return box_outside(node.a, x) or box_inside(node.b, x)
-        if node.op == "union":
-            return box_outside(node.a, x) and box_outside(node.b, x)
-        return box_outside(node.a, x) or box_outside(node.b, x)
-    if isinstance(node, QLeaf):
-        xl = x - node.origin
-        return bool(len(node.N) and np.any(np.all(xl @ node.N.T > node.H[None, :], axis=0)))
-    if isinstance(node, TorusLeaf):
-        u = (x - node.origin) @ np.linalg.inv(node.lin).T  # canonical u: the torus lies in |u| <= R + r
-        lo, hi = u.min(0), u.max(0)
-        near = np.clip(np.zeros(3), lo, hi)
-        return bool(np.linalg.norm(near) > node.R + node.r)  # hull of u (in its box) misses the ball
-    return False
-
-
 def _bb(node, lo, hi):
     node.bbox = (np.asarray(lo, float), np.asarray(hi, float))
     return node

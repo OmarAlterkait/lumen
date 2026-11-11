@@ -238,13 +238,3 @@ def test_shared_planes_are_bit_identical():
     assert np.array_equal(la.N[ka], -lb.N[kb]) and la.H[ka] == -lb.H[kb]
     assert c.inside_np(np.array([[0.0, 0.0, 0.0]])).tolist() == [True]  # the seam is inside
     assert not helpers.is_single_convex(c) and helpers.is_single_convex(solids.Compiled(solids.g4_orb(0.1)))
-
-
-def test_box_proofs():
-    big = solids.Op("sub", solids.g4_box(1.0, 1.0, 1.0), solids.g4_orb(0.1))
-    inner = solids.corners(np.array([0.2, 0.2, 0.2]), np.array([0.4, 0.4, 0.4]))
-    assert solids.box_inside(big, inner)
-    assert not solids.box_inside(big, inner - 0.25)  # the box meets the hole
-    assert solids.box_outside(big, inner + 1.0) and not solids.box_outside(big, inner)
-    tor = solids.g4_torus(0.0, 0.05, 0.3)
-    assert solids.box_outside(tor, inner + 1.0) and not solids.box_inside(tor, inner)

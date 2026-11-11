@@ -2,7 +2,7 @@
 orb holds a cavity inside a 1 um shell of the glass's own medium, the cathode border on shell -> cavity (or the cavity
 in the glass directly, the border on glass -> cavity). The float32 geometry merges glass -> shell -> cavity into one
 crossing (glass -> cavity); glass -> shell is a pass pair, so the class pair's kernel is the cathode's, as with the
-shell dissolved (g4ref: a 1 um shell detects as a 0.1 mm one).
+shell absent (g4ref: a 1 um shell detects as a 0.1 mm one).
 
 The surface lookup's side of coincident faces is in test_surfaces.py."""
 

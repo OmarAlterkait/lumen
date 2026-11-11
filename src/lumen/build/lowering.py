@@ -50,8 +50,6 @@ MIRROR_Z = np.diag([1.0, 1.0, -1.0])  # the reflection a mirrored definition var
 HOLE_SEARCH = 1e-6  # m: a sibling filling a hole is searched for this close to the hole's position
 HOLE_POSE_TOL = 1e-9  # a sibling fills a hole when its rotation and position agree to this (position: relative, m)
 HOLE_KEY_DECIMALS = 9  # a hole's position rounded to this many decimals (m) names it
-BOX_TOUCH = 1e-12  # m: boxes overlapping by less than this touch, they do not overlap
-SIBLING_SEARCH_PAD = 1e-9  # m: added to the sibling search radius
 DIGEST_CHARS = 8  # the length of the digest naming a definition variant with holes dropped
 UNSUPPORTED_MODES = ("error", "assembly")
 ROOT, DETECTOR = "__root__", "__detector__"
@@ -325,15 +323,6 @@ def find_detector(df, spec, mapper=None):
 
 
 # ==================================================================================================== lowering
-def flat_aux(volume):
-    """Return a volume's auxiliary (type, value) pairs: each tag and its direct children."""
-    out = []
-    for a in volume.aux:
-        out.append((a.type, a.value))
-        out += [(c.type, c.value) for c in a.children]
-    return out
-
-
 @dataclass
 class _Context:
     """The definition being built: its LV and Definition, whether mirrored, and its sibling-hole lowering."""
@@ -342,7 +331,6 @@ class _Context:
     d: sc.Definition
     mirrored: bool
     dropped: dict
-    fillers: set
 
 
 class _Lowering:
@@ -353,17 +341,6 @@ class _Lowering:
         self.mp = SolidMapper(df)
         self.mats, self.unsupported, self.defs = {}, {}, {}
         self.lowered, self.hole_fillers = [], set()
-        self.aliases, self.dissolved, self.has_holes = {}, {}, {}
-        self.contained, self.unproven, self.overlapping = {}, {}, {}  # dissolve: proven inside; kept envelopes
-        self.sib, self.lv_box_ = {}, {}
-        self.skin_lvs = {s.volume for s in df.skins}
-        self.border_of = {}  # physvol name -> the physvol names it shares a border with
-        for b in df.borders:
-            self.border_of.setdefault(b.pv1, set()).add(b.pv2)
-            self.border_of.setdefault(b.pv2, set()).add(b.pv1)
-        self.placed_as = {}  # LV -> the physvol names placing it
-        for p in df.placements:
-            self.placed_as.setdefault(p.volume, set()).add(p.name)
         self._pose = {}
 
     # ---- helpers
@@ -387,145 +364,6 @@ class _Lowering:
             pts = nd.tris.reshape(-1, 3)
             return pts.min(0), pts.max(0)
         return so.node_bbox(nd)
-
-    # ---- dissolve: proofs
-    def inside_all(self, c):
-        """Return whether every daughter of volume c is proven inside c's solid (by its solid's box)."""
-        try:
-            env = self.mp.solid(c.solid)
-        except NotImplementedError:
-            return False
-        if isinstance(env, sc.Mesh):
-            return False
-
-        def ok(q, lin, t):
-            if q.assembly or not q.solid:
-                return all(ok(self.vol(self.df.placements[k].volume), lin @ self.pose(k)[0], lin @ self.pose(k)[1] + t)
-                           for k in q.daughters)  # fmt: skip
-            try:
-                bb = self._bbox_of(q.solid)
-            except NotImplementedError:
-                return False
-            if bb is None:
-                return False
-            return so.box_inside(env, so.corners(*bb) @ lin.T + t)
-
-        return all(ok(self.vol(self.df.placements[k].volume), *self.pose(k)) for k in c.daughters)
-
-    def lv_box(self, lv):
-        """Return the box (lo, hi) of an LV's own solid, or of its daughters for an assembly (m; None: unbounded)."""
-        if lv in self.lv_box_:
-            return self.lv_box_[lv]
-        v = self.vol(lv)
-        bb = None
-        if v.assembly or not v.solid:
-            los, his = [], []
-            for k in v.daughters:
-                b = self.lv_box(self.df.placements[k].volume)
-                if b is None:
-                    self.lv_box_[lv] = None
-                    return None
-                m, t = self.pose(k)
-                c = so.corners(*b) @ m.T + t
-                los.append(c.min(0))
-                his.append(c.max(0))
-            bb = (np.min(los, 0), np.max(his, 0)) if los else None
-        else:
-            try:
-                bb = self._bbox_of(v.solid)
-            except NotImplementedError:
-                bb = None
-        self.lv_box_[lv] = bb
-        return bb
-
-    def _siblings(self, mother):
-        if mother not in self.sib:
-            pls = list(self.vol(mother).daughters)
-            boxes = np.full((len(pls), 2, 3), np.nan)
-            for k, q in enumerate(pls):
-                b = self.lv_box(self.df.placements[q].volume)
-                if b is not None:
-                    m, t = self.pose(q)
-                    c = so.corners(*b) @ m.T + t
-                    boxes[k] = c.min(0), c.max(0)
-            fin = np.all(np.isfinite(boxes.reshape(len(pls), -1)), 1)
-            cen, rad = 0.5 * (boxes[:, 0] + boxes[:, 1]), 0.5 * np.linalg.norm(boxes[:, 1] - boxes[:, 0], axis=1)
-            self.sib[mother] = (pls, boxes, fin, cKDTree(np.where(fin[:, None], cen, 0.0)), np.where(fin, rad, 0.0),
-                                {q: k for k, q in enumerate(pls)})  # fmt: skip
-        return self.sib[mother]
-
-    def disjoint_from_siblings(self, mother, p):
-        """Return whether placement p (in LV mother) is proven to overlap none of its siblings.
-
-        Notation: B the siblings' boxes (n, 2, 3); Li, Lj placement matrices.
-        """
-        pls, B, fin, kd, rad, at = self._siblings(mother)
-        i = at[p]
-        if not fin[i] or not np.all(fin):
-            return False  # an unbounded sibling (or this one): not provable
-        cand = kd.query_ball_point(0.5 * (B[i, 0] + B[i, 1]), rad[i] + rad.max() + SIBLING_SEARCH_PAD)
-        Li, ti = self.pose(p)
-        child = self.df.placements[p].volume
-        env = self.mp.solid(self.vol(child).solid)
-        for j in cand:
-            if j == i or not (np.all(B[i, 0] < B[j, 1] - BOX_TOUCH) and np.all(B[j, 0] < B[i, 1] - BOX_TOUCH)):
-                continue  # boxes apart (touching faces included)
-            q = pls[j]
-            Lj, tj = self.pose(q)
-            cj = so.corners(*self.lv_box(self.df.placements[q].volume)) @ Lj.T + tj  # sibling j's box, mother frame
-            if not isinstance(env, sc.Mesh) and so.box_outside(env, (cj - ti) @ Li):
-                continue
-            if not self._sibling_misses(q, child, Li, ti):
-                return False
-        return True
-
-    def _sibling_misses(self, q, child, Li, ti):  # noqa: N803 -- a placement matrix, as in the caller
-        """Return whether sibling placement q is proven to miss the box of ``child`` placed at (Li, ti).
-
-        Notation: Li, Lj placement matrices.
-        """
-        s = self.vol(self.df.placements[q].volume)
-        if not (s.solid and not s.assembly):
-            return False
-        try:
-            nj = self.mp.solid(s.solid)
-        except NotImplementedError:
-            return False
-        Lj, tj = self.pose(q)
-        ci = so.corners(*self.lv_box(child)) @ Li.T + ti
-        return not isinstance(nj, sc.Mesh) and so.box_outside(nj, (ci - tj) @ Lj)
-
-    def dissolvable(self, mother, p, gmother=None):
-        """Return whether placement p (in LV mother) is a navigation envelope (``lower``'s docstring)."""
-        if not self.opt.dissolve:
-            return False
-        c, m = self.vol(self.df.placements[p].volume), self.vol(mother)
-        if c.assembly or not c.solid or not c.material or c.material != m.material or c.name in self.skin_lvs:
-            return False
-        if (self.opt.keep is not None and self.opt.keep(c.name)) or any(t == "SensDet" for t, _ in flat_aux(c)):
-            return False
-        if c.name not in self.contained:
-            self.contained[c.name] = self.inside_all(c)
-        if not self.contained[c.name]:
-            self.unproven[c.name] = self.unproven.get(c.name, 0) + 1
-            return False
-        if not self.disjoint_from_siblings(gmother or mother, p):  # its siblings: those of its own GDML mother
-            self.overlapping[c.name] = self.overlapping.get(c.name, 0) + 1
-            return False
-        if c.name not in self.has_holes:  # holes lowered among its daughters: that ordering is its own
-            self.has_holes[c.name] = bool(self.lowering(c, False, record=False)[0])
-        if self.has_holes[c.name]:
-            return False
-        return self._borders_allow(mother, p, c)
-
-    def _borders_allow(self, mother, p, c):
-        partners = self.border_of.get(self.df.placements[p].name, set())
-        if partners:
-            mine = self.placed_as.get(mother, set())
-            kids = {self.df.placements[k].name for k in c.daughters}
-            if partners & mine or len(mine) != 1 or not partners <= kids:
-                return False
-        return True
 
     # ---- sibling holes
     def _sibling_holes(self, v, i, pose, by):
@@ -552,14 +390,13 @@ class _Lowering:
         return frozenset(h[0] for h in hs if h[4]), hit, len(hs)
 
     def lowering(self, v, mirrored, record=True):
-        """Return ``(dropped, order, fillers)`` of a volume's placements.
+        """Return ``(dropped, order)`` of a volume's placements.
 
-        Per local placement the holes dropped, the placement order (subtracted volumes before their siblings) and the
-        siblings that fill a hole (never dissolved).
+        Per local placement the holes dropped, and the placement order (subtracted volumes before their siblings).
         """
         pls = list(range(len(v.daughters)))
         if not self.opt.lower_holes or mirrored:
-            return {}, pls, set()
+            return {}, pls
         pose = {i: self.pose(v.daughters[i]) for i in pls}
         by = {}
         for j in pls:
@@ -567,7 +404,7 @@ class _Lowering:
             if cs and np.linalg.det(pose[j][0]) > 0:
                 by.setdefault(cs, []).append(j)
         by = {cs: (js, cKDTree(np.array([pose[j][1] for j in js]))) for cs, js in by.items()}
-        drop, first, fillers = {}, {}, set()
+        drop, first = {}, {}
         for i in pls:
             child = self.df.placements[v.daughters[i]].volume
             cs = self.vol(child).solid
@@ -576,7 +413,6 @@ class _Lowering:
             d, hit, n_holes = self._sibling_holes(v, i, pose, by)
             if d:
                 drop[i], first[i] = d, min(hit.values())
-                fillers.update(hit.values())  # siblings that fill a hole: never dissolved
                 if record:
                     self.lowered.append((v.name, child, len(d), n_holes))
                     self.hole_fillers.update(self.df.placements[v.daughters[j]].volume for j in hit.values())
@@ -585,7 +421,7 @@ class _Lowering:
             if first[i] < i:
                 order.remove(i)
                 order.insert(order.index(first[i]), i)
-        return drop, order, fillers
+        return drop, order
 
     # ---- definitions
     def _member(self, v, lv, mirrored, drop):
@@ -618,14 +454,14 @@ class _Lowering:
             m = self._member(v, lv, mirrored, drop)
             if m is not None:
                 d.members.append(m)
-        dropped, order, fillers = self.lowering(v, mirrored)
-        ctx = _Context(lv, d, mirrored, dropped, fillers)
+        dropped, order = self.lowering(v, mirrored)
+        ctx = _Context(lv, d, mirrored, dropped)
         for i in order:
             p = v.daughters[i]
-            self.emit(ctx, p, *self.pose(p), i)
+            self.place(ctx, p, *self.pose(p), i)
         return key
 
-    def place(self, ctx, p, lin, t, i=None, group=""):
+    def place(self, ctx, p, lin, t, i=None):
         """Place placement p in the definition being built, at (lin, t)."""
         pl = self.df.placements[p]
         if ctx.mirrored:
@@ -638,34 +474,12 @@ class _Lowering:
         else:
             child = self.definition(pl.volume, mirrored=refl)
         rot = lin @ MIRROR_Z if refl else lin
-        ctx.d.placements.append(sc.Placement(child, rot, t, name=pl.name or "", group=group))
-
-    def emit(self, ctx, p, lin, t, i=None, group="", gm=None):  # noqa: PLR0913 -- the placement and its pose
-        """Place placement p, or, when it is a navigation envelope, its daughters in its place (recursively)."""
-        free = i is None or (i not in ctx.dropped and i not in ctx.fillers)
-        if free and not ctx.mirrored and np.linalg.det(lin) > 0 and self.dissolvable(ctx.lv, p, gm):
-            pl = self.df.placements[p]
-            c = self.vol(pl.volume)
-            if self.border_of.get(pl.name):
-                self.aliases[pl.name] = next(iter(self.placed_as[ctx.lv]))
-            self.dissolved[c.name] = self.dissolved.get(c.name, 0) + 1
-            g = f"{group}/{c.name}@{self.dissolved[c.name]}"  # this envelope instance: its daughters share it
-            for q in c.daughters:
-                lq, tq = self.pose(q)
-                self.emit(ctx, q, lin @ lq, lin @ tq + t, group=g, gm=c.name)
-            return
-        self.place(ctx, p, lin, t, i, group)
+        ctx.d.placements.append(sc.Placement(child, rot, t, name=pl.name or ""))
 
     def notes(self):
         """Return the approximations and decisions, in words."""
         return ([f"gdml (exact): {c} placed in {m or '?'}: {n} of {nh} holes are sibling placements -- left out of "
                  "the solid, the siblings outrank it" for m, c, n, nh in self.lowered] +
-                [f"gdml (exact): dissolved {n} placements of the envelope {c} (its mother's material, no surface)"
-                 for c, n in self.dissolved.items()] +
-                [f"gdml: envelope {c} kept (x{n}): a daughter is not proven inside it"
-                 for c, n in self.unproven.items()] +
-                [f"gdml: envelope {c} kept (x{n}): not proven disjoint from its siblings"
-                 for c, n in self.overlapping.items()] +
                 [f"gdml: unsupported, LV kept as a transparent assembly: {k} x{v}"
                  for k, v in self.unsupported.items()])  # fmt: skip
 
@@ -682,12 +496,12 @@ class _Lowering:
             out_med = self.mid(self.vol(mother).material) if mother is not None and self.vol(mother).material else 0
             notes = [f"gdml: kept only the detector volume {det.lv} (outside: {mother})"] + self.notes()
             return sc.Scene(self.defs, DETECTOR, sc.Label(out_med, -1, mother or "World"), approximations=notes,
-                            aliases=dict(self.aliases), hole_fillers=sorted(self.hole_fillers))  # fmt: skip
+                            hole_fillers=sorted(self.hole_fillers))  # fmt: skip
         wk = self.definition(self.df.world)
         if not self.opt.part:
             self.defs[wk].members = []  # the world solid is the outside
         return sc.Scene(self.defs, wk, sc.Label(0, -1, "World"), approximations=self.notes(),
-                        aliases=dict(self.aliases), hole_fillers=sorted(self.hole_fillers))  # fmt: skip
+                        hole_fillers=sorted(self.hole_fillers))  # fmt: skip
 
 
 # ======================================================================================================= loading
@@ -698,8 +512,6 @@ class Options:
     detector: str | None = None
     part: bool = False
     lower_holes: bool = True
-    dissolve: bool = False
-    keep: object = None
     unsupported: str = "error"
 
 
@@ -740,32 +552,17 @@ def lower(df, detector=None, sensors=None, **options):
         from beyond the detector: the hall, rock, building and ground are dropped).
     sensors : callable, optional
         ``sensors(lv) -> bool``: whether a logical volume is a sensor volume (``SensorSet.is_sensor``; None: no
-        sensors). Every world instance of one gets its own id (``scene.PATH``, the canonical order); it is never
-        dissolved.
+        sensors). Every world instance of one gets its own id (``scene.PATH``, the canonical order).
     **options
         ``part`` (the file is one object whose world volume is the part, for ``place``: the world keeps its own
-        solid), ``lower_holes``, ``dissolve``, ``keep`` (``keep(lv)``: never dissolve it; default ``sensors``) and
-        ``unsupported`` ("error" or "assembly").
+        solid), ``lower_holes`` and ``unsupported`` ("error" or "assembly").
 
     Notes
     -----
     ``lower_holes`` (on by default): a hole of a subtraction (A - B, B split through its unions and multi-unions)
     that is a sibling placement is left out of A, and A is placed before those siblings (docs/dev/decisions.md, 14).
-
-    ``dissolve``: a placed volume of its mother's material with no skin surface, no border surface with its mother,
-    no holes, not kept (sensors), every daughter proven inside it (``solids.box_inside`` on the daughter's box:
-    Geant4 never sees the part of a daughter outside its mother, so a protruding daughter -- MicroBooNE's wires out
-    of their plane -- would change the detector if lifted) and proven disjoint from its siblings (where siblings
-    overlap, Geant4's locate picks one -- MicroBooNE's volTPCActive hides the wire planes it overlaps -- and
-    dissolving the one that wins would expose the other) is a Geant4 navigation envelope (a PMT mask's virtual,
-    water in water). Its daughters are placed in the mother directly (poses composed, in its place in the sibling
-    order) and its region is the mother's, which it already was optically. Border surfaces naming it name the
-    mother's placement instead (``Scene.aliases``; only when the mother has one placement name and the borders are
-    with its own daughters). Both are listed in the approximations (as exact).
     """
     opt = Options(detector=detector, **options)
-    if opt.keep is None and sensors is not None:  # a sensor volume is never dissolved
-        opt.keep = sensors
     scene, mats, _, _ = lower_scene(df, opt)
     source = df.provenance.get("source", {}).get("file", df.name)
     rep = [f"gdml {source}: {len(scene.definitions)} definitions, {len(mats)} materials"]

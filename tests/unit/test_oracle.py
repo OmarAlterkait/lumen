@@ -12,7 +12,7 @@ T_MIN = 1e-7
 
 
 def test_label_many_equals_label(tmp_path):
-    orc = oracle.Oracle(fixture.load(tmp_path, dissolve=True).scene)
+    orc = oracle.Oracle(fixture.load(tmp_path).scene)
     X = np.random.default_rng(1).uniform(-0.85, 0.85, (3000, 3))
     m, s, _ = orc.label_many(X)
     for k in range(0, len(X), 300):
@@ -73,7 +73,7 @@ def test_oracle_thin_layer_contract():
 
 
 def test_query_through_the_fixture(tmp_path):
-    L = fixture.load(tmp_path, dissolve=True)
+    L = fixture.load(tmp_path)
     orc = oracle.Oracle(L.scene)
     nm = {v: k for k, v in L.media.items()}
     r = orc.query(np.zeros(3), np.array([1.0, 0, 0]), T_MIN, 10.0, push=1e-5)

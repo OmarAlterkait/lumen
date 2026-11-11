@@ -12,6 +12,8 @@ now, and what to do.
   `lumen.rules.optics.key_report` and `rt_sensor`, `lumen.validate.oracle.oracle_first_visible` and `mismatch`,
   `lumen.build.scene.check_partition`, `lumen.surfaces.polar.jones`, `lumen._core.safe.safe_norm` and
   `Compiled.is_single_convex` (test helpers, now in `tests/unit/helpers.py`).
+- The geometry lowering's `dissolve` and `keep` options are removed: no build used them. The geometry check
+  (`python -m lumen.validate.geometry`) now checks the geometry as simulated instead of a dissolved one.
 
 Fixed:
 

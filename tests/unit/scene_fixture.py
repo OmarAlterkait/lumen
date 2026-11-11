@@ -2,7 +2,7 @@
 
   World (Air, 2 m box)
     Tank (Water, 1.6 m box) tank_pv
-      Env (Water box 400) env_pv at (500, 0, 0), env2_pv at (500, 450, 0)    -- navigation envelopes (dissolvable)
+      Env (Water box 400) env_pv at (500, 0, 0), env2_pv at (500, 450, 0)    -- navigation envelopes (water in water)
         Pmt (Glass orb 100) pmt_pv at (0, 0, 50)
           Cath (Vacuum orb 50) cath_pv                                       -- the sensor (by name)
       Flag (Steel: a 200 x 20 x 20 bar + a 20 mm cube at (90, 30)) flag_pv at (-500, 0, 0), rotation z = 90 deg

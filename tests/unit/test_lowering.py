@@ -1,5 +1,5 @@
 """The lowering on a small GDML (scene_fixture.py): Geant4's placement conventions (passive physvol rotation, active
-boolean rotation, reflection by a negative scale, assemblies), the envelope dissolve, sibling holes, the sensor rule
+boolean rotation, reflection by a negative scale, assemblies), sibling holes, the sensor rule
 (one PATH id per world instance), the detector subtree, fail-closed unsupported solids, and the exact union split."""
 
 import math
@@ -59,21 +59,6 @@ def test_geant4_conventions_and_placements(tmp_path):
     assert L.report[0].startswith("gdml scene.gdml: ")  # the file name, no site path
 
 
-def test_dissolve_is_exact_and_reported(tmp_path):
-    L0 = fixture.load(tmp_path)
-    L1 = fixture.load(tmp_path, dissolve=True, sensors=CATH)
-    assert any("dissolved 2 placements of the envelope Env" in a for a in L1.scene.approximations)
-    tank = L1.scene.definitions["Tank"]
-    assert not any(pl.definition == "Env" for pl in tank.placements)
-    pmt = [pl for pl in tank.placements if pl.definition == "Pmt"]
-    np.testing.assert_allclose(sorted(pl.t[1] for pl in pmt), [0.0, 0.45])  # poses composed
-    np.testing.assert_allclose([pl.t[2] for pl in pmt], [0.05, 0.05])
-    X = np.random.default_rng(0).uniform(-0.8, 0.8, (20000, 3))
-    _, m0, _, _ = _labels(L0, X)
-    _, m1, _, _ = _labels(L1, X)
-    assert m0 == m1  # the same regions, by name
-
-
 def test_detector_subtree(tmp_path):
     for spec in ("Tank", "auto:water"):
         L = fixture.load(tmp_path, detector=spec)
@@ -115,32 +100,6 @@ def test_check_partition_flags_equal_rank_overlaps():
     out = helpers.check_partition(scene.Scene({"d": D}, "d", scene.Label(0)), n=4000)
     amb, ranked = out["d"]
     assert amb > 0 and ranked >= amb
-
-
-def test_envelope_with_a_protruding_daughter_is_kept(tmp_path):
-    """Geant4 never sees the part of a daughter outside its mother: lifting a protruding daughter out of its envelope
-    would change the detector (MicroBooNE's wires out of their plane), so the envelope stays, and the report says so"""
-    txt = fixture.GDML.replace('<orb name="pmtorb" r="100" lunit="mm"/>', '<orb name="pmtorb" r="190" lunit="mm"/>')
-    L = fixture.load(tmp_path, txt, "p.gdml", dissolve=True)
-    assert any("envelope Env kept (x2)" in a for a in L.scene.approximations)
-    assert any(pl.definition == "Env" for pl in L.scene.definitions["Tank"].placements)
-    _, m0, _, _ = _labels(fixture.load(tmp_path, txt, "p.gdml"), [(0.5, 0.0, 0.22)])
-    _, m1, _, _ = _labels(L, [(0.5, 0.0, 0.22)])
-    assert m0 == m1 == ["Water"]  # the glass beyond the envelope is not there
-
-
-def test_envelope_overlapping_a_sibling_is_kept(tmp_path):
-    """where siblings overlap, Geant4's locate picks the later one; dissolving it would expose the earlier one
-    (MicroBooNE's volTPCActive over its wire planes), so an envelope not proven disjoint from its siblings stays"""
-    txt = fixture.GDML.replace(
-        '<position name="e2" x="500" y="450" z="0" unit="mm"/>', '<position name="e2" x="500" y="150" z="0" unit="mm"/>'
-    )
-    L = fixture.load(tmp_path, txt, "o.gdml", dissolve=True)
-    assert any("envelope Env kept (x2): not proven disjoint from its siblings" in a for a in L.scene.approximations)
-    X = np.random.default_rng(3).uniform([0.25, -0.25, -0.25], [0.75, 0.4, 0.25], (20000, 3))
-    _, m0, _, _ = _labels(fixture.load(tmp_path, txt, "o.gdml"), X)
-    _, m1, _, _ = _labels(L, X)
-    assert m0 == m1
 
 
 UNION = "".join(

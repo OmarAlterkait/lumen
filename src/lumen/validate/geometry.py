@@ -7,8 +7,8 @@ float64 oracle; Geant4's from g4ref ``--probe`` (G4Navigator::LocateGlobalPointA
 the detector file was converted with exporter-defect repairs (its provenance ``repairs``), on the copy
 ``lumen.gdml.repair`` writes with the same repairs. Compared per point: the material, and the placement
 name where both place the point inside some placed volume (both stripped of the ``0x`` suffix, as Geant4 strips
-them). Then the scene as used (the detector volume only, envelopes dissolved, the sensors kept): its material where
-it places the point inside the detector.
+them). Then the scene as simulated (the detector volume lowered as ``lumen.build.build`` lowers it, the sensors
+kept): its material where it places the point inside the detector.
 
     python -m lumen.validate.geometry DETECTOR_FILE --gdml FILE --g4ref BINARY --out DIR [--uniform N --surface N]
 
@@ -164,8 +164,7 @@ def check(path, gdml, g4ref, out, n_uniform=20000, n_surface=20000) -> dict:
     bad_p = both_in & (o_pv != g_pv)
     t2 = time.time()
     sset = sensorsets.read(path)
-    used = lowering.lower(df, detector=df.detector_volume, dissolve=True,
-                          sensors=sset.is_sensor)  # fmt: skip
+    used = lowering.lower(df, detector=df.detector_volume, sensors=sset.is_sensor)  # as lumen.build.build lowers it
     u_mat, _, u_inst = ours(oracle.Oracle(used.scene), used, pts, "")
     used_in = u_inst >= 0
     bad_u = used_in & (u_mat != g_mat)
