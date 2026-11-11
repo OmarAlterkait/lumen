@@ -3,7 +3,7 @@
 Changes a user of lumen can see, newest first. Each entry says what changed, what an old file, key or script does
 now, and what to do.
 
-## Unreleased
+## 0.1.3 (2026-11-11)
 
 - tallymap 0.6.0, the final release (rc1 plus four fixes in its CPU backend and process spawning), installed from
   its tag v0.6.0; lumen accepts tallymap 0.6.x. The photon loop's results on the GPU are unchanged bit for bit.
