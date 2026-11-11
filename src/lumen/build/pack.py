@@ -57,7 +57,8 @@ def host_params(detector, params):
 
     p0 = detector.params()
     hot = {k for k in params if _traced(params[k])}
-    values = {k: (p0[k] if k in hot else params[k]) for k in params}  # the detector's own values are unchecked
+    # the detector's own values are unchecked; a key it does not have (a source's) is never packed: kept as given
+    values = {k: (p0[k] if k in hot and k in p0 else params[k]) for k in params}
     return hot, Params(values, params._spec, params._layers)
 
 

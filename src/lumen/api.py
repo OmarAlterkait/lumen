@@ -290,16 +290,23 @@ def _moving(source, params, wrt) -> tuple:
     """Return (the moving-source method is on, the source's origins (m) for its clearance, None when traced)."""
     from lumen import sources
 
-    moved = [k for k in wrt if k.startswith(sources.PREFIX)
-             and k.removeprefix(sources.PREFIX) in getattr(source, "MOVING", ())]  # fmt: skip
+    prefix = getattr(source, "prefix", sources.PREFIX)
+    moved = [k for k in wrt if k.startswith(prefix)
+             and k.removeprefix(prefix) in getattr(source, "MOVING", ())]  # fmt: skip
     if not moved:
         return False, None
     if not source.drawn_direction:
         raise sources.GradientNotAvailable(f"simulate: {moved} move the photons of a source whose directions are "
                                            "not drawn from a density (drawn_direction False)")  # fmt: skip
+    if isinstance(source, sources.FromArrays) and source.dlogp is None:
+        raise sources.GradientNotAvailable(f"simulate: {moved} move the photons of FromArrays(drawn=True) without "
+                                           "its direction density's gradient: pass dlogp=jnp.zeros((N, 3)) when the "
+                                           "directions are isotropic, else grad_d log p of their density (or write a "
+                                           "source function, lumen.source)")  # fmt: skip
     v = source.values(params)
+    names = getattr(source, "ORIGINS", ("position", "x", "start", "end"))
     try:
-        pts = [np.asarray(v[f], np.float32).reshape(-1, 3) for f in ("position", "x", "start", "end") if f in v]
+        pts = [np.asarray(v[f], np.float32).reshape(-1, 3) for f in names if f in v]
     except jax.errors.TracerArrayConversionError:  # traced origins: no co-moving radius (exact, without the field)
         return True, None
     return True, np.unique(np.concatenate(pts), axis=0)
@@ -334,6 +341,16 @@ def _edge_rows(det, params, wrt) -> tuple:
 
     packed = jax.tree_util.tree_map(np.asarray, det.pack(pack.host_params(det, params)[1]))
     return estimator.edge_rows(o, packed, paths)
+
+
+def _emitter(src, params, skey, samples, moving):
+    """Return (first, count) -> the Emission of a source; a source function is checked once and its photons guarded
+    unless the moving-source method is on."""  # noqa: D205, D209
+    kw = {}
+    if hasattr(src, "check"):
+        src.check(params)
+        kw = {"moving": moving}
+    return lambda first, count: src.emit(params, skey, count, first, samples, **kw)
 
 
 def _budget() -> float:
@@ -390,8 +407,7 @@ def simulate(det, source, params=None, *, samples: int, seed: int, replicas: int
     key = jax.random.key_data(jax.random.PRNGKey(int(seed)))
     emitted = hasattr(source, "emit")
     if emitted:
-        src, skey = source, jax.random.fold_in(key, SOURCE_STREAM)
-        source = lambda first, count: src.emit(params, skey, count, first, int(samples))  # noqa: E731
+        source = _emitter(source, params, jax.random.fold_in(key, SOURCE_STREAM), int(samples), moving)
     size, acc, overflow = min(int(chunk), int(samples)), None, jnp.int32(0)
     for first, count in ro.photon_chunks(int(samples), size):
         rows = source(first, count) if callable(source) else \

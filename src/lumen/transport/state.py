@@ -42,6 +42,20 @@ class Emission(NamedTuple):
     drawn_direction: jax.Array
 
 
+class DensityEmission(NamedTuple):
+    """An Emission whose drawn directions carry their density's log gradient in d, ``dlogp`` (..., 3): the moving-source
+    chain start's (a plain Emission: isotropic, zero)."""  # noqa: D205, D209
+
+    x: jax.Array
+    d: jax.Array
+    t: jax.Array
+    lam: jax.Array
+    w: jax.Array
+    polarisation: jax.Array
+    drawn_direction: jax.Array
+    dlogp: jax.Array
+
+
 class Stack(NamedTuple):
     """Inside a layered surface: the layer, and the volume, class and sensor index beyond the remembered surface.
 
@@ -108,7 +122,7 @@ class Next(NamedTuple):
     drawn: jax.Array | None
 
 
-def start(row: Emission, vol, cls, *, stacked=False, moving=False, edge=False) -> Photon:
+def start(row: Emission | DensityEmission, vol, cls, *, stacked=False, moving=False, edge=False) -> Photon:
     """Return the Photon of an emission row in volume ``vol`` (-1: located at its first step) and class ``cls``.
 
     The optional parts exist only when asked for: ``stacked`` (a layered surface exists), ``moving`` (the
@@ -121,7 +135,10 @@ def start(row: Emission, vol, cls, *, stacked=False, moving=False, edge=False) -
     drawn = jnp.asarray(row.drawn_direction, bool)
     mv = None
     if moving:
-        chain = jax.lax.cond(drawn, lambda: moving_source.drawn_start(x, d), lambda: moving_source.undrawn_start(x, d))
+        g = jax.lax.stop_gradient(jnp.asarray(row.dlogp, F32)) if isinstance(row, DensityEmission) else None
+        chain = jax.lax.cond(
+            drawn, lambda: moving_source.drawn_start(x, d, g), lambda: moving_source.undrawn_start(x, d)
+        )
         mv = MovingSource(drawn, chain)
     return Photon(x, d, jnp.asarray(row.t, F32), jnp.asarray(row.lam, F32), jnp.asarray(row.w, F32),
                   jnp.asarray(True), jnp.asarray(0, I32), pol[0], pol[1], jnp.asarray(vol, I32), m1,
