@@ -15,12 +15,13 @@ classifiers = ["Private :: Do Not Upload"]
 dependencies = [
     "numpy>=1.24",
     # jax is pinned exactly: docs/dev/decisions.md, 7 (0.5.3's CPU runtime missed faces with the persistent cache on;
-    # tallymap 0.6.0rc1 is tested on 0.6.2)
+    # tallymap 0.6.0 is tested on 0.6.2)
     "jax==0.6.2",
     "jaxlib==0.6.2",
     "scipy>=1.10",  # spatial search of sibling placements (scipy.spatial.cKDTree) in the geometry lowering
-    # The photon loop: tallymap v0.6.0rc1 (7a8f1f7), not on PyPI: installed from its tag
-    "tallymap @ git+https://github.com/OmarAlterkait/tallymap.git@v0.6.0rc1",
+    # The photon loop: tallymap >=0.6.0,<0.7, not on PyPI: installed from its tag v0.6.0 (4981173). A direct reference
+    # cannot carry a version range (PEP 508), so the range is stated here; any 0.6.x gives the same photon loop.
+    "tallymap @ git+https://github.com/OmarAlterkait/tallymap.git@v0.6.0",
 ]
 
 [project.scripts]

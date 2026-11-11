@@ -36,8 +36,10 @@ export LUMEN_CACHE=/path/with/space/lumen-cache         # compiled kernels and c
 export LUMEN_DETECTORS=/path/to/your/calibrations       # where your calibrations are saved
 ```
 
-The last Python line should list a `CudaDevice`. [Installing lumen](docs/howto/install.md) has the details: the
-pinned versions, running without a GPU, every cache variable, compile times and a fixed-version install.
+This also installs lumen's photon-loop engine, tallymap 0.6.0, from its tag (`tallymap @
+git+https://github.com/OmarAlterkait/tallymap.git@v0.6.0`). The last Python line should list a `CudaDevice`. [Installing
+lumen](docs/howto/install.md) has the details: the pinned versions, running without a GPU, every cache variable, compile
+times and a fixed-version install.
 
 ## Quick start
 

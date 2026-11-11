@@ -5,6 +5,9 @@ now, and what to do.
 
 ## Unreleased
 
+- tallymap 0.6.0, the final release (rc1 plus four fixes in its CPU backend and process spawning), installed from
+  its tag v0.6.0; lumen accepts tallymap 0.6.x. The photon loop's results on the GPU are unchanged bit for bit.
+
 - The developer documentation moved to `docs/dev/` (entry page `docs/dev/README.md`); this file replaces
   `docs/dev/migration.md`.
 - Removed, unused by lumen and undocumented: `lumen.readout.grid.window_end`; `lumen.readout.hits.window_mass`,

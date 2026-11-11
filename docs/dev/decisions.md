@@ -50,7 +50,7 @@ a 10 % speed loss.
 
 **Decision.** jax and jaxlib are pinned exactly, and tallymap by tag.
 **Why.** On jax 0.5.3 a program loaded from the persistent compilation cache was not bitwise equal to a fresh compile
-on the CPU (navigator face misses); on 0.6.2 it is, on the CPU and the GPU. tallymap 0.6.0rc1 is tested on 0.6.2.
+on the CPU (navigator face misses); on 0.6.2 it is, on the CPU and the GPU. tallymap 0.6.0 is tested on 0.6.2.
 **Where.** `pyproject.toml` dependencies; `_env.xla_cache`; `tests/physics/test_persistent_cache.py`;
 `docs/dev/validation.md`.
 **Revisit.** When tallymap supports a newer jax and the cache check passes on it.
