@@ -60,15 +60,17 @@ def point(z):
 
 
 def test_a_point_through_simulate_closed_form_and_chunks(pmt_sphere):
+    """The closed form, and the same run in chunks. Each chunk's fixed-point sum (GPU) comes back as float32, and the
+    chunks add in float32: chunking changes only that rounding (the order of photons within a chunk changes no bit).
+    It was bitwise here only while these weights (n_photons = 1, w = 2^-16) kept every sum exact in float32;
+    simulate now rescales such weights to ~1, where float32 rounds, as it always did for weights of order 1."""
     n = 1 << 16
     light = lumen.simulate(pmt_sphere, point(Z0), samples=n, seed=3, replicas=16)
     q, err = float(np.asarray(light.arrivals, np.float64).sum()), float(np.asarray(light.arrivals_error).sum())
     assert abs(q - on_axis(Z0, L_ABS)[0]) < Z_MAX * err, (q, err)
     chunked = lumen.simulate(pmt_sphere, point(Z0), samples=n, seed=3, replicas=16, chunk=1 << 13)
-    if GPU:  # exact sums: the same run in any chunks
-        assert np.asarray(chunked.arrivals).tobytes() == np.asarray(light.arrivals).tobytes()
-    else:
-        np.testing.assert_allclose(np.asarray(chunked.arrivals), np.asarray(light.arrivals), rtol=1e-5)
+    rtol = 1e-6 if GPU else 1e-5  # GPU: exact sums per chunk, float32 between chunks; CPU: float32 sums throughout
+    np.testing.assert_allclose(np.asarray(chunked.arrivals), np.asarray(light.arrivals), rtol=rtol)
 
 
 def test_the_source_position_derivative_through_simulate(pmt_sphere):
