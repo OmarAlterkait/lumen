@@ -13,6 +13,12 @@ now, and what to do.
   `lumen.build.scene.check_partition`, `lumen.surfaces.polar.jones`, `lumen._core.safe.safe_norm` and
   `Compiled.is_single_convex` (test helpers, now in `tests/unit/helpers.py`).
 
+Fixed:
+
+- A surface type with a value fixed by its model kept only the outcomes it had with every other parameter at 0.5, so
+  under Geant4's chained cuts a unified dielectric_metal surface with a fixed EFFICIENCY lost its backscatter and
+  Lambertian outcomes (no shipped detector had such a surface).
+
 ## 0.1.2 (2026-11-11)
 
 New:

@@ -441,21 +441,26 @@ def _const(v):
     return tuple(float(x) for x in np.ravel(v)) if np.ndim(v) else float(v)
 
 
+SUPPORT_PROBES = (0.5, 0.1)  # parameter values a fixed type's support is probed at (a cut chain needs one below 1/3)
+
+
 def _probe_support(stype, consts):
     """Return the outcomes of ``stype`` with ``consts`` fixed that are not identically zero (terminal ones kept).
 
-    Probed at every other parameter 0.5 and a generic incidence; a type whose probe needs more keeps its support.
-    Known issue (structure review, to fix separately): a Geant4 cut chain at 0.5, 0.5, 0.5 gives zero to its third and
-    fourth shares, so fixed(DIELECTRIC_METAL, {"eff": 0}) drops BACKSCATTER and DIFFUSE; no shipped detector folds so.
+    Probed at a generic incidence with every other parameter at each of ``SUPPORT_PROBES``, the support the union: a
+    Geant4 cut chain at 0.5, 0.5, 0.5 leaves nothing to its third and fourth shares (DIELECTRIC_METAL's backscatter and
+    Lambertian), which 0.1 gives. A type whose probe needs more keeps its support.
     """
+    ctx = dict(lam=jnp.asarray(400.0), wi=jnp.asarray([0.6, 0.0, -0.8]), n=jnp.asarray([0.0, 0.0, 1.0]),
+               n1=jnp.asarray(1.33), n2=jnp.asarray(1.5), layer=0)  # fmt: skip
+    seen = set()
     try:
-        p = {k: 0.5 for k in stype.params if k not in consts} | {k: jnp.asarray(v) for k, v in consts.items()}
-        ctx = dict(lam=jnp.asarray(400.0), wi=jnp.asarray([0.6, 0.0, -0.8]), n=jnp.asarray([0.0, 0.0, 1.0]),
-                   n1=jnp.asarray(1.33), n2=jnp.asarray(1.5), layer=0)  # fmt: skip
-        pr = [float(x) for x in stype.probs(p, ctx)]
+        for v in SUPPORT_PROBES:
+            p = {k: v for k in stype.params if k not in consts} | {k: jnp.asarray(c) for k, c in consts.items()}
+            seen |= {o for o, x in enumerate(stype.probs(p, ctx)) if float(x) != 0.0}
     except Exception:
         return stype.outcomes
-    return tuple(o for o in stype.outcomes if TERMINAL[o] or pr[o] != 0.0)
+    return tuple(o for o in stype.outcomes if TERMINAL[o] or o in seen)
 
 
 def fixed(stype, consts):

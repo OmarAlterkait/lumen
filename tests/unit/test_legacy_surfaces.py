@@ -258,3 +258,14 @@ def test_coated_film_probabilities_and_faces():
 def test_coated_refuses_a_transmitting_backing():
     with pytest.raises(ValueError, match="only an opaque backing"):
         legacy.coated("bad", legacy.DIELECTRIC, TPB)
+
+
+def test_fixed_keeps_a_cut_chains_later_shares():
+    """A fixed type's support survives Geant4's chained cuts: at p_spike = p_lobe = 0.5 the backscatter and Lambertian
+    shares are 0, yet DIELECTRIC_METAL with eff fixed still backscatters and reflects diffusely."""
+    from lumen.surfaces import types
+    from lumen.surfaces.outcomes import BACKSCATTER, DIFFUSE
+
+    f = types.fixed(types.DIELECTRIC_METAL, {"eff": 0.0})
+    assert BACKSCATTER in f.outcomes and DIFFUSE in f.outcomes
+    assert f.outcomes == types.DIELECTRIC_METAL.outcomes
