@@ -426,6 +426,7 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `material <m> of the tree is not in the detector file` | `LibraryError` | `lumen.build.library` |
 | `material <m>: medium <name> is defined by another material already` | `LibraryError` | `lumen.build.library` |
 | `medium model <name>: return a lumen.media.MediumSpec, not <__name__>` | `ModelError` | `lumen.build.library` |
+| `sensor group <name> (border_into): no border surface leads into its volumes (<mine>) and none has a skin that detects: it would never detect (an any_entry group counts every entry)` | `LibraryError` | `lumen.build.library` |
 | `sensor group <name>: any_entry counts with its setting 'entry_efficiency' or a value set (its sensor model applies the efficiency after tracking)` | `LibraryError` | `lumen.build.library` |
 | `sensor groups <prefix> and <name> share the volume <lv> but read its surfaces differently` | `LibraryError` | `lumen.build.library` |
 | `surface <name>: optics model <name>; a surface is read by Geant4's reading, 'geant4'` | `LibraryError` | `lumen.build.library` |
@@ -454,9 +455,11 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `sensor binding <sb>: <sensor> is not a library sensor` | `DescriptionError` | `lumen.build.lookup` |
 | `sensor binding <sb>: LV <lv> does not occur in the tree` | `DescriptionError` | `lumen.build.lookup` |
 | `sensor binding <sb>: PV <pv> does not occur in the tree` | `DescriptionError` | `lumen.build.lookup` |
-| `sensor binding <sb>: entry must be 'any' or 'border'` | `DescriptionError` | `lumen.build.lookup` |
+| `sensor binding <sb>: entry must be 'any', 'border' or 'skin'` | `DescriptionError` | `lumen.build.lookup` |
 | `sensor binding <sb>: give exactly one of lv= or pv=` | `DescriptionError` | `lumen.build.lookup` |
 | `sensor entry <name>: crossings into it have different normal-incidence absorptance (<by_entry> and <a_n> at <lam> nm)` | `OpticsError` | `lumen.build.lookup` |
+| `skin exit of LV <lv>: <k> is not a library sensor` | `DescriptionError` | `lumen.build.lookup` |
+| `skin exit of LV <lv>: its placements are no skin sensors` | `DescriptionError` | `lumen.build.lookup` |
 | `skin on LV <lv>: <s> is not a library surface` | `DescriptionError` | `lumen.build.lookup` |
 | `skin surface <s> on LV <lv>, which does not occur in the tree` | `DescriptionError` | `lumen.build.lookup` |
 | `surface <name>: expected a SurfaceEntry(SurfaceType, params)` | `DescriptionError` | `lumen.build.lookup` |

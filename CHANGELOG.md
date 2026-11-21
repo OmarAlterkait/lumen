@@ -19,6 +19,11 @@ now, and what to do.
   every material, surface and sensor group, the surface of each crossing, what lumen refuses and why, the tables
   against wavelength (`--range` shades the light's). Every drawn solid is compared with the solid lumen traces. It
   needs the `view` extra (`manifold3d`); three.js r128 ships with it (docs/howto/viewer.md).
+- **Skin sensors**: a `border_into` group's volume that no border sensor enters and whose own skin detects has that
+  skin as its sensor, met where Geant4 picks it (entering from the volume's mother, or from a volume without a skin);
+  leaving through it detects with the surface's EFFICIENCY, credited to the volume left. nexus's photocathodes and
+  SiPMs read so (G4OpticalParameters::SetBoundaryInvokeSD). A `border_into` group that binds nothing, neither a border
+  into its volumes nor a detecting skin, is refused (it converted with no sensors).
 - **Border surfaces across coincident faces**: a border between volumes that never touch as mother and daughter or as
   siblings was refused; it now holds where they meet across coincident faces, as Geant4 crosses from one straight
   into the other (a coating inside a tube against the gas beside it; a coating inside a mask inside a board against
