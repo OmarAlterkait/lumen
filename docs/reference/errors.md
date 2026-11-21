@@ -121,8 +121,8 @@ or surface.
 
 | Message | Meaning and fix |
 |---|---|
-| `<what>: model <model> is not supported` · `<what>: finish <finish> is not supported` · `<what>: surface type <type> is not supported` | a surface form outside lumen's Geant4 surface types (refused: ground dielectric_dielectric, backpainted finishes, Geant4's `coated` type, LUT, LUTDAVIS, dichroic). Use a supported form |
-| `<what>: ground dielectric_dielectric (facet refraction) is not supported` | as above |
+| `<what>: model <model> is not supported` · `<what>: finish <finish> is not supported` · `<what>: surface type <type> is not supported` | a surface form outside lumen's Geant4 surface types (refused: unified ground dielectric_dielectric, backpainted finishes, Geant4's `coated` type, LUT, LUTDAVIS, dichroic). Use a supported form |
+| `<what>: unified ground dielectric_dielectric (facet refraction) is not supported` | as above (a glisur ground one reads: GLISUR's facet refraction) |
 | `<what>: <key> is not supported` · `<what>: <key> (<why>) is not supported` | a property lumen does not read (SURFACEROUGHNESS, for example). Remove it, or ask for it |
 | `<what>: polish <value> outside [0, <max>] (or exactly 1)` · `<what>: sigma_alpha <value> outside [<min>, <max>] (or exactly 0)` | the opticalsurface `value` is outside the range lumen's facet samplers cover (sigma_alpha 0 is read as Geant4 reads it: the lobe is the spike; above 1 rad, G4OpticalSurface's default, Geant4's own facet draw departs from the unified distribution: `lumen.rules.choices`, `SIGMA_MAX`) |
 | `<what>: GROUPVEL must hold positive speeds (m / ns)` | a GROUPVEL table times the photons, as in Geant4; fix its values |
@@ -777,12 +777,12 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `<what>: WLSABSLENGTH without WLSCOMPONENT (G4OpWLS absorbs and emits nothing)` | `OpticsRefused` | `lumen.rules.optics` |
 | `<what>: a complex index on a ground finish (the facet's Fresnel) is not supported` | `OpticsRefused` | `lumen.rules.optics` |
 | `<what>: finish <finish> is not supported` | `OpticsRefused` | `lumen.rules.optics` |
-| `<what>: ground dielectric_dielectric (facet refraction) is not supported` | `OpticsRefused` | `lumen.rules.optics` |
 | `<what>: model <model> is not supported` | `OpticsRefused` | `lumen.rules.optics` |
 | `<what>: polish <value> outside [0, <GLISUR_R_MIN>] (or exactly 1)` | `OpticsRefused` | `lumen.rules.optics` |
 | `<what>: scint_finite_rise_time without <missing>: G4Scintillation reads each emitted component's rise time and aborts without it` | `OpticsRefused` | `lumen.rules.optics` |
 | `<what>: sigma_alpha <value> outside [<SIGMA_MIN>, <SIGMA_MAX>] (or exactly 0)` | `OpticsRefused` | `lumen.rules.optics` |
 | `<what>: surface type <type_> is not supported` | `OpticsRefused` | `lumen.rules.optics` |
+| `<what>: unified ground dielectric_dielectric (facet refraction) is not supported` | `OpticsRefused` | `lumen.rules.optics` |
 | `<what>: wls_time_profile <profile> is not one of G4OpWLS's <WLS_TIME_PROFILES>` | `OpticsRefused` | `lumen.rules.optics` |
 | `opticalsurface <name>: its reading detects nothing` | `OpticsRefused` | `lumen.rules.optics` |
 | `a launch appended <need> deposit records, over its <slots> slots: give records=<need> (or more), or a chunk below <below>` | `RecordsOverflow` | `lumen.run` |
@@ -843,6 +843,7 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `<material>: no <missing> (Geant4 11 emits none or aborts<hint>)` | `KeyError` | `lumen.sources.scintillation` |
 | `<material>: the components' shares <tolist> are not finite and >= 0 (Geant4 divides by the sum of the yields)` | `KeyError` | `lumen.sources.scintillation` |
 | `simulate: speed is 'fast' or 'exact', got <speed>` | `ValueError` | `lumen.speed` |
+| `into_opaque: <name>'s facet path decides its own side` | `ValueError` | `lumen.surfaces.types` |
 | `per_normal: a detecting type with eff, got <name>` | `ValueError` | `lumen.surfaces.types` |
 | `(a message built at run time)` | `AssertionError` | `lumen.testing` |
 | `check_gradient: more than <power_floor> seeds (fewer cannot reject at the checks' level: stats.mean_test)` | `ValueError` | `lumen.tools.check` |

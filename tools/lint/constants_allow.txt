@@ -203,6 +203,7 @@ surfaces/facets.py | unified_facet.body | 3 | 1 | structural | the 3 components 
 surfaces/facets.py | unified_facet.body | -2.0 | 1 | structural | 3 uniforms per facet draw / Box-Muller's -2 log u (exact)
 surfaces/facets.py | glisur_facet.body | 3 | 1 | structural | the 3 components of a vector (a shape)
 surfaces/facets.py | _facet_path_lobe | 3 | 1 | structural | the 3 components of a vector (a shape)
+surfaces/facets.py | dielectric_event_logpdf | 4.0 | 1 | structural | exact math (Hermite basis, sphere cap volume / area, density normalisation)
 surfaces/outcomes.py | <module> | 6 | 1 | derivable | len(NAMES)
 surfaces/types.py | <module> | 0.1 | 1 | choice | stated in place: the GLOSSY lobe's width a row without one reports (never drawn)
 testing.py | check_value_set | -400.0 | 1 | choice | no stated reason in place

@@ -93,7 +93,7 @@ def crossing(v, pre, post, rel):
         return types.PASS, None, f"{reason}: same-material", "post"
     else:
         stype, origin, far = lib.sensors[name].surface_type, f"sensor:{name}", lib.sensors[name].far_side
-    if v.opaque[v.medium[post]] and any(FAR_SIDE[o] for o in stype.outcomes):
+    if v.opaque[v.medium[post]] and (any(FAR_SIDE[o] for o in stype.outcomes) or stype.refracts):
         if far == FAR_KILL:
             stype, origin, reason = types.ABSORBER, None, f"{reason}: NoRINDEX"
         elif far == FAR_ABSORB:

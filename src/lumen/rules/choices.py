@@ -41,6 +41,11 @@ range is derived, never declared, and the static time grid resolves its narrow e
 nodes sigma r / 4 apart; its wide end sets the grid's reach). It trades the grid's nodes against how far a fit may
 move the width; a value outside it is refused.
 
+**Matched indices** (derived): ``INDEX_MATCH``, the relative index difference at or below which a GLISUR facet
+refraction keeps the photon's direction (Geant4's refraction between equal indices) and carries no density: its
+deflection there is below 128 float32 ulps of a unit vector (1.5e-5 rad), and the facet it implies from the two
+directions, (n_a w0 - n_b w1) / |n_a w0 - n_b w1|, is lost to their rounding.
+
 **Float32 floors** (derived): ``FLOOR32``, the floor of a rate, probability, density or divisor the photon loop forms
 (and the argument floor of a logarithm): a normal float32 (above 1.2e-38), far below any value of light that matters.
 ``NORMAL_INCIDENCE``: |wi x n|^2 below this has no plane of incidence, eps32^2 (1.4e-14), the rounding of a cross
@@ -90,6 +95,7 @@ FRESNEL_SMALL = 1e-12  # |z| below this is 0 in the Fresnel square root and its 
 
 # accepted input ranges
 LOBE_WIDTH_MIN = 1e-3  # rad: the narrowest lobe, 2.9 sqrt(eps32)
+INDEX_MATCH = 128 * EPS32  # |n_a - n_b| / max(n_a, n_b) at or below this: a facet refraction keeps the direction
 MIE_G_MAX = 1.0 - LOBE_WIDTH_MIN  # the largest |g| of a Mie lobe (0.999)
 GLISUR_R_MIN = LOBE_WIDTH_MIN  # the smallest 1 - polish of a GLISUR facet path
 UNIFIED_TABLE = dict(nx=257, y0=math.log(0.25), dy=math.log(2.0) / 8.0, j_lo=-52, j_hi=16, order=16, panels_z=64,
