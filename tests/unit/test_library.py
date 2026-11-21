@@ -182,7 +182,7 @@ def test_a_value_key_takes_the_range_the_reader_accepts(toy):
     p = Params(values, sp, {})
     assert p.info("surfaces/uni/sigma_alpha").range == (rules.SIGMA_MIN, rules.SIGMA_MAX)
     with pytest.raises(ValueError, match="outside"):  # refused here, not when the library packs it
-        p.set("surfaces/uni/sigma_alpha", 0.8)
+        p.set("surfaces/uni/sigma_alpha", 1.5)
     with pytest.raises(ValueError, match="outside"):
         p.set("surfaces/glis/polish", 1.0 - rules.GLISUR_R_MIN / 2)
     assert p.set("surfaces/uni/sigma_alpha", 0.3)["surfaces/uni/sigma_alpha"] == 0.3

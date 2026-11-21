@@ -12,14 +12,21 @@ represent or a table does not cover:
 - ``LOBE_WIDTH_MIN`` (derived): float32 resolves an angle taken from a dot product near 1 to sqrt(eps32) = 3.45e-4
   rad; a lobe narrower than ~3 of that (1e-3 rad = 2.9 sqrt(eps32)) is not represented. It bounds the Mie lobe
   (1 - |g| >= it: ``MIE_G_MAX``) and GLISUR's facet radius (1 - polish >= it, or polish exactly 1: specular).
-- ``SIGMA_MIN``, ``SIGMA_MAX`` (resolution): the unified lobe's sigma_alpha is the span of its tables
-  (``UNIFIED_TABLE``): 0.25 2^(j / 8), j in [-52, 12] = [0.00276, 0.707] rad (or exactly 0: specular). Below and above
-  it the tables do not reach (Geant4 accepts any sigma_alpha): a wider span needs a table parametrisation that
-  stays resolved as sigma -> infinity, not more rows.
+- ``SIGMA_MIN``, ``SIGMA_MAX`` (resolution; choice): the unified lobe's sigma_alpha is the span of its tables
+  (``UNIFIED_TABLE``): 0.25 2^(j / 8), j in [-52, 16] = [0.00276, 1] rad (or exactly 0: specular); below it the tables
+  do not reach. The top is G4OpticalSurface's default value, and the width above which Geant4's own draw departs from
+  the distribution it states and lumen draws, g(alpha) sin(alpha) on (0, pi/2): GetFacetNormal draws alpha from
+  N(0, sigma_alpha) and keeps it where ``u f_max <= sin(alpha)`` and alpha < pi/2, which a negative draw in
+  (-2 pi k, -2 pi k + pi), k >= 1, also passes (a facet whose polar angle is alpha + 2 pi k). Their share of the facets
+  facing the photon is at most 2.5e-6 at 0.707 rad and 8.5e-4 at 1 rad (grazing incidence; 6.8e-5 at 50 degrees,
+  4.9e-6 at normal incidence), and grows fast above: 6.1e-3 at 1.2 rad, 0.15 at 2 rad
+  (G4OpBoundaryProcess::GetFacetNormal, 11.3.0; ``tests/unit/test_unified_tables.py``).
 
 **Unified tables** (``lumen.surfaces.facets``; resolution). F(x, log sigma) on ``UNIFIED_TABLE["nx"]`` x nodes by
-``UNIFIED_TABLE["dy"]`` steps of log sigma, bicubic Hermite: measured against the float64 quadrature at 64 x 256
-off-node points over the span, max |dF| 4.8e-7 and max |d log zeta| 9.8e-7 (4 and 8 float32 ulps of O(1)). The
+``UNIFIED_TABLE["dy"]`` steps of log sigma, bicubic Hermite: measured against the float64 quadrature at 136 x 256
+off-node points over the span (each cell's midpoint and a random point in it; 128 regular and 128 random x;
+``tests/unit/test_unified_tables.py``), max |dF| 4.7e-7 and max |d log zeta| 1.3e-6 (4 and 11 float32 ulps of O(1);
+the latter near sigma = 0.75, the interpolation's: the nodes' float32 rounding is 1.4e-8). The
 quadrature (Gauss-Legendre of ``order`` points on ``panels_z`` / ``panels_f`` panels) changes by at most 2.2e-16
 (Z, relative) and 2.2e-16 (F) when its panels are doubled; the integrands are cut at ``cut_sigmas`` sigma, where
 exp(-x^2 / 2) = e^-98 (eps64 is reached at 8.5 sigma). The derivative nodes are central differences of step
@@ -85,10 +92,10 @@ FRESNEL_SMALL = 1e-12  # |z| below this is 0 in the Fresnel square root and its 
 LOBE_WIDTH_MIN = 1e-3  # rad: the narrowest lobe, 2.9 sqrt(eps32)
 MIE_G_MAX = 1.0 - LOBE_WIDTH_MIN  # the largest |g| of a Mie lobe (0.999)
 GLISUR_R_MIN = LOBE_WIDTH_MIN  # the smallest 1 - polish of a GLISUR facet path
-UNIFIED_TABLE = dict(nx=257, y0=math.log(0.25), dy=math.log(2.0) / 8.0, j_lo=-52, j_hi=12, order=16, panels_z=64,
+UNIFIED_TABLE = dict(nx=257, y0=math.log(0.25), dy=math.log(2.0) / 8.0, j_lo=-52, j_hi=16, order=16, panels_z=64,
                      panels_f=16, cut_sigmas=14.0, fd_step=1e-5, fd_end=1e-6)  # fmt: skip
 SIGMA_MIN = math.exp(UNIFIED_TABLE["y0"] + UNIFIED_TABLE["dy"] * UNIFIED_TABLE["j_lo"])  # rad: 0.00276
-SIGMA_MAX = math.exp(UNIFIED_TABLE["y0"] + UNIFIED_TABLE["dy"] * UNIFIED_TABLE["j_hi"])  # rad: 0.707
+SIGMA_MAX = math.exp(UNIFIED_TABLE["y0"] + UNIFIED_TABLE["dy"] * UNIFIED_TABLE["j_hi"])  # rad: 1, Geant4's default
 
 # readout
 M_GRID_POINTS = 383  # r(m)'s nodes in [1e-4, 1e4] (and m = 0)

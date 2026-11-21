@@ -5,6 +5,13 @@ now, and what to do.
 
 ## Unreleased
 
+### Results that change
+
+- **A unified ground surface's sigma_alpha reads up to 1 rad** (was 0.707 rad), G4OpticalSurface's default value
+  (nexus's SiPM board mask, for one): four more rows of the unified tables, at their stated accuracy. Above 1 rad the
+  surface is still refused: there Geant4's own facet draw departs from the distribution it states and lumen draws
+  (`lumen.rules.choices`, `SIGMA_MAX`), by at most 8.5e-4 of the facets at 1 rad and 0.15 at 2 rad.
+
 ### Added
 
 - **The GDML viewer**: `python -m lumen.viewer FILE.gdml` (or a package's `package:name`, or `--recipe FILE.py:NAME`)
@@ -12,6 +19,8 @@ now, and what to do.
   every material, surface and sensor group, the surface of each crossing, what lumen refuses and why, the tables
   against wavelength (`--range` shades the light's). Every drawn solid is compared with the solid lumen traces. It
   needs the `view` extra (`manifold3d`); three.js r128 ships with it (docs/howto/viewer.md).
+- **The facet paths against Geant4 on one interface**: `tools/g4ref/boundary.cc` (Geant4 11.3.0) and its histograms in
+  `tests/data/g4_boundary`, which `tests/unit/test_g4_boundary.py` compares with the lobes' own draws.
 
 ## 0.2.1 (2026-11-23)
 

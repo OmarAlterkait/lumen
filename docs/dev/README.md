@@ -25,7 +25,7 @@ The entry page for developers. Read this first, then the page you need:
 | `examples/` | the scripts the tutorial and how-to guides follow | no |
 | `tools/ci/gpu.sh` | the GPU part of the checks (GitHub has no GPU) | no |
 | `tools/release_assets.py` | packs a manifest's reference products into release assets and records their URL and sha256 | no |
-| `tools/g4ref/` | g4ref, the Geant4 reference application, its runner, the reduction into reference products, the MC-gate store script | no |
+| `tools/g4ref/` | g4ref, the Geant4 reference application, its runner, the reduction into reference products, the MC-gate store script; boundary, the one-interface program of the facet-path references (`tests/data/g4_boundary`) | no |
 | `tools/docs/`, `tools/hooks/` | the generated pages' writers; the pre-commit hooks | no |
 
 Where new things go:

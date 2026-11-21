@@ -629,6 +629,7 @@ branches in Python on a parameter value, never closes over a parameter array and
 | geometry import | g4ref `--probe` point location | 100 % |
 | overlaps | the 18 g4ref overlap toys through `simulate`; the placement check (with the sibling pairs closer than the contact tolerance, `thin`) | detected fraction and mean time within errors |
 | Mie | Geant4's G4OpMieHG tables (`tests/data/g4ref_mie`) | the scattering-angle distribution within its errors |
+| facet paths | Geant4 11.3.0's G4OpBoundaryProcess on one interface (`tools/g4ref/boundary.cc`, `tests/data/g4_boundary`) | the last direction's (dz, \|phi\|) distribution within its errors |
 | export | Geant4 10.7.4 round trip on toys | `import(export(df)) == df`; Geant4 hits equal |
 
 | Tier | Content | Target |
