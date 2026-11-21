@@ -199,7 +199,7 @@ def test_a_key_is_a_parameter_where_the_optics_reads_it(toy):
     liq = mats["Liq"]
     props = {
         **liq.properties,
-        "GROUPVEL": Property("GROUPVEL", np.array([0.2]), energy=None, origin="source", note=""),
+        "GROUPVEL": Property("GROUPVEL", np.array(0.2), energy=None, origin="source", note=""),
         "SCINTILLATIONYIELD": Property("SCINTILLATIONYIELD", np.array(100.0), energy=None, origin="source", note=""),
     }
     df = dataclasses.replace(toy, materials={**mats, "Liq": dataclasses.replace(liq, properties=props)})
