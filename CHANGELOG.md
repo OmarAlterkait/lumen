@@ -19,6 +19,11 @@ now, and what to do.
   every material, surface and sensor group, the surface of each crossing, what lumen refuses and why, the tables
   against wavelength (`--range` shades the light's). Every drawn solid is compared with the solid lumen traces. It
   needs the `view` extra (`manifold3d`); three.js r128 ships with it (docs/howto/viewer.md).
+- **Border surfaces across coincident faces**: a border between volumes that never touch as mother and daughter or as
+  siblings was refused; it now holds where they meet across coincident faces, as Geant4 crosses from one straight
+  into the other (a coating inside a tube against the gas beside it; a coating inside a mask inside a board against
+  the gas, the faces composing through opaque volumes). It is read between their nearest instances, and refused when
+  the optics compile if no coincident face joins them. NEXT-100's TPB coatings read.
 - **GLISUR facet refraction**: a glisur ground dielectric_dielectric surface reads (it was refused), as Geant4's
   DielectricDielectric draws it: after the REFLECTIVITY / TRANSMITTANCE cut, a facet path whose facets reflect or
   refract with the Fresnel shares of the photon's own state, ending on either side of the surface. Its polish and both

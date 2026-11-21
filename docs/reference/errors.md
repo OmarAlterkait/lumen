@@ -436,8 +436,9 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `bindings for materials that do not occur in the tree: <dangling>` | `DescriptionError` | `lumen.build.lookup` |
 | `border (<pre> -> <post>): <s> is <what>` | `DescriptionError` | `lumen.build.lookup` |
 | `border sensor <s> (<a> -> <z>): <pre> is not a sensor PV, so a detection leaving it has no sensor index to go to` | `DescriptionError` | `lumen.build.lookup` |
+| `border surface <s> (<a> -> <b>): the volumes neither touch (mother/daughter, siblings) nor meet across a coincident face (a daughter's face on its mother's): Geant4 would never cross it; check the border's physvols` | `OpticsError` | `lumen.build.lookup` |
 | `border surface <s> (<a> -> <z>) into sensor PV <post>: ambiguous (the sensor's surface type is the boundary of a sensor; a border may name the sensor itself when its binding has entry='border')` | `DescriptionError` | `lumen.build.lookup` |
-| `border surface <s> (<pre> -> <post>): the volumes never touch (not mother/daughter, not siblings)` | `DescriptionError` | `lumen.build.lookup` |
+| `border surface <s> (<pre> -> <post>): no instance of one has an instance of the other in the tree` | `DescriptionError` | `lumen.build.lookup` |
 | `border surface <s> (<pre> -> <post>): unknown physvol <n>` | `DescriptionError` | `lumen.build.lookup` |
 | `column <c>: only (energy, value) tables are packed, not <law>` | `OpticsError` | `lumen.build.lookup` |
 | `internal: a group pair counted as touching without a border has no such pair` | `OpticsError` | `lumen.build.lookup` |

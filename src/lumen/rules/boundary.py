@@ -4,7 +4,8 @@
     stype, origin, reason, side = through(leg_pb, leg_bq, b_name, names)  # a coincident face across a pass
 
 ``v`` (``lumen.build.lookup.Description``) gives per placed volume (PV) its medium, material, skin surface and
-sensor, the border surface of an ordered PV pair (``border(pre, post)``: its physvols' border, where they touch), the
+sensor, the border surface of an ordered PV pair (``border(pre, post)``: its physvols' border, where they touch, or
+for physvols that meet only across coincident faces between their nearest instances), the
 library entries and which media are opaque. For an ordered crossing (pre, post), in Geant4's order:
 
 1. entering a sensor PV whose rule is "any entry" (or across the border bound to its sensor): that sensor's type;

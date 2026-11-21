@@ -405,13 +405,14 @@ def border_bindings(df, tree) -> dict:
 
     A GDML physvol name is every world instance placed by that physvol (``Tree.physvol``); a border applies to each
     adjacent (mother/daughter or sibling) instance pair of its two physvols (``lookup.border_instances``: never
-    enumerated). At the detector volume's boundary this is Geant4's own binding: a daughter -> the detector
-    placement, the detector placement -> its mother (or the sibling enclosing it, ``outside_volume``) and that volume
-    -> the detector placement are bound, the mother as the tree's outside (the last never crossed: the outside holds
-    no photon). A border whose first volume lies outside the kept detector is dropped with a warning: Geant4 consults
-    a border only for a photon in its first volume, and lumen tracks no light outside. Fail closed otherwise when a
-    border matches nothing (the detector placement -> a sibling outside it: the outside is one region, see
-    ``outside_volume``).
+    enumerated), and between two physvols that never touch directly to their nearest instances, where they meet
+    across coincident faces (``lookup.nearest_instances``). At the detector volume's boundary this is Geant4's own
+    binding: a daughter -> the detector placement, the detector placement -> its mother (or the sibling enclosing
+    it, ``outside_volume``) and that volume -> the detector placement are bound, the mother as the tree's outside
+    (the last never crossed: the outside holds no photon). A border whose first volume lies outside the kept
+    detector is dropped with a warning: Geant4 consults a border only for a photon in its first volume, and lumen
+    tracks no light outside. Fail closed otherwise when a border matches nothing (the detector placement -> a
+    sibling outside it: the outside is one region, see ``outside_volume``).
     """
     lv_of = {p.name: p.volume for p in df.placements}  # physvol -> its LV
     x, det_lv = binding.outside_volume(df), schema.detector_lv(df)
@@ -422,12 +423,16 @@ def border_bindings(df, tree) -> dict:
             return True
         return mname in lv_of and any(df.placements[i].name == dname for i in df.volumes[lv_of[mname]].daughters)
 
-    def key(a, b):  # the tree's physvol pair of a border, None: no world instance pair touches
+    def key(a, b):  # the tree's physvol pair of a border, None: not both in the tree
         if a in have and b not in have and inside(a, b):
             a, b = a, OUTSIDE_PV  # the kept detector against its GDML mother, the tree's outside
         elif a not in have and b in have and inside(b, a):
             a, b = OUTSIDE_PV, b  # ... and from that mother into the detector
-        return (a, b) if a in have and b in have and lookup.border_instances(tree, a, b)[0] else None
+        if a not in have or b not in have:
+            return None
+        # touching instances, or volumes that meet only across coincident faces (``lookup.nearest_instances``;
+        # one that no coincident face joins is refused when the optics compile)
+        return (a, b) if lookup.border_instances(tree, a, b)[0] or lookup.nearest_instances(tree, a, b) else None
 
     out, dropped = {}, []
     for border in df.borders:
