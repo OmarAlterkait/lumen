@@ -4,6 +4,10 @@ The photon carries the placed volume it is in and the surface it sits on (its fa
 G4Navigator decides a point's side of a surface within kCarTolerance by the direction of travel; lumen's tolerance is
 the float32 resolution of the coordinates, the **band**. The rules, each with the Geant4 code it follows:
 
+- **Precision.** The navigator runs in float32 (the default) or float64 (``lumen.load(..., precision="float64")``):
+  its coordinates, frames, roots and intervals, and the photon's position, in that precision; the physics in float32.
+  Every tolerance below is in bands of the navigator's precision (``Precision``, ``band``). In float64 the floor
+  dominates at any detector scale (below 5.6e5 m), so every tolerance is a fixed multiple of 1 nm.
 - **Tolerance.** One form, ``band(scale) = 8 eps scale + 1e-9 m`` at a coordinate scale (m), and named multiples:
   the query and the CSG evaluator at ``|x| + |t|`` of a crossing, the step's push unit at a point's ``max |x|``
   (``step_band``), the placement check's step in ``K_ON`` bands (``check_step_in``), a zero-length step below
@@ -52,6 +56,8 @@ Geant4 sources: G4Navigator (LocateGlobalPointAndSetup, LevelLocate, the zero-st
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -68,30 +74,56 @@ ZERO_STEPS_BEFORE_PUSH, ZERO_STEPS_BEFORE_KILL = tol.ZERO_STEPS_BEFORE_PUSH, tol
 PUSH_DISTANCE_TOLERANCES = tol.PUSH_DISTANCE_TOLERANCES
 
 FLOAT32_EPS = float(np.finfo(np.float32).eps)
-BAND = BAND_ULPS * FLOAT32_EPS  # the band per metre of coordinate scale
+BAND = BAND_ULPS * FLOAT32_EPS  # the float32 band per metre of coordinate scale
 
 
-def band(scale):
-    """Return the float32 band (m) at a coordinate scale (m): for a crossing at ``t`` on a ray whose largest start
-    coordinate is ``xa``, ``band(xa + |t|)``. Endpoints closer than this are one crossing; the photon's own surface is
-    within it of the start. Takes the scale's precision (float32 in the loop, float64 on the host)."""  # noqa: D205, D209
-    return BAND * scale + BAND_FLOOR
+class Precision(NamedTuple):
+    """The navigator's floating-point precision: its name, its float dtype (jax, numpy), the integer of the same width
+    (a float's bits in an integer record) and its machine epsilon."""  # noqa: D205, D209
+
+    name: str
+    F: object
+    I: object  # noqa: E741 -- the integer of the float's width
+    np: object
+    eps: float
 
 
-def contact(scale):
+FLOAT32 = Precision("float32", jnp.float32, jnp.int32, np.float32, FLOAT32_EPS)
+FLOAT64 = Precision("float64", jnp.float64, jnp.int64, np.float64, float(np.finfo(np.float64).eps))
+PRECISIONS = {p.name: p for p in (FLOAT32, FLOAT64)}
+
+
+def precision(name) -> Precision:
+    """Return the Precision named ``name`` ("float32" or "float64"; a Precision is returned as is)."""
+    if isinstance(name, Precision):
+        return name
+    if name not in PRECISIONS:
+        raise ValueError(f"precision {name!r} is not one of {sorted(PRECISIONS)}")
+    return PRECISIONS[name]
+
+
+def band(scale, prec=FLOAT32):
+    """Return the band (m) of precision ``prec`` at a coordinate scale (m): for a crossing at ``t`` on a ray whose
+    largest start coordinate is ``xa``, ``band(xa + |t|)``. Endpoints closer than this are one crossing; the photon's
+    own surface is within it of the start. Takes the scale's dtype (the navigator's in the loop, float64 on the
+    host)."""  # noqa: D205, D209
+    return BAND_ULPS * prec.eps * scale + BAND_FLOOR
+
+
+def contact(scale, prec=FLOAT32):
     """Return the contact tolerance (m) at a coordinate scale (m): ``K_ON`` bands. Two solids closer than this touch;
     they overlap, and a solid reaches out of another, only deeper (``lumen.geometry.ownership``)."""  # noqa: D205, D209
-    return K_ON * band(scale)
+    return K_ON * band(scale, prec)
 
 
-def check_step_in(xe):
+def check_step_in(xe, prec=FLOAT32):
     """Return the placement check's step in from an entry point ``xe`` (3,): the contact tolerance there (m)."""
-    return contact(jnp.max(jnp.abs(xe)))
+    return contact(jnp.max(jnp.abs(xe)), prec)
 
 
-def step_band(x):
+def step_band(x, prec=FLOAT32):
     """Return the step's band at a point ``x`` (3,), the stuck rule's push unit (m)."""
-    return band(jnp.max(jnp.abs(x)))
+    return band(jnp.max(jnp.abs(x)), prec)
 
 
 def entry_wins(t, rank, best, best_rank):

@@ -149,8 +149,8 @@ def scene_mesh():
     })  # fmt: skip
 
 
-def nav_of(sc):
-    return navigate.Navigator.from_scene(sc)
+def nav_of(sc, precision="float32"):
+    return navigate.Navigator.from_scene(sc, precision=precision)
 
 
 SCENES = {"nest": scene_nest, "bool": scene_bool, "wires": scene_wires, "mesh": scene_mesh, "split": scene_split,
@@ -195,9 +195,9 @@ def _program(fn, nav, by_layout):
     return functools.partial(prog, nav.operands()) if by_layout else prog
 
 
-def _host(a):
+def _host(a, fdt=np.float32):
     a = np.asarray(a)
-    return a.astype(np.float32 if a.dtype.kind == "f" else np.int32 if a.dtype.kind in "iu" else a.dtype)
+    return a.astype(fdt if a.dtype.kind == "f" else np.int32 if a.dtype.kind in "iu" else a.dtype)
 
 
 def per_ray(fn, nav, *rays, shared=(), by_layout=False):
@@ -207,8 +207,9 @@ def per_ray(fn, nav, *rays, shared=(), by_layout=False):
     arrays passed to every row (t_max, a pass table).
     """
     prog = _program(fn, nav, by_layout)
-    rows = [_host(r) for r in rays]
-    sh = tuple(jnp.asarray(_host(s)) for s in shared)
+    fdt = nav.prec.np  # the rays in the navigator's precision
+    rows = [_host(r, fdt) for r in rays]
+    sh = tuple(jnp.asarray(_host(s, fdt)) for s in shared)
     out = jax.device_get([prog(*(r[i] for r in rows), *sh) for i in range(len(rows[0]))])
     return jax.tree.map(lambda *a: np.stack(a), *out)
 
@@ -231,21 +232,21 @@ def _query_vertex(nv, o, d, v, last, t_max, vertex_tab):
 
 def locate(nav, X, by_layout=False):
     """Return the volume holding each point of X (n, 3): ``nav.locate`` per point."""
-    return per_ray(_locate, nav, np.asarray(X, np.float32).reshape(-1, 3), by_layout=by_layout)
+    return per_ray(_locate, nav, np.asarray(X, nav.prec.np).reshape(-1, 3), by_layout=by_layout)
 
 
 def query(nav, X, D, vol, last=-1, t_max=1e3, sn=None, vertex_tab=None, by_layout=False):
     """Return ``nav.query`` per ray (a dict of arrays): X, D (n, 3) or (3,); vol, last (n,) or one; sn (n, 3), (3,)."""
-    X, D = np.asarray(X, np.float32).reshape(-1, 3), np.asarray(D, np.float32).reshape(-1, 3)
+    X, D = np.asarray(X, nav.prec.np).reshape(-1, 3), np.asarray(D, nav.prec.np).reshape(-1, 3)
     n = max(len(X), len(D), np.size(vol), np.size(last), 0 if sn is None else np.size(sn) // 3)
     rows = [np.broadcast_to(X, (n, 3)), np.broadcast_to(D, (n, 3)), np.broadcast_to(np.asarray(vol, np.int32), (n,)),
             np.broadcast_to(np.asarray(last, np.int32), (n,))]  # fmt: skip
-    tm = np.float32(t_max)
+    tm = nav.prec.np(t_max)
     if vertex_tab is not None:
         assert sn is None
         return per_ray(_query_vertex, nav, *rows, shared=(tm, np.asarray(vertex_tab, bool)), by_layout=by_layout)
     if sn is not None:
-        sn = np.broadcast_to(np.asarray(sn, np.float32).reshape(-1, 3), (n, 3))
+        sn = np.broadcast_to(np.asarray(sn, nav.prec.np).reshape(-1, 3), (n, 3))
         return per_ray(_query_sn, nav, *rows, sn, shared=(tm,), by_layout=by_layout)
     return per_ray(_query, nav, *rows, shared=(tm,), by_layout=by_layout)
 

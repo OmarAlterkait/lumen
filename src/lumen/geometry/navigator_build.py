@@ -39,6 +39,7 @@ import numpy as np
 from lumen.geometry import bvh, ownership
 from lumen.geometry import scene as sc
 from lumen.geometry.csg_build import CsgTables, csg_tables
+from lumen.rules import navigation as rules
 from lumen.rules.tolerances import DIVISOR_FLOOR, WORLD_BOX_PAD_ABS, WORLD_BOX_PAD_REL
 
 STACK = 32  # the traversal's stack: one entry per BVH level
@@ -63,7 +64,8 @@ class NavArrays:
     (and the outside, then each mesh) its candidate items: daughters, owners, the ancestors it reaches out of;
     ``lo_w``, ``hi_w``: the volumes' padded world boxes (float64); ``probe``: host arrays only the placement check
     reads (``uc``, ``uh`` each volume's padded box in its frame, ``cmoth`` each mesh chunk's mother), never device
-    operands of the navigator.
+    operands of the navigator; ``precision``: the navigator's (``lumen.rules.navigation.Precision``), its float arrays
+    in that dtype.
     """
 
     host: dict
@@ -85,6 +87,7 @@ class NavArrays:
     origins: tuple
     pieces: tuple
     thin: tuple
+    precision: str = "float32"
 
     def with_classes(self, vol_cls, mesh_cls=(), outside_cls=None):
         """Return these arrays with another class per volume, mesh and the outside (``host["cls"]``)."""
@@ -184,8 +187,9 @@ def _pad(c, h):
     return WORLD_BOX_PAD_REL * (np.abs(c) + h) + WORLD_BOX_PAD_ABS
 
 
-def _ownership(scene, V, kinds, tables, geo):  # noqa: N803 -- V the volumes' columns
-    """Return the Ownership (``lumen.geometry.ownership``) of the volumes, then the meshes (units n, n + 1, ...)."""
+def _ownership(scene, V, kinds, tables, geo, prec):  # noqa: N803 -- V the volumes' columns
+    """Return the Ownership (``lumen.geometry.ownership``) of the volumes, then the meshes (units n, n + 1, ...), at
+    the contact tolerance of precision ``prec``."""  # noqa: D205, D209
     kind, parent, Rh, th, lo, hi, meshes = geo
     n = len(kind)
     nodes = list(kinds) + [sc.Mesh(m[0]) for m in meshes]  # a mesh: its world triangles
@@ -200,7 +204,7 @@ def _ownership(scene, V, kinds, tables, geo):  # noqa: N803 -- V the volumes' co
     units = ownership.Units(parent=upar, kind=ukind, nodes=nodes, box=boxes, R=np.concatenate([Rh, eye]),
                             t=np.concatenate([th, np.zeros((len(meshes), 3))]), place=place,
                             forced=ownership.hole_pairs(*ownership.hole_kinds(scene, defn), upar, np.r_[lo, mlo],
-                                                        np.r_[hi, mhi]))  # fmt: skip
+                                                        np.r_[hi, mhi]), prec=prec)  # fmt: skip
     return ownership.resolve(units)
 
 
@@ -364,8 +368,8 @@ def _node(trees, k, shape, dt):
     return np.zeros(shape, dt) if trees is None else np.asarray(trees[k]).astype(dt)
 
 
-def _host(E, trees, vols, mesh, bg):  # noqa: N803 -- E the daughter entries
-    """Return the host arrays of the navigator."""
+def _host(E, trees, vols, mesh, bg, fdt):  # noqa: N803 -- E the daughter entries
+    """Return the host arrays of the navigator, its float arrays in ``fdt``."""
     V, kind, parent, Rh, th, prio = vols
     nv, g_v, g_mesh = E["nv"], E["g_v"], E["g_mesh"]
     av = np.arange(nv)
@@ -377,18 +381,18 @@ def _host(E, trees, vols, mesh, bg):  # noqa: N803 -- E the daughter entries
     mpar = np.asarray([out_ if x[2] < 0 else x[2] for x in mesh["meshes"]], np.int32)
     Vt, cst, cnn, cmesh = mesh["Vt"], mesh["cst"], mesh["cnn"], mesh["cmesh"]
     GR = E["GR"]
-    return dict(lo=_node(trees, "lo", (1, 3), np.float32), hi=_node(trees, "hi", (1, 3), np.float32),
+    return dict(lo=_node(trees, "lo", (1, 3), fdt), hi=_node(trees, "hi", (1, 3), fdt),
                 skip=_node(trees, "skip", (1,), np.int32), start=_node(trees, "start", (1,), np.int32),
                 count=_node(trees, "count", (1,), np.int32), items=_node(trees, "items", (1,), np.int32),
-                gR=(np.stack(GR) if GR else np.eye(3)[None]).astype(np.float32),
+                gR=(np.stack(GR) if GR else np.eye(3)[None]).astype(fdt),
                 g0=_node(trees, "g0", (1,), np.int32), g1=_node(trees, "g1", (1,), np.int32), vg0=vg0, vg1=vg1,
                 vg1u=np.maximum(vg1u, vg0),
                 parent=np.concatenate([parent, [out_], mpar]).astype(np.int32),  # per navigator id
                 cls=np.concatenate([np.asarray(V["med"], np.int32), [bg], mmed]).astype(np.int32),
-                kind=kind.astype(np.int32), R=Rh.astype(np.float32), t=th.astype(np.float32),
+                kind=kind.astype(np.int32), R=Rh.astype(fdt), t=th.astype(fdt),
                 prio=np.asarray(prio, np.int32),
-                V0=Vt[:, 0].astype(np.float32), V1=Vt[:, 1].astype(np.float32), V2=Vt[:, 2].astype(np.float32),
-                N=mesh["nrm"].astype(np.float32), cstart=np.asarray(cst if len(cst) else [0], np.int32),
+                V0=Vt[:, 0].astype(fdt), V1=Vt[:, 1].astype(fdt), V2=Vt[:, 2].astype(fdt),
+                N=mesh["nrm"].astype(fdt), cstart=np.asarray(cst if len(cst) else [0], np.int32),
                 cn=np.asarray(cnn if len(cnn) else [0], np.int32),
                 cmesh=np.asarray(cmesh if cmesh else [0], np.int32))  # fmt: skip
 
@@ -459,26 +463,29 @@ class Stage:
     kids: list  # per volume, the outside, then each mesh: its candidate items (before any dissolution)
     own: object  # lumen.geometry.ownership.Ownership
     mesh: dict
+    prec: object = rules.FLOAT32  # the navigator's precision
 
 
-def prepare(scene, own=None) -> Stage:
-    """Return the class-free Stage of a lowered Scene; ``own``: its Ownership if already known (a Stage's ``own``)."""
+def prepare(scene, own=None, precision="float32") -> Stage:
+    """Return the class-free Stage of a lowered Scene in ``precision`` ("float32" or "float64"); ``own``: its
+    Ownership if already known (a Stage's ``own``, of the same precision)."""  # noqa: D205, D209
+    prec = rules.precision(precision)
     V, kinds, meshes = _volumes(scene, sc.instances(scene))
     n = len(V["kind"])
     if n == 0:
         raise ValueError("navigator: a scene without volumes")
-    tables = csg_tables(kinds)
+    tables = csg_tables(kinds, prec.np)
     kind, Rh, th, cb, hb, lo, hi = _volume_boxes(tables, V)
     parent = np.where(np.asarray(V["parent"]) < 0, n, np.asarray(V["parent"])).astype(np.int32)
     kids = [[] for _ in range(n + 1)]
     for i in range(n):
         kids[parent[i]].append(i)
     if own is None:
-        own = _ownership(scene, V, kinds, tables, (kind, parent, Rh, th, lo, hi, meshes))
+        own = _ownership(scene, V, kinds, tables, (kind, parent, Rh, th, lo, hi, meshes), prec)
     mesh = _mesh_chunks(meshes, n, MESH_CHUNK, kids)
     mesh.update(n_mesh=len(meshes), meshes=meshes)
     _candidates(own, n, kids, mesh, len(meshes))
-    return Stage(scene, V, kinds, meshes, tables, (kind, Rh, th, cb, hb, lo, hi), parent, kids, own, mesh)
+    return Stage(scene, V, kinds, meshes, tables, (kind, Rh, th, cb, hb, lo, hi), parent, kids, own, mesh, prec)
 
 
 class Classes(NamedTuple):
@@ -491,13 +498,13 @@ class Classes(NamedTuple):
     canon: tuple  # per class, the class it is interchangeable with
 
 
-def build(scene, classes: Classes | None = None):
-    """Return the NavArrays of a lowered Scene (``lumen.geometry.scene``): ``finish(prepare(scene))``.
+def build(scene, classes: Classes | None = None, precision="float32"):
+    """Return the NavArrays of a lowered Scene (``lumen.geometry.scene``): ``finish(prepare(scene, precision=))``.
 
     ``classes``: the classes reported, and the transparent volumes dissolved (module docstring); None: a label's
-    medium is the class reported, nothing dissolved.
+    medium is the class reported, nothing dissolved. ``precision``: the navigator's, "float32" or "float64".
     """
-    return finish(prepare(scene), classes)
+    return finish(prepare(scene, precision=precision), classes)
 
 
 def finish(st: Stage, classes: Classes | None = None):
@@ -513,7 +520,7 @@ def finish(st: Stage, classes: Classes | None = None):
     trees = _trees(E, _group_boxes(E, n, mesh, (Rh, th, cb, hb)))
     # the rule's order per navigator id (volumes, the outside last, then each mesh as its unit)
     prio = np.r_[own.prio[:n], [len(own.prio)], own.prio[n:]]
-    host = _host(E, trees, (V, kind, up, Rh, th, prio), mesh, int(scene.outside.medium))
+    host = _host(E, trees, (V, kind, up, Rh, th, prio), mesh, int(scene.outside.medium), st.prec.np)
     for k, m_ in enumerate(meshes):  # a mesh in a transparent volume: its exit parent is that volume's
         if m_[2] >= 0 and clear[m_[2]]:
             host["parent"][n + 1 + k] = up[m_[2]]
@@ -536,7 +543,7 @@ def finish(st: Stage, classes: Classes | None = None):
                  transparent=int(clear.sum()), max_daughters=int(max(len(k_) for k_ in kids)),
                  bvh_depth=dmax)  # fmt: skip
     defs_, chm = scene.definitions, mesh["chm"]
-    probe = dict(uc=cb.astype(np.float32), uh=(hb + _pad(cb, hb)).astype(np.float32),
+    probe = dict(uc=cb.astype(st.prec.np), uh=(hb + _pad(cb, hb)).astype(st.prec.np),
                  cmoth=np.asarray(chm if chm else [n], np.int32))  # fmt: skip
     arrays = NavArrays(host=host, csg=tables, n=n, n_mesh=len(meshes), chunk=MESH_CHUNK, ch0=mesh["ch0"], srf=srf,
                      names=tuple(V["name"]), defs=tuple(V["defn"]), stats=stats,
@@ -546,5 +553,6 @@ def finish(st: Stage, classes: Classes | None = None):
                      kids=tuple(tuple(k_) for k_ in kids), lo_w=lo, hi_w=hi, probe=probe,
                      origins=tuple(V["origin"]) + ("OUT",) + tuple(defs_[m[3]].origin or m[3] for m in meshes),
                      pieces=tuple(V["piece"]),
-                     thin=tuple((_nav_id(a, n), _nav_id(b, n)) for a, b in own.thin))  # fmt: skip
+                     thin=tuple((_nav_id(a, n), _nav_id(b, n)) for a, b in own.thin),
+                     precision=st.prec.name)  # fmt: skip
     return arrays if classes is None else arrays.with_classes(classes.volume, classes.mesh, classes.outside)

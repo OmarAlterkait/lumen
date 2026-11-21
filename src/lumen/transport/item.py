@@ -24,8 +24,8 @@ HEALTH = ("lost", "abandoned", "escaped", "distance_cut", "absorbed_bulk", "abso
 def start_photon(model, ops, row):
     """Return the Photon of an emission row, located (its volume and class from the navigator)."""
     nav = geometry(model, ops).nav
-    vol = nav.locate(jnp.asarray(row.x, jnp.float32))
-    return state.start(row, vol, nav.dev()["cls"][vol], gen="gen" in model.local)
+    vol = nav.locate(jnp.asarray(row.x, nav.F))
+    return state.start(row, vol, nav.dev()["cls"][vol], gen="gen" in model.local, position=nav.F)
 
 
 def fates(dep):
