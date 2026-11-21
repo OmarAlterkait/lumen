@@ -268,3 +268,13 @@ transport/fastpath.py | _clear_at | -0.5 | 1 | structural | half a cell (the nea
 transport/fastpath.py | diffuse.body | 4 | 1 | structural | the walk's uniforms per step (a count)
 transport/fastpath.py | diffuse.body | -2.0 | 1 | structural | exact math (derivative of 1 - x^2)
 transport/step.py | step | -2 | 1 | structural | a sentinel code (an identity, not a quantity)
+viewer/mesh.py | <module> | 48 | 1 | choice | stated in place: flat faces per turn of a curved face drawn a few times (display only)
+viewer/mesh.py | <module> | 6 | 1 | choice | stated in place: flat faces per arc, however short (display only)
+viewer/mesh.py | <module> | 12 | 1 | choice | stated in place: flat faces per turn of a solid drawn 5000 times or more (display only)
+viewer/mesh.py | <module> | 16 | 1 | choice | stated in place: points along a hyperbolic or parabolic profile (display only)
+viewer/mesh.py | <module> | 1e-09 | 2 | choice | stated in place: a phi range this close to 2 pi is the full turn; an arb8's twist tolerance (display only)
+viewer/mesh.py | _signed_volume | 6.0 | 1 | structural | a tetrahedron's volume is a sixth of its triple product
+viewer/mesh.py | _polytope_vertices | 4 | 1 | structural | an arb8's first four vertices are its -dz face (G4GenericTrap)
+viewer/scene.py | <module> | 3000000 | 1 | choice | stated in place: placed copies drawn at most (display only)
+viewer/server.py | <module> | 8765 | 1 | choice | stated in place: the page's default port
+viewer/server.py | <module> | 6 | 1 | choice | stated in place: the scene's gzip level

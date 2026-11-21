@@ -3,6 +3,15 @@
 Changes a user of lumen can see, newest first. Each entry says what changed, what an old file, key or script does
 now, and what to do.
 
+## Unreleased
+
+### Added
+
+- **The GDML viewer**: `python -m lumen.viewer FILE.gdml` (or a package's `package:name`, or `--recipe FILE.py:NAME`)
+  serves a page with the geometry in 3D and lumen's reading of every material, surface and sensor group: what each
+  property feeds, what lumen refuses and why, the tables against wavelength (`--range` shades the light's). The
+  `view` extra adds `manifold3d` for exact boolean solids (docs/howto/viewer.md).
+
 ## 0.2.0 (2026-11-20)
 
 lumen 0.2 is a rewrite of the photon loop's outputs, of how a detector is described and of where the experiments'

@@ -109,6 +109,8 @@ src/lumen/
 │                              custom, truth (truth rows); the PMT model, components, features, value sets
 ├── tools/                     check (the gradient check), stats (its pass rules), extend (the checks of extension
 │                              code: source draws, lobes), fit, scan, space, losses, plot
+├── viewer/                    the GDML viewer (python -m lumen.viewer): scene (a GDML read as lumen reads it),
+│                              mesh (the solids' display meshes), server, static (the page)
 └── compare/                   the comparisons against reference simulations: charge, event, geometry, overlaps,
                                gradients, mc (per family), ownership (the overlap-free GDML), references (manifest
                                and store), photons (a detector's loop for the checks), records, report, cli (python

@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>lumen GDML viewer</title>
+<link rel="stylesheet" href="viewer.css">
+</head>
+<body>
+
+<div id="loading">
+  <h1>LUMEN</h1>
+  <div class="sub">GDML viewer</div>
+  <div id="loadStatus">html loaded, waiting for viewer.js...</div>
+</div>
+
+<div id="app">
+  <div id="toolbar">
+    <div class="logo">LUMEN</div>
+    <div id="detName" class="det-name"></div>
+    <div class="sep"></div>
+
+    <span class="toolbar-label">COLOR</span>
+    <div class="btn-group" id="colorGrp">
+      <button data-v="role" class="active" title="How lumen reads each volume's material">LUMEN</button>
+      <button data-v="material" title="One colour per material">MATERIAL</button>
+      <button data-v="surface" title="The optical surface on each volume (skin or border)">SURFACE</button>
+      <button data-v="depth" title="Depth in the volume tree">DEPTH</button>
+    </div>
+    <div class="sep"></div>
+
+    <span class="toolbar-label">SHOW</span>
+    <div class="btn-group" id="showGrp">
+      <button data-v="all" title="Every placed volume">ALL</button>
+      <button data-v="detector" class="active" title="Only what lumen keeps: the detector volume and its contents">DETECTOR</button>
+    </div>
+    <div class="sep"></div>
+
+    <span class="toolbar-label">UP</span>
+    <div class="btn-group" id="upGrp" title="The axis drawn vertical (a GDML file does not say which is up)">
+      <button data-v="x">X</button>
+      <button data-v="y">Y</button>
+      <button data-v="z" class="active">Z</button>
+    </div>
+    <div class="sep"></div>
+
+    <span class="toolbar-label">CLIP</span>
+    <div class="btn-group" id="clipGrp">
+      <button data-v="off" class="active">OFF</button>
+      <button data-v="x">X</button>
+      <button data-v="y">Y</button>
+      <button data-v="z">Z</button>
+    </div>
+    <input type="range" id="clipPos" min="0" max="1" step="0.001" value="0.5" title="Section plane position">
+    <button id="clipFlip" class="small-btn" title="Keep the other side">&#x21C4;</button>
+    <div class="sep"></div>
+
+    <span class="toolbar-label">MEDIA</span>
+    <input type="range" id="opacity" min="0" max="1" step="0.01" value="0.12" title="Opacity of transparent media">
+    <div class="btn-group"><button id="resetBtn">RESET</button></div>
+    <div class="btn-group"><button id="settingsBtn">&#x2699;</button></div>
+    <div id="status">Connecting...</div>
+  </div>
+
+  <div id="settingsPanel">
+    <button class="close" id="settingsClose">&times;</button>
+    <div class="settings-section">DISPLAY</div>
+    <label class="chk"><input type="checkbox" id="edgesChk"> Edges on the selection</label>
+    <label class="chk"><input type="checkbox" id="isolateChk" checked> Fade what is not selected</label>
+    <label class="chk"><input type="checkbox" id="opaqueSolidChk" checked> Opaque volumes drawn solid</label>
+    <label>Opaque volumes opacity: <span id="solidOpVal">1.00</span></label>
+    <input type="range" id="solidOp" min="0.05" max="1" step="0.05" value="1">
+    <label>Max depth shown: <span id="depthVal">all</span></label>
+    <input type="range" id="depthMax" min="0" max="20" step="1" value="20">
+    <label>Hide volumes placed more than <span id="bulkVal">50000</span> times</label>
+    <input type="range" id="bulkMax" min="1000" max="400000" step="1000" value="50000">
+    <div class="settings-divider">PLOT</div>
+    <label class="chk"><input type="checkbox" id="logYChk"> Log scale (values)</label>
+    <label class="chk"><input type="checkbox" id="energyXChk"> Photon energy on x (eV) instead of wavelength</label>
+  </div>
+
+  <div id="main">
+    <div id="sidebar">
+      <div class="tabs" id="tabs">
+        <button data-t="volumes" class="active">VOLUMES</button>
+        <button data-t="materials">MATERIALS</button>
+        <button data-t="surfaces">SURFACES</button>
+        <button data-t="sensors">SENSORS</button>
+        <button data-t="report">REPORT</button>
+      </div>
+      <input id="search" type="search" placeholder="filter by name...">
+      <div id="list"></div>
+    </div>
+    <div id="panel3d">
+      <div class="panel-label" id="label3d">3D</div>
+      <div class="panel-actions">
+        <button class="pa-btn" id="save3d" title="Save PNG">&#x2B73;</button>
+      </div>
+      <div id="legend"></div>
+      <div id="hint">click a volume to inspect it &middot; drag to rotate &middot; right-drag to pan &middot; scroll to zoom</div>
+    </div>
+    <div id="details">
+      <div id="detailsBody"><div class="empty">Select a volume, a material or a surface.</div></div>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script type="module" src="viewer.js"></script>
+</body>
+</html>
