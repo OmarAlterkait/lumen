@@ -39,7 +39,7 @@ export LUMEN_CACHE=/path/with/space/lumen-cache         # compiled kernels and n
 export LUMEN_DETECTORS=/path/to/your/calibrations       # where your calibrations are saved
 ```
 
-This also installs lumen's photon-loop engine, tallymap, from its repository at a fixed commit (`tallymap @
+This also installs lumen's photon-loop engine, tallymap, from its repository at a fixed tag (`tallymap @
 git+https://github.com/OmarAlterkait/tallymap.git@v0.8.0`). The last Python line should list a
 `CudaDevice`. Without a GPU, lumen compiles the photon loop for the CPU, which needs a C++ compiler with OpenMP (g++). [Installing
 lumen](docs/howto/install.md) has the details: the pinned versions, running without a GPU, every cache variable
