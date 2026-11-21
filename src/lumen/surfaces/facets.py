@@ -10,7 +10,7 @@ weights the whole path (``Lobe.path`` folds the step's terms over it, ``Lobe.fac
   m the photon meets D(m) [V.m > 0] / F(theta, sigma), D(m) = exp(-alpha^2 / 2 sigma^2) min(1, f_max / sin alpha) /
   (2 pi Z(sigma)), F the facing share (tabulated: float64 quadrature, float32 bicubic Hermite, C1). One reflection
   wo = mirror(wi, m) has density D(h) / (4 F V.h), h = unit(V + wo). Valid sigma_alpha: ``rules.choices.SIGMA_MIN``
-  to ``SIGMA_MAX`` (the tables' span).
+  to ``SIGMA_MAX`` (the tables' span; above it Geant4's own draw departs from this distribution: ``SIGMA_MAX``).
 - **GLISUR** (GetFacetNormal, glisur): M = n + r s, s uniform in the unit ball, r = 1 - polish, redrawn while
   V . M <= 0. Per solid angle of m = M / |M|: p_m = 2 q (3 c^2 + q^2) / (3 Z), c = m . n, q^2 = c^2 - (1 - r^2), Z the
   cut ball's volume. Bounded, vanishing at the cone's edge: no boundary term. The width is carried as "sigma_alpha".
@@ -165,21 +165,21 @@ def table_operands():
     return {k: jnp.asarray(v) for k, v in unified_tables().items()}
 
 
-def log_zeta(sigma, T=None):
-    """Return log(Z(sigma) / sigma^2), C1 cubic Hermite in log sigma (``T``: the tables' operands, else constants)."""
+def table_lz(y, T=None):
+    """Return log zeta = log(Z / sigma^2) at the table coordinate y = log sigma, C1 cubic Hermite (``T``: the tables'
+    operands, else constants)."""  # noqa: D205, D209
     T = unified_tables() if T is None else T
-    j, t = _cell((jnp.log(sigma) - TABLE_Y0) / TABLE_DY - TABLE_J_LO, TABLE_NY)
+    j, t = _cell((y - TABLE_Y0) / TABLE_DY - TABLE_J_LO, TABLE_NY)
     a0, b0, a1, b1 = _hermite(t)
     v, dv = jnp.asarray(T["lz"]), jnp.asarray(T["lzy"])
     return a0 * v[j] + a1 * v[j + 1] + TABLE_DY * (b0 * dv[j] + b1 * dv[j + 1])
 
 
-def front_fraction(sigma, cos_t, sin_t, T=None):
-    """Return F(theta, sigma), the share of facets facing the photon: bicubic Hermite on (x, log sigma)."""
+def table_front(x, y, T=None):
+    """Return F at the table coordinates (x, y = log sigma), bicubic Hermite (``T``: the tables' operands)."""
     T = unified_tables() if T is None else T
-    x = jnp.arctan2(cos_t, sigma * sin_t) / HALF_PI
     i, tx = _cell(x * (TABLE_NX - 1), TABLE_NX)
-    j, ty = _cell((jnp.log(sigma) - TABLE_Y0) / TABLE_DY - TABLE_J_LO, TABLE_NY)
+    j, ty = _cell((y - TABLE_Y0) / TABLE_DY - TABLE_J_LO, TABLE_NY)
     hx = 1.0 / (TABLE_NX - 1)
     ax0, bx0, ax1, bx1 = _hermite(tx)
     ay0, by0, ay1, by1 = _hermite(ty)
@@ -192,6 +192,16 @@ def front_fraction(sigma, cos_t, sin_t, T=None):
                          + ax * by * TABLE_DY * A["Fy"][ii, jj]
                          + bx * by * hx * TABLE_DY * A["Fxy"][ii, jj])  # fmt: skip
     return out
+
+
+def log_zeta(sigma, T=None):
+    """Return log(Z(sigma) / sigma^2), C1 cubic Hermite in log sigma (``T``: the tables' operands, else constants)."""
+    return table_lz(jnp.log(sigma), T)
+
+
+def front_fraction(sigma, cos_t, sin_t, T=None):
+    """Return F(theta, sigma), the share of facets facing the photon: bicubic Hermite on (x, log sigma)."""
+    return table_front(jnp.arctan2(cos_t, sigma * sin_t) / HALF_PI, jnp.log(sigma), T)
 
 
 def _unified_log_density(sigma, Vl, M, T=None):

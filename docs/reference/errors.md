@@ -124,7 +124,7 @@ or surface.
 | `<what>: model <model> is not supported` · `<what>: finish <finish> is not supported` · `<what>: surface type <type> is not supported` | a surface form outside lumen's Geant4 surface types (refused: ground dielectric_dielectric, backpainted finishes, Geant4's `coated` type, LUT, LUTDAVIS, dichroic). Use a supported form |
 | `<what>: ground dielectric_dielectric (facet refraction) is not supported` | as above |
 | `<what>: <key> is not supported` · `<what>: <key> (<why>) is not supported` | a property lumen does not read (SURFACEROUGHNESS, for example). Remove it, or ask for it |
-| `<what>: polish <value> outside [0, <max>] (or exactly 1)` · `<what>: sigma_alpha <value> outside [<min>, <max>] (or exactly 0)` | the opticalsurface `value` is outside the range lumen's facet samplers cover (sigma_alpha 0 is read as Geant4 reads it: the lobe is the spike) |
+| `<what>: polish <value> outside [0, <max>] (or exactly 1)` · `<what>: sigma_alpha <value> outside [<min>, <max>] (or exactly 0)` | the opticalsurface `value` is outside the range lumen's facet samplers cover (sigma_alpha 0 is read as Geant4 reads it: the lobe is the spike; above 1 rad, G4OpticalSurface's default, Geant4's own facet draw departs from the unified distribution: `lumen.rules.choices`, `SIGMA_MAX`) |
 | `<what>: GROUPVEL must hold positive speeds (m / ns)` | a GROUPVEL table times the photons, as in Geant4; fix its values |
 | `<what>: <key> must be a table` · `<what>: <key> must be a constant (G4OpMieHG reads a constant property)` | the property has the wrong shape for what Geant4 reads |
 | `<what>: MIEHG without MIEHG_FORWARD_RATIO: G4OpMieHG aborts (mat202) at the first Mie event; add MIEHG_FORWARD_RATIO` | add the property |
