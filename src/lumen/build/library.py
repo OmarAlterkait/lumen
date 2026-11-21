@@ -22,7 +22,9 @@ Skins and borders
     with the sensor set's ``border_into`` groups (``border_library``; a volume several select is read by the first).
 Sensor groups
     ``border_into``: the borders into the group's volumes are sensors through the surface's own detection, as stock
-    Geant4 reads it (``lumen.rules.optics.sensor``; the sensors are named ``<group>:<surface>``).
+    Geant4 reads it (``lumen.rules.optics.sensor``; the sensors are named ``<group>:<surface>``); a volume no border
+    sensor enters whose own skin detects has that skin as its sensor, where Geant4 picks it (``skin_sensors``). A
+    group that binds neither is refused.
     ``any_entry``: a counting sensor on every placement of the group's volumes (no surface is read).
     The efficiency on entry is one rule for both (``entry_efficiency``): 1 when the group has a value set (its sensor
     model counts every absorption entering; the PMT's QE, CE and efficiency apply after tracking, ``lumen.sensors``),
@@ -173,6 +175,45 @@ def _sensor_entry(rec, how, eff=None, exit_=False):
     return dataclasses.replace(e, surface=rec.name, group=how.prefix, exit=exit_)
 
 
+def skin_sensors(df, tree, hows, skins, bordered):
+    """Return (sensors, bindings, skin exits) of the ``border_into`` volumes whose own skin detects.
+
+    ``bordered``: the LVs a border sensor enters, left as they are. The skin is the sensor where Geant4 picks it
+    (``lookup.SensorBinding`` entry "skin": entering from the mother, or from a volume without a skin), as a nexus
+    photocathode is read with G4OpticalParameters::SetBoundaryInvokeSD. Leaving through it, the surface's EFFICIENCY
+    detects, credited to the volume left (the exit rule, ``lumen.rules.sensors``), where the surface has one.
+    """
+    n_lv = Counter(tree.by_name[p].lv for p in hows)
+    sensors, sbind, exits = {}, [], {}
+    for p in sorted(hows, key=lambda q: tree.by_name[q].lv):
+        lv = tree.by_name[p].lv
+        s = skins.get(lv)
+        if s is None or lv in bordered or lv in exits or any(b.lv == lv for b in sbind):
+            continue
+        rec = df.surfaces[s]
+        if not rules.geant4_sensor(rec).surface_type.detects:
+            continue
+        h = hows[p]
+        k = f"{h.prefix}:{s}"
+        sensors.setdefault(k, _sensor_entry(rec, h, eff=h.eff_in))
+        sbind.append(lookup.SensorBinding(k, n_lv[lv], lv=lv, entry="skin"))
+        if "EFFICIENCY" in rec.properties:  # the file's structure, never the value
+            exits[lv] = f"{k}|out"
+            sensors.setdefault(exits[lv], _sensor_entry(rec, h, exit_=True))
+    return sensors, tuple(sbind), exits
+
+
+def _check_border_groups(groups, tree, sbind):
+    """Refuse a ``border_into`` group that binds none of its volumes: no border into them, no skin of theirs detects."""
+    bound = {b.lv for b in sbind}
+    for g in (g for g in groups if g.rule == "border_into"):
+        mine = [lv for lv in sorted(set(tree.lv_material)) if g.selects(lv)]
+        if mine and not any(lv in bound for lv in mine):
+            raise LibraryError(f"sensor group {g.name!r} (border_into): no border surface leads into its volumes "
+                               f"({mine[:3]}) and none has a skin that detects: it would never detect (an any_entry "
+                               "group counts every entry)")  # fmt: skip
+
+
 def _counting(tree, groups):
     sensors, sbind, sources, bound = {}, [], {}, set()
     lvs = sorted(set(tree.lv_material))
@@ -213,6 +254,15 @@ def library_and_bindings(df: schema.DetectorFile, tree, sensor_set, models=None)
     surfaces, skins, ssrc = _surfaces(df, tree)
     hows, groups = _border_groups(df, tree, sensor_set.groups)
     sensors, bsurf, borders, sbind = border_library(df, tree, hows)
+    ssens, sskin, skin_exits = skin_sensors(df, tree, hows, skins, {b.lv for b in sbind})
+    for b in sskin:  # the skin is the sensor now; its surface entry goes where nothing else binds it
+        s = skins.pop(b.lv)
+        if s not in skins.values() and s not in borders.values():
+            surfaces.pop(s, None)
+            ssrc.pop(s, None)
+    sensors.update(ssens)
+    sbind = tuple(sbind) + sskin
+    _check_border_groups(sensor_set.groups, tree, sbind)
     for name, e in bsurf.items():
         if name not in surfaces:
             surfaces[name], ssrc[name] = e, _surface_sources(df.surfaces[name], e.params)
@@ -220,7 +270,8 @@ def library_and_bindings(df: schema.DetectorFile, tree, sensor_set, models=None)
     bsrc = {k: _sensor_sources(df, groups.get(e.group), e) for k, e in sensors.items()}
     sensors.update(csens)
     library = lookup.Library(media=media, surfaces=surfaces, sensors=sensors, domain=rules.light_domain(df))
-    bindings = lookup.Bindings(materials=bind, skins=skins, borders=borders, sensors=tuple(sbind) + tuple(cbind))
+    bindings = lookup.Bindings(materials=bind, skins=skins, borders=borders, sensors=tuple(sbind) + tuple(cbind),
+                               skin_exits=skin_exits)  # fmt: skip
     sources = _flatten(library, {"media": msrc, "surfaces": ssrc, "sensors": {**bsrc, **csrc}})
     return fold_fixed(library, sources), bindings, sources
 
