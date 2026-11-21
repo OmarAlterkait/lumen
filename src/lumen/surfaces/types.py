@@ -26,8 +26,9 @@ type's own probabilities, bit for bit.
 and after at lam) and the photon's Jones vector ``er``, ``ei``. Without the Jones vector the Fresnel shares are the
 unpolarised ones.
 
-There are ten types plus ``transmitting`` (a dielectric_metal type with Geant4's TRANSMITTANCE): PASS, ABSORBER,
-DIELECTRIC, DIELECTRIC_RT, PHOTOCATHODE, COUNTING, GLISUR_METAL, UNIFIED_METAL, UNIFIED_METAL_NORMAL and PAINTED_T;
+There are eleven types plus ``transmitting`` (a dielectric_metal type with Geant4's TRANSMITTANCE): PASS, ABSORBER,
+DIELECTRIC, DIELECTRIC_RT, PHOTOCATHODE, COUNTING, GLISUR_METAL, UNIFIED_METAL, UNIFIED_METAL_NORMAL, PAINTED_T and
+GLISUR_DIELECTRIC (whose GLOSSY facet path may end beyond the surface: ``SurfaceType.refracts``);
 PAINTED and REFLECTOR are PAINTED_T, and SPECULAR_METAL is UNIFIED_METAL_NORMAL, with constants fixed. Every type
 Geant4's EFFICIENCY applies to reads it as ``eff`` (the absorbed share detected); an ordinary surface is that type with
 ``eff`` fixed at 0 (``no_detection``), a sensor the type itself.
@@ -61,6 +62,8 @@ from lumen.surfaces.outcomes import (
 
 F32 = jnp.float32
 DEFAULT_WIDTH = 0.1  # the GLOSSY lobe's width a row without one reports (never drawn)
+GLISUR_LOBES = ("glisur", "glisur_dielectric")  # the facet paths whose width is 1 - polish
+REFRACTING_LOBES = ("glisur_dielectric",)  # the facet paths that refract too: GLOSSY may end beyond the surface
 
 
 # the table's columns and the neutral value of each (what a row that does not read the column holds): R, T and eff
@@ -152,7 +155,12 @@ class SurfaceType:
 
     def flags(self):
         """Return the row's Flags (the kernel's per-row structure) as Python constants."""
-        return Flags(0, self.normal, self.glossy == "glisur", self.far_opaque, self.per_normal)
+        return Flags(0, self.normal, self.glossy in GLISUR_LOBES, self.far_opaque, self.per_normal)
+
+    @property
+    def refracts(self) -> bool:
+        """Return whether the type's GLOSSY facet path may end beyond the surface (a dielectric facet path)."""
+        return self.glossy in REFRACTING_LOBES and GLOSSY in self.outcomes
 
 
 class TypeEval(NamedTuple):
@@ -447,6 +455,11 @@ COUNTING = _base("counting", ("eff",), ())
 # dielectric_metal, glisur, finish ground, polish < 1: R into the GLISUR facet path (radius 1 - polish)
 GLISUR_METAL = _base("glisur_metal", ("R", "polish", "eff"), (GLOSSY,), {"p_lobe": 1.0},
                      glossy="glisur")  # fmt: skip
+# dielectric_dielectric, glisur, finish ground, polish < 1: Geant4's cuts, then below R the GLISUR facet path that
+# reflects or refracts at each facet (G4OpBoundaryProcess::DielectricDielectric; radius 1 - polish), between R and R + T
+# straight on, above it absorbed (detected with eff)
+GLISUR_DIELECTRIC = _base("glisur_dielectric", ("R", "T", "polish", "eff"), (GLOSSY, STRAIGHT), {"p_lobe": 1.0},
+                          glossy="glisur_dielectric")  # fmt: skip
 # dielectric_metal, unified, any other (non-LUT) finish: spike, lobe, backscatter, Lambertian as Geant4's cuts
 UNIFIED_METAL = _base("unified_metal", ("R", "p_spike", "p_lobe", "p_back", "sigma_alpha", "eff"),
                       (SPECULAR, BACKSCATTER, GLOSSY, DIFFUSE))  # fmt: skip
@@ -471,6 +484,7 @@ TYPES = (
     UNIFIED_METAL,
     UNIFIED_METAL_NORMAL,
     PAINTED_T,
+    GLISUR_DIELECTRIC,
 )
 
 
@@ -526,7 +540,11 @@ def into_opaque(stype):
 
     Geant4's frontpainted finishes skip the RINDEX check, so the photon is transmitted and killed at its next step
     (NoRINDEX): for the light it is an absorption where it lands. The parameters stay (T is read; its derivative is 0).
+    A type whose facet path refracts has none: its far side is the path's, which no share zeroes (Geant4 kills the
+    photon before such a surface's chain: NoRINDEX, ``lumen.rules.boundary``).
     """
+    if stype.refracts:
+        raise ValueError(f"into_opaque: {stype.name}'s facet path decides its own side")
     outs = tuple(o for o in stype.outcomes if not FAR_SIDE[o])
     return dataclasses.replace(stype, name=f"{stype.name}|into_opaque", outcomes=outs, far_opaque=True, support=None)
 

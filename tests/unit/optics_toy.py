@@ -65,7 +65,7 @@ TOY = """<?xml version="1.0" encoding="UTF-8" ?>
     <property name="TRANSMITTANCE" ref="HALF"/></opticalsurface>
   <opticalsurface name="cplx" model="glisur" finish="polished" type="dielectric_metal" value="1">
     <property name="REALRINDEX" ref="HALF"/><property name="IMAGINARYRINDEX" ref="HALF"/></opticalsurface>
-  <opticalsurface name="usig" model="unified" finish="ground" type="dielectric_metal" value="0.9"/>
+  <opticalsurface name="usig" model="unified" finish="ground" type="dielectric_metal" value="1.5"/>
   <opticalsurface name="neg" model="glisur" finish="ground" type="dielectric_metal" value="-0.1"/>
   <opticalsurface name="enum" model="1" finish="4" type="1" value="0.1">
     <property name="REFLECTIVITY" ref="R"/></opticalsurface>

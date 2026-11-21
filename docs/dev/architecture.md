@@ -491,6 +491,7 @@ model maps each `opticalsurface` (type, model, finish) to one of them.
 | UNIFIED_METAL_NORMAL | the same at sigma_alpha 0 (GetFacetNormal returns the normal: the lobe is the spike) | the Geant4 form of LArSoft's reflector |
 | `transmitting(type)` | any dielectric_metal type above with TRANSMITTANCE: T straight on, as DielectricMetal draws it | |
 | GLISUR_METAL | dielectric_metal glisur ground (facet path), `eff` | SBND steel |
+| GLISUR_DIELECTRIC | dielectric_dielectric glisur ground: after the R / T cut the facet path, each facet reflecting or refracting with the Fresnel shares of the photon's state (DielectricDielectric), ending on either side (`SurfaceType.refracts`, `Outcome.far`); `eff` | NEXT-100's TPB coatings |
 | REFLECTOR (PAINTED with `eff` fixed at 0), PHOTOCATHODE, COUNTING | LArSoft reflector; complex-index metal (REALRINDEX + i IMAGINARYRINDEX, tables read at the wavelength); an `any_entry` group's sensors (every entry counted, no surface read) | MicroBooNE, SBND |
 
 One type per Geant4 reading: a sensor is the type with `eff` read from EFFICIENCY (default 0), a surface that is no
@@ -498,7 +499,7 @@ sensor the same type with `eff` fixed at 0 (`types.no_detection`, named `<type>{
 flat or not. A type that gives the same probabilities as another with constants fixed is that type (`types.fixed`;
 the Geant4 finish names stay in the files).
 
-Refused at import with a message: ground dielectric_dielectric, backpainted finishes, complex-index ground metals,
+Refused at import with a message: unified ground dielectric_dielectric, backpainted finishes, complex-index ground metals,
 Geant4's `coated` type, LUT, LUTDAVIS, dichroic, SURFACEROUGHNESS. The surface outcomes have ten indices
 (`surfaces/outcomes.py`). A surface type is the structure of a row, never code: every crossed (type, surface) is a row
 of one parameter table (`build/lookup.SurfaceTable`: a column per parameter, R, T, eff, the reflection split, the lobe

@@ -29,6 +29,9 @@ assert len(set(STREAMS)) == len(STREAMS)
 # a facet's own key's fold of the GLISUR shell choice (lumen.surfaces.facets): that key's other folds are the redraws'
 # uint32 counters, which reach it only after 2^32 draws; the same number as SOURCE_STREAM, which folds another key
 SHELL_STREAM = 0xFFFFFFFF
+# the same key's fold of a dielectric facet's Fresnel choice (reflected or refracted): another number the counters
+# reach only after 2^32 - 1 draws
+FRESNEL_STREAM = SHELL_STREAM - 1
 
 # The step's uniforms per block that a plug-in or a record must fit: a lobe draws at most LOBE_UNIFORMS (a bulk lobe's
 # check refuses more, lumen._core.checks), a re-emission REEMIT_UNIFORMS (its wavelength, then one per time-profile

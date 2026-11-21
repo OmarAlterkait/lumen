@@ -101,7 +101,7 @@ class Next(NamedTuple):
     with before the drawn outcome's or direction's live / proposal factor (its expectation over that draw), the weight
     absorbed in the medium (the path's absorption, a WLS yield below 1) and at the surface (1 - the continuing shares).
     Its path is weighted live / reference as the continuing weight is, so at the reference values the photon's weight is
-    exactly their sum (+ ``lost``).
+    exactly their sum (+ ``lost``). ``far``: a surface outcome left the photon beyond the surface (in the volume after).
     """
 
     x: jax.Array
@@ -117,6 +117,7 @@ class Next(NamedTuple):
     ei: jax.Array
     reemitted: jax.Array
     fates: tuple | None = None
+    far: jax.Array | None = None
 
 
 def start(row: Photons, vol, cls, *, gen=False) -> Photon:
