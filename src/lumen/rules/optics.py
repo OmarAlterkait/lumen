@@ -36,6 +36,10 @@ Surfaces (G4OpBoundaryProcess::PostStepDoIt, DielectricMetal, DoReflection; no t
     dielectric_dielectric, polishedfrontpainted         PAINTED_T (f_spec 1): R mirror, T straight, rest absorbed
                                                         (DoAbsorption: detected with EFFICIENCY on a sensor)
     dielectric_dielectric, groundfrontpainted           PAINTED_T (f_spec 0): R Lambert about the normal
+    dielectric_dielectric, glisur, ground, polish < 1   GLISUR_DIELECTRIC: absorbed 1 - R - T, T straight, R the GLISUR
+                                                        facet path, each facet reflecting or refracting (Fresnel, the
+                                                        photon's state), ending on either side; skipped between one
+                                                        material; at polish 1 the polished reading
     dielectric_dielectric, polished                     DIELECTRIC_RT: absorbed 1 - R - T, T straight, R to Fresnel,
                                                         skipped between one material
 
@@ -44,9 +48,9 @@ The type does not depend on whether R or T is present on a polished surface: Gea
 (docs/explanation/parameters.md); so is a frontpainted surface's T (a transmission into a medium without RINDEX is
 absorbed where it lands: ``lumen.rules.boundary``).
 
-Refused (the messages: docs/reference/errors.md): LUT, DAVIS, dichroic, backpainted, ground dielectric_dielectric, a
-complex index on a ground finish, SURFACEROUGHNESS, coated keys, sigma_alpha outside [SIGMA_MIN, SIGMA_MAX] other
-than 0, 1 - polish below GLISUR_R_MIN.
+Refused (the messages: docs/reference/errors.md): LUT, DAVIS, dichroic, backpainted, unified ground
+dielectric_dielectric, a complex index on a ground finish, SURFACEROUGHNESS, coated keys, sigma_alpha outside
+[SIGMA_MIN, SIGMA_MAX] other than 0, 1 - polish below GLISUR_R_MIN.
 
 Detecting surfaces (``sensor``): how a sensor's optical surface behaves during tracking (not the sensor model,
 ``lumen.sensors``: that is what happens after tracking). A surface is a sensor where a sensor group binds it
@@ -161,15 +165,15 @@ def value_key(s: schema.Surface) -> str:
 def reads_value(s: schema.Surface) -> bool:
     """Return whether Geant4's reading of a surface reads its opticalsurface value (``value_key``).
 
-    Structure decides: the reading's entry has that parameter, which only a ground dielectric_metal's facet path
-    has (unified's sigma_alpha; glisur's polish below 1: at polish 1 the reading is a mirror and reads no value). A
-    surface reads it whether or not it detects (one reading); one the reader refuses, or another optics model's, reads
-    none.
+    Structure decides: the reading's entry has that parameter, which only a ground finish's facet path has
+    (dielectric_metal: unified's sigma_alpha, glisur's polish below 1; dielectric_dielectric: glisur's polish below 1;
+    at polish 1 the reading is a mirror or the polished interface and reads no value). A surface reads it whether or
+    not it detects (one reading); one the reader refuses, or another optics model's, reads none.
     """
     if s.optics.name != "geant4":
         return False
     finish, type_ = s.finish, s.type
-    if type_ != "dielectric_metal" or finish != "ground":  # a polished or painted finish samples no facet
+    if type_ not in ("dielectric_metal", "dielectric_dielectric") or finish != "ground":  # no facet sampled
         return False
     try:
         params = _reading(s)[1]
@@ -504,10 +508,16 @@ def _dielectric(s: schema.Surface, finish: str, what: str, refl, eff):
         fs = 1.0 if finish == "polishedfrontpainted" else 0.0
         # into a medium without RINDEX the transmission is absorbed (lumen.rules.boundary)
         return types.PAINTED_T, {"R": refl, "T": t, "f_spec": fs, "eff": eff}, FAR_ABSORB, False
-    if finish == "polished":  # absorption (detected with EFFICIENCY on a sensor) and transmission before Fresnel
-        # NoRINDEX beyond: killed before the R / T draw (lumen.rules.boundary)
+    # GetFacetNormal returns the normal for glisur at polish 1: the polished reading (G4OpBoundaryProcess.cc, 11.3.0)
+    if finish == "polished" or (s.model == "glisur" and s.value >= 1.0):
+        # absorption (detected with EFFICIENCY on a sensor) and transmission before Fresnel; NoRINDEX beyond: killed
+        # before the R / T draw (lumen.rules.boundary)
         return types.DIELECTRIC_RT, {"R": refl, "T": t, "eff": eff}, FAR_KILL, True
-    raise OpticsRefused(f"{what}: ground dielectric_dielectric (facet refraction) is not supported")
+    if s.model == "glisur":  # ground: the facet path, reflecting or refracting at each facet
+        if s.value < 0.0 or 1.0 - s.value < GLISUR_R_MIN:
+            raise OpticsRefused(f"{what}: polish {s.value} outside [0, {1 - GLISUR_R_MIN}] (or exactly 1)")
+        return types.GLISUR_DIELECTRIC, {"R": refl, "T": t, "polish": float(s.value), "eff": eff}, FAR_KILL, True
+    raise OpticsRefused(f"{what}: unified ground dielectric_dielectric (facet refraction) is not supported")
 
 
 # Geant4's value of a surface property the model reads when the surface omits it: the readers insert these values;

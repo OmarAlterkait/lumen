@@ -210,7 +210,8 @@ class StepContext(NamedTuple):
     table's row (-1 none), ``cont`` (a continue event), ``live_eval`` (live TypeEval), ``sigma_r``, ``p_draw`` (drawn
     from), ``p_proposal`` (the proposal), ``o`` the drawn outcome (-1 none), ``os_`` it clamped, ``drawn`` (o >= 0);
     ``ctx`` the crossing as the surface kernel reads it (lam, wi, n, n1, n2, er, ei: the state, filled for an
-    unpolarised photon). ``rand``: the step's uniforms; ``scatter``: the free path ends before the crossing.
+    unpolarised photon); ``idx_r`` its (n1, n2) at the reference (a dielectric facet path is drawn there). ``rand``:
+    the step's uniforms; ``scatter``: the free path ends before the crossing.
     """
 
     rand: dict
@@ -239,6 +240,7 @@ class StepContext(NamedTuple):
     os_: Any
     drawn: Any
     ctx: dict
+    idx_r: Any
     scatter: Any
 
 
@@ -342,7 +344,7 @@ def _step_context(model, ops, ph, key):
     surf = _surface(model, q, zero)
     row, cont = surf
     ctx, live_eval = _crossing(model, ops.params, ph, q, surf, n1, (er0, ei0))
-    ref_eval = live_eval if shared else _crossing(model, ops.reference, ph, q, surf, n1_r, (er0, ei0))[1]
+    ref_ctx, ref_eval = (ctx, live_eval) if shared else _crossing(model, ops.reference, ph, q, surf, n1_r, (er0, ei0))
     ref_eval = jax.tree_util.tree_map(sg, ref_eval)
     pr_r = ref_eval.probs
     p_draw = estimator.edge_floor(pr_r, row, tables, cfg.edge_rows) if cfg.edge_rows else pr_r
@@ -354,7 +356,7 @@ def _step_context(model, ops, ph, key):
                      reach_live=jnp.exp(-mu * dist), reach_ref=jnp.exp(-mu_r * sg(dist)),
                      att_if=jnp.exp(-mu_abs * dist), att_r=jnp.exp(-mu_abs_r * sg(dist)), row=row, cont=cont,
                      live_eval=live_eval, sigma_r=ref_eval.sigma_alpha, p_draw=p_draw, p_proposal=p_proposal, o=o,
-                     os_=jnp.maximum(o, 0), drawn=o >= 0, ctx=ctx,
+                     os_=jnp.maximum(o, 0), drawn=o >= 0, ctx=ctx, idx_r=(sg(ref_ctx["n1"]), sg(ref_ctx["n2"])),
                      scatter=(mu_r > 0.0) & (s < sg(dist)) & ph.alive)  # fmt: skip
     return ph, b0, sc
 
@@ -369,11 +371,11 @@ def _surface_event(model, ops, ph, sc):
     width = {"tables": ops.tables["unified"]}
     lb = se.Lobes(wi=ph.d, n=nrm, er=ctx["er"], ei=ctx["ei"], width={"sigma_alpha": sc.live_eval.sigma_alpha, **width},
                   width_ref={"sigma_alpha": sc.sigma_r, **width}, rand=sc.rand["lobe"],
-                  shared=ops.reference is None)  # fmt: skip
+                  shared=ops.reference is None, idx=(ctx["n1"], ctx["n2"]), idx_ref=sc.idx_r)  # fmt: skip
     cross = (ph.d, nrm, ctx["n1"] / ctx["n2"], (ctx["er"], ctx["ei"], sc.live_eval.amps8))
     out = se.outcome_direction(tables, sc.row, os_, cross, lb)
     d_new = unit(out.d)  # no norm drift over many bounces
-    far = jnp.asarray(FAR_SIDE)[os_] & sc.drawn
+    far = (jnp.asarray(FAR_SIDE)[os_] | out.far) & sc.drawn  # a dielectric facet path's side is its own
     ok = q["hit"] & sc.drawn & (sc.row >= 0)
     x_hit = ph.x + sc.dist * ph.d
     # at the reference every live / reference ratio is 1: the reached share (where it is defined), the attenuation at
@@ -390,7 +392,7 @@ def _surface_event(model, ops, ph, sc):
     nx = state.Next(x=x_hit, d=d_new, w=w_if * out.w, cls=jnp.where(far, q["cls_after"], q["cls_before"]),
                     ok=ok, lam=ph.lam, dtime=sc.dist / sc.v_g,
                     sn=q["normal"].astype(F32), outcome=o.astype(I32), er=out.er, ei=out.ei,
-                    reemitted=jnp.bool_(False), fates=fates)  # fmt: skip
+                    reemitted=jnp.bool_(False), fates=fates, far=far)  # fmt: skip
     return nx, wr
 
 
@@ -427,12 +429,13 @@ def _bulk(model, ops, ph, sc):
         return state.Next(x=x_n, d=d_n, w=ph.w * w * rl * b.yield_w * w_j, cls=next_cls,
                           ok=jnp.bool_(True), lam=b.lam, dtime=s / sc.v_g + b.delay + dt_j,
                           sn=q["normal"].astype(F32), outcome=jnp.int32(-1), er=er_n, ei=ei_n,
-                          reemitted=b.reemitted, fates=fates), \
+                          reemitted=b.reemitted, fates=fates, far=jnp.bool_(False)), \
             sg(sg(ph.wr) * w_r * b.yield_r * jnp.exp(-sc.mu_abs_r * L))  # fmt: skip
     return state.Next(x=x_s, d=b.wo, w=ph.w * w * rl * b.yield_w, cls=next_cls,
                       ok=jnp.bool_(True), lam=b.lam, dtime=s / sc.v_g + b.delay,
                       sn=q["normal"].astype(F32), outcome=jnp.int32(-1), er=b.er, ei=b.ei,
-                      reemitted=b.reemitted, fates=fates), sg(sg(ph.wr) * w_r * b.yield_r)  # fmt: skip
+                      reemitted=b.reemitted, fates=fates, far=jnp.bool_(False)), \
+        sg(sg(ph.wr) * w_r * b.yield_r)  # fmt: skip
 
 
 def _event(model, ops, ph, sc):
@@ -491,16 +494,16 @@ def _after(ops, ph, sc, nx, wr, b0, an=None):  # noqa: PLR0913
     return After(alive=alive, w=w_new, wr=wr_new, nz=nz_new, abandoned=abandoned, rouletted=rouletted, analog=an)
 
 
-def _advance(sc):
-    """Return (vol, srf) after the event (the navigator's state for the next query)."""
+def _advance(sc, far):
+    """Return (vol, srf) after the event (the navigator's state for the next query); ``far``: a surface outcome left
+    the photon beyond the surface (``Next.far``)."""  # noqa: D205, D209
     q = sc.q
     # a bulk event: the volume the free path ends in (before the first invisible crossing the start's, after the
     # last the one before the visible crossing, between them the one the walk found there: the ray's, as Geant4
     # steps through each crossing); a surface outcome that continues beyond takes the volume after, a reflection the
     # one it was located in
     vol_b = jnp.where(sc.s < q["t_pass0"], q["vol_start"], jnp.where(sc.s > q["t_pass1"], q["vol_before"], q["vol_at"]))
-    after = jnp.asarray(FAR_SIDE)[sc.os_] & sc.drawn
-    vol = jnp.where(sc.scatter, vol_b, jnp.where(after, q["vol_after"], q["vol_before"])).astype(I32)
+    vol = jnp.where(sc.scatter, vol_b, jnp.where(far, q["vol_after"], q["vol_before"])).astype(I32)
     srf = jnp.where(sc.scatter | ~q["hit"], -1, q["item"]).astype(I32)
     return vol, srf
 
@@ -544,7 +547,7 @@ def step(model, ops, ph, key):
         an = _analog_crossing(ph.analog, sg(share), sg(nx.w), at)
     af = _after(ops, ph, sc, nx, wr, b0, an)
     alive = af.alive
-    vol, srf = _advance(sc)
+    vol, srf = _advance(sc, nx.far)
     gen = None if ph.gen is None else ph.gen + nx.reemitted.astype(I32)
     ph2 = state.Photon(x=nx.x, d=nx.d, t=ph.t + nx.dtime, lam=nx.lam, w=jnp.where(alive, af.w, 0.0),
                        wr=jnp.where(alive, af.wr, 0.0), alive=alive, vertex=ph.vertex + 1, er=nx.er.astype(F32),

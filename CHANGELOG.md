@@ -14,6 +14,14 @@ now, and what to do.
 
 ### Added
 
+- **GLISUR facet refraction**: a glisur ground dielectric_dielectric surface reads (it was refused), as Geant4's
+  DielectricDielectric draws it: after the REFLECTIVITY / TRANSMITTANCE cut, a facet path whose facets reflect or
+  refract with the Fresnel shares of the photon's own state, ending on either side of the surface. Its polish and both
+  indices are weighted as a path (`surfaces/<S>/polish` is a key). NEXT-100's TPB surfaces read. Between matched
+  indices a facet refraction keeps the direction (`lumen.rules.choices.INDEX_MATCH`); a unified ground
+  dielectric_dielectric surface is still refused. lumen keeps the sign of a state's part in the plane of incidence
+  where Geant4's DielectricDielectric takes its magnitude (`lumen.surfaces.polar`): unpolarised light is reflected and
+  refracted as Geant4 draws it; a definite linear state that meets several facets of one surface is not.
 - **The facet paths against Geant4 on one interface**: `tools/g4ref/boundary.cc` (Geant4 11.3.0) and its histograms in
   `tests/data/g4_boundary`, which `tests/unit/test_g4_boundary.py` compares with the lobes' own draws.
 
