@@ -154,36 +154,40 @@ def _kind(node, rows, planes, prog):
     return (c, h), len(leaves), (l0, len(leaves), p0, len(prog) - p0)
 
 
-def _f32(v):
-    return np.asarray(np.asarray(v, np.float64), np.float32)
+def _f32(v, dtype=np.float32):
+    return np.asarray(np.asarray(v, np.float64), dtype)
 
 
 def _i32(v):
     return np.asarray(np.asarray(v, np.int64), np.int32)
 
 
-def _leaf_table(rows, planes):
-    t = dict(typ=_i32([r["typ"] for r in rows]), sa=_f32([r["sa"] for r in rows]), c=_f32([r["c"] for r in rows]),
-             p0=_i32([r["p0"] for r in rows]), np_=_i32([r["np_"] for r in rows]), R=_f32([r["R"] for r in rows]),
-             r=_f32([r["r"] for r in rows]))  # fmt: skip
+def _leaf_table(rows, planes, dtype=np.float32):
+    def f(v):
+        return _f32(v, dtype)
+
+    t = dict(typ=_i32([r["typ"] for r in rows]), sa=f([r["sa"] for r in rows]), c=f([r["c"] for r in rows]),
+             p0=_i32([r["p0"] for r in rows]), np_=_i32([r["np_"] for r in rows]), R=f([r["R"] for r in rows]),
+             r=f([r["r"] for r in rows]))  # fmt: skip
     for a in range(3):
-        t[f"o{a}"] = _f32([r["o"][a] for r in rows])
-        t[f"b{a}"] = _f32([r["b"][a] for r in rows])
-        t[f"q{a}"] = _f32([r["q"][a] for r in rows])
-        t[f"bl{a}"] = _f32([np.clip(r["blo"][a], -HUGE, HUGE) for r in rows])
-        t[f"bh{a}"] = _f32([np.clip(r["bhi"][a], -HUGE, HUGE) for r in rows])
+        t[f"o{a}"] = f([r["o"][a] for r in rows])
+        t[f"b{a}"] = f([r["b"][a] for r in rows])
+        t[f"q{a}"] = f([r["q"][a] for r in rows])
+        t[f"bl{a}"] = f([np.clip(r["blo"][a], -HUGE, HUGE) for r in rows])
+        t[f"bh{a}"] = f([np.clip(r["bhi"][a], -HUGE, HUGE) for r in rows])
         for b in range(3):
-            t[f"A{a}{b}"] = _f32([r["A"][a, b] for r in rows])
-            t[f"m{a}{b}"] = _f32([r["minv"][a, b] for r in rows])
+            t[f"A{a}{b}"] = f([r["A"][a, b] for r in rows])
+            t[f"m{a}{b}"] = f([r["minv"][a, b] for r in rows])
     planes = planes or [(np.zeros(3), 0.0)]
     for a in range(3):
-        t[f"n{a}"] = _f32([p[0][a] for p in planes])
-    t["h"] = _f32([p[1] for p in planes])
+        t[f"n{a}"] = f([p[0][a] for p in planes])
+    t["h"] = f([p[1] for p in planes])
     return t
 
 
-def csg_tables(kinds) -> CsgTables:
-    """Return the CSG tables of the solids ``kinds`` (one ``lumen.geometry.solids`` node per kind, its frame, m)."""
+def csg_tables(kinds, dtype=np.float32) -> CsgTables:
+    """Return the CSG tables of the solids ``kinds`` (one ``lumen.geometry.solids`` node per kind, its frame, m), their
+    coefficients in ``dtype`` (the navigator's precision)."""  # noqa: D205, D209
     rows, planes, prog, krows, boxes = [], [], [], [], []
     for node in kinds:
         box, nl, krow = _kind(node, rows, planes, prog)
@@ -197,7 +201,7 @@ def csg_tables(kinds) -> CsgTables:
     kcols = {k: [x[j] for x in krows] for j, k in enumerate(("l0", "nl", "p0", "pl"))}
     prog = prog or [(0, 0)]
     return CsgTables(
-        T=_leaf_table(rows, planes),
+        T=_leaf_table(rows, planes, dtype),
         K={k: _i32(v) for k, v in kcols.items()},
         G=dict(op=_i32([g[0] for g in prog]), arg=_i32([g[1] for g in prog])),
         kind_box=tuple(boxes),

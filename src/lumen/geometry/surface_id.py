@@ -26,7 +26,7 @@ from lumen.rules import navigation as rules
 from lumen.rules.tolerances import MESH_PARALLEL, SLOPE_REL
 from lumen.units import HUGE
 
-F32, I32 = jnp.float32, jnp.int32
+I32 = jnp.int32
 sg = lax.stop_gradient
 
 
@@ -129,11 +129,11 @@ def mesh_plane_t(nav, win, od, dd, xa):
     km = jnp.clip(bl, 0, D["N"].shape[0] - 1)
     nk = D["N"][km]
     nd = jnp.dot(nk, dd)
-    ok_m = live & (bi >= nav.CH0) & (jnp.abs(nd) > F32(MESH_PARALLEL))
+    ok_m = live & (bi >= nav.CH0) & (jnp.abs(nd) > nav.F(MESH_PARALLEL))
     P0, P1, P2 = D["V0"][km], D["V1"][km], D["V2"][km]
     m0, m1, m2 = (jnp.max(jnp.abs(P_ - od)) for P_ in (P0, P1, P2))
     Pn = jnp.where((m0 <= m1) & (m0 <= m2), P0, jnp.where(m1 <= m2, P1, P2))
-    t_pl = jnp.dot(nk, Pn - od) / jnp.where(ok_m, nd, F32(1.0))
-    ulp = F32(rules.FLOAT32_EPS) * (xa + jnp.abs(bt))
-    short = F32(rules.FACET_SHORT_ULPS) * ulp / jnp.abs(jnp.where(ok_m, nd, F32(1.0)))
-    return jnp.where(ok_m, jnp.maximum(t_pl - short, F32(0.0)), bt)
+    t_pl = jnp.dot(nk, Pn - od) / jnp.where(ok_m, nd, nav.F(1.0))
+    ulp = nav.F(nav.prec.eps) * (xa + jnp.abs(bt))
+    short = nav.F(rules.FACET_SHORT_ULPS) * ulp / jnp.abs(jnp.where(ok_m, nd, nav.F(1.0)))
+    return jnp.where(ok_m, jnp.maximum(t_pl - short, nav.F(0.0)), bt)

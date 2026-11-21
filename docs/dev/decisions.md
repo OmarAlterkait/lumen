@@ -324,3 +324,25 @@ and for fixed rows (`FromArrays`) it includes the spread between the rows (SK's 
 Launches still add in float32: `chunk` changes results at that rounding only.
 **Where.** `readout/fill.py`, `readout/grid.py` (`moment_error`), `readout/detection.py` (`pe_error`), `run.py`,
 `api.py`, `compare/photons.py`, `compare/charge.py`, `compare/overlaps.py`, `compare/event.py`, `tools/stats.py`.
+
+## 29. The navigator's precision is a load option
+
+**Decision (0.2, user 2026-11-21).** `lumen.load(..., precision="float64")` runs the navigator in float64: its
+coordinates and frames, CSG tables, roots and intervals, its tolerances (the band, 8 eps64 |x| plus the 1 nm floor:
+the floor at any detector scale) and the photon's position. The physics stays float32. float32 is the default. float64
+needs JAX's 64-bit mode, on before any array is made; `load` refuses it otherwise. Conversion is unchanged: decision
+9's refusal stays at float32's band.
+**Why.** float32's band at a decision is that of the photon's ray, its start's largest coordinate plus the distance
+travelled (`geometry/navigate.py`, `geometry/csg.py`), so a coating a few bands thick where it sits is tracked or not
+depending on where each photon came from. Measured on a coating under a gas volume against exact float64 geometry,
+coatings of 2.5 to 8 bands at 0.5 to 5 m were entered in 65 % of the configurations whose rays started 1.5 to 5 m
+away; tightening the on-face tolerances moved that threshold, did not remove the path dependence, and stepped over
+more coatings at grazing angles. NEXT-100's TPB (2 to 5.4 um) left its S2 light 8 % low at the PMTs and 10 % at the
+SiPMs against nexus. In float64 every configuration is right and NEXT-100 agrees with nexus to 0.4 % (stage 3), at
++20 % (S1) and +27 % (S2) time against a float32 that tracks those coatings on an A100, 3.4 times on an RTX 2080 Ti
+(float64 at 1/32 of float32's rate). JAX's 64-bit mode alone leaves a float32 run bit for bit.
+**Where.** `rules/navigation.py` (`Precision`, `band`), `geometry/navigator_build.py`, `geometry/csg_build.py`,
+`geometry/ownership.py`, `geometry/cache.py`, `geometry/navigate.py`, `geometry/csg.py`, `transport/step.py`,
+`transport/state.py`, `api.py` (`load`); `tests/unit/test_precision.py`.
+**Revisit.** If a float32 navigator re-solves each crossing on its face, so that its band no longer depends on the
+photon's path: float32 could then track such coatings on GPUs without fast float64.

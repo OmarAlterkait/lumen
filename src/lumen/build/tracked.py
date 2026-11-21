@@ -150,8 +150,8 @@ def classes(nav, scene, optics):
     return [c[p] for p in vols], [c[p] for p in meshes], c[volume_tree.OUTSIDE_PV], vols
 
 
-def from_scene(scene, optics, cache=False):
-    """Return the TrackedGeometry of a scene and its compiled optics.
+def from_scene(scene, optics, cache=False, precision="float32"):
+    """Return the TrackedGeometry of a scene and its compiled optics, its navigator in ``precision``.
 
     Its navigator knows the classes: a volume of its listers' class (or one interchangeable with it,
     ``interchangeable``), no sensor and not of a self pair's class, bounds nothing a photon sees and is no candidate
@@ -165,7 +165,7 @@ def from_scene(scene, optics, cache=False):
     kept = [i for i, c in enumerate(vol_cls) if i in set(sens) or vtx[int(c), int(c)]]
     cl = navigator_build.Classes(tuple(int(c) for c in vol_cls), tuple(int(c) for c in mesh_cls), int(out_cls),
                                  tuple(kept), interchangeable(optics, vtx))  # fmt: skip
-    nav = navigate.Navigator.from_scene(scene, cache=cache, classes=cl)
+    nav = navigate.Navigator.from_scene(scene, cache=cache, classes=cl, precision=precision)
     classes(nav, scene, optics)
     sensor = np.full(nav.n + 1 + nav.n_mesh, -1, np.int32)
     for i in sens:
@@ -173,6 +173,7 @@ def from_scene(scene, optics, cache=False):
     return TrackedGeometry(nav, optics.n_classes, sensor, vtx)
 
 
-def from_parts(parts, cache=False):
-    """Return the TrackedGeometry of a built detector (``lumen.build.build.Parts``): its navigator scene and optics."""
-    return from_scene(parts.nav_scene, parts.optics, cache=cache)
+def from_parts(parts, cache=False, precision="float32"):
+    """Return the TrackedGeometry of a built detector (``lumen.build.build.Parts``): its navigator scene and optics,
+    the navigator in ``precision``."""  # noqa: D205, D209
+    return from_scene(parts.nav_scene, parts.optics, cache=cache, precision=precision)

@@ -250,10 +250,10 @@ def _recover(model, ops, ph):
     After ZERO_STEPS_BEFORE_PUSH zero-length crossings the photon is pushed past the band and located there: its volume
     and its class (the medium the step reads) are those of the point it lands on.
     """
-    b0 = navigation.step_band(sg(ph.x))
+    nav = geometry(model, ops).nav
+    b0 = navigation.step_band(sg(ph.x), nav.prec)
     stuck = ph.alive & (ph.nz >= navigation.ZERO_STEPS_BEFORE_PUSH)
     x = jnp.where(stuck, ph.x + navigation.PUSH_DISTANCE_TOLERANCES * b0 * sg(ph.d), ph.x)
-    nav = geometry(model, ops).nav
     vol = nav.locate(sg(x), start=jnp.where(stuck, -1, ph.vol)).astype(I32)  # the descent only where pushed
     cls = jnp.where(stuck, nav.dev()["cls"][vol], ph.cls).astype(I32)
     return ph._replace(x=x, vol=vol, cls=cls, srf=jnp.where(stuck, -1, ph.srf)), b0
@@ -262,7 +262,8 @@ def _recover(model, ops, ph):
 def _query(model, ops, ph, s):
     """Return the next visible crossing (the navigator's dict).
 
-    ``s``: the free path; ``vol_at`` / ``cls_at`` are the volume and class the ray is in there.
+    ``s``: the free path; ``vol_at`` / ``cls_at`` are the volume and class the ray is in there. The physics reads the
+    crossing in float32; ``t`` stays in the navigator's precision, for the position (``_surface_event``).
     """
     geom = geometry(model, ops)
     # a geometry that accepts the free path may stop the query just past it where the crossing beyond cannot deposit
@@ -271,7 +272,7 @@ def _query(model, ops, ph, s):
     r = geom.query(None, ph.x, ph.d, ph.cls, ops.controls.max_distance, vol=ph.vol, last=ph.srf, sn=ph.sn, s_at=s, **sf)
     keys = ("t", "hit", "normal", "cls_after", "sensor", "cls_before", "cls_start", "t_pass0", "t_pass1",
             "vol_after", "vol_before", "vol_start", "item", "cont", "vol_at", "cls_at")  # fmt: skip
-    return {k: r[k] for k in keys}
+    return {k: r[k].astype(F32) if k != "t" and jnp.issubdtype(r[k].dtype, jnp.floating) else r[k] for k in keys}
 
 
 def _straight_if(cont, probs):
@@ -339,7 +340,7 @@ def _step_context(model, ops, ph, key):
     mu_r = jnp.sum(mu_c_r)
     s = sg(-jnp.log(rand["path"][0]) / jnp.maximum(mu_r, FLOOR32))  # the free path at the reference event rate
     q = _query(model, ops, ph, s)
-    dist = q["t"]
+    dist = q["t"].astype(F32)
     zero = sg(dist) <= navigation.ZERO_STEP_BANDS * b0  # a zero-length step: below one float32 ulp of the coordinates
     surf = _surface(model, q, zero)
     row, cont = surf
@@ -377,7 +378,7 @@ def _surface_event(model, ops, ph, sc):
     d_new = unit(out.d)  # no norm drift over many bounces
     far = (jnp.asarray(FAR_SIDE)[os_] | out.far) & sc.drawn  # a dielectric facet path's side is its own
     ok = q["hit"] & sc.drawn & (sc.row >= 0)
-    x_hit = ph.x + sc.dist * ph.d
+    x_hit = ph.x + q["t"] * ph.d  # in the navigator's precision (``_query``)
     # at the reference every live / reference ratio is 1: the reached share (where it is defined), the attenuation at
     # the reference, the outcome at the probabilities it is drawn from, the lobe's density drawn from over itself
     r_o = jnp.where(sc.drawn, safe_div(sc.p_draw[os_], sc.p_proposal[os_]), 0.0)

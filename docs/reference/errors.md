@@ -382,6 +382,7 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `load(parts=): <target>: <model> is neither a medium model (lumen.medium_model) nor one of lumen's own (<MEDIA>)` | `LibraryError` | `lumen.api` |
 | `load(parts=): <whole> is given two parts; one per material in 0.2` | `ValueError` | `lumen.api` |
 | `load(parts=): a phase function is given for one material's channel, materials/<M>/<channel>, not <target>` | `ValueError` | `lumen.api` |
+| `load: precision="float64" needs JAX's 64-bit mode, which is off: set JAX_ENABLE_X64=1 before starting Python, or call jax.config.update("jax_enable_x64", True) before any JAX array is made` | `ValueError` | `lumen.api` |
 | `no detector file at <path> (a detector is its file: convert it first, lumen.convert)` | `FileNotFoundError` | `lumen.api` |
 | `save_calibration: give a directory (LUMEN_DETECTORS is not set)` | `ValueError` | `lumen.api` |
 | `simulate: <bad> photon(s) have a label outside the events [0, <n_ev>)` | `ValueError` | `lumen.api` |
@@ -765,6 +766,7 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `recipe <name> needs the inputs <missing>` | `ValueError` | `lumen.recipe` |
 | `recipe input <name>: <p> is not a file (an input is one file, recorded by its sha256)` | `ValueError` | `lumen.recipe` |
 | `<pre> -> <post>: type <name> (<reason>) would put the photon into the opaque medium <medium>` | `BoundaryError` | `lumen.rules.boundary` |
+| `precision <name> is not one of <PRECISIONS>` | `ValueError` | `lumen.rules.navigation` |
 | `<key>: an extinction index is >= 0 (an absorbing medium), got <min>` | `OpticsRefused` | `lumen.rules.optics` |
 | `<what>: <given> without the optics setting scint_finite_rise_time: Geant4 reads a rise time only under its finite-rise-time switch; set it as the Geant4 run does, or drop the key` | `OpticsRefused` | `lumen.rules.optics` |
 | `<what>: <k> (<why>) is not supported` | `OpticsRefused` | `lumen.rules.optics` |
