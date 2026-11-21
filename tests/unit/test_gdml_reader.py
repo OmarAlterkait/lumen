@@ -5,7 +5,6 @@ case and Geant4's verdicts); a conflicting re-definition is an error."""
 
 import math
 
-import numpy as np
 import pytest
 
 from lumen.gdml import reader
@@ -47,6 +46,10 @@ def test_evaluator_units_constants_matrices_functions():
     assert ev.eval("m[2,1] + m[3]") == 6.0  # 1-based, row-major
     assert ev.eval("sqrt(16)^2 - pi") == pytest.approx(16 - math.pi)
     assert ev.eval("30*deg") == pytest.approx(math.pi / 6)
+    # CLHEP's constants (PhysicalConstants.h: hbarc = 197.32705e-12 MeV*mm; SystemOfUnits.h: parsec 3.0856775807e+16 m)
+    assert ev.eval("hbarc") == pytest.approx(197.3269804e-12, rel=1e-12)
+    assert ev.eval("hbarc") == ev.eval("hbar_Planck * c_light") == ev.eval("h_Planck / twopi * c_light")
+    assert ev.eval("parsec") == 3.0856775807e19
     for bad in ("nosuch + 1", "1 +", "foo(2)", "m[9]"):
         with pytest.raises(reader.GDMLError):
             ev.eval(bad)
@@ -129,21 +132,25 @@ DEFECTS = """<matrix name="den" coldim="2" values="1.5e-06 2.2305392e-316 3e-06 
 <matrix name="gv" coldim="2" values="1e-06 inf 2e-06 299.8"/>"""
 
 
-def test_repairs_exporter_defects(tmp_path):
-    with pytest.warns(reader.GDMLRepairWarning) as seen:
-        G = reader.read(_gdml(tmp_path, define=DEFECTS))
-    assert {k for k in reader.REPAIRS if any(f"exporter defect {k!r}" in str(w.message) for w in seen)} == {
-        "denormal", "identical_redefinition", "matrix_tail", "non_finite"}  # fmt: skip
-    assert G.repairs == {"denormal", "identical_redefinition", "matrix_tail", "non_finite"}
-    np.testing.assert_array_equal(G.matrix("den"), [[1.5e-6, 0.0], [3e-6, 0.25]])
-    np.testing.assert_array_equal(G.matrix("dup"), [[1e-6, 1], [2e-6, 2]])
-    np.testing.assert_array_equal(G.matrix("odd"), [[1e-6, 1], [2e-6, 2]])
-    np.testing.assert_array_equal(G.matrix("gv"), [[1e-6, 1e30], [2e-6, 299.8]])
-    rep = "\n".join(G.report)
-    assert "(denormal): matrix 'den': 1 denormal" in rep and "(identical_redefinition): matrix 'dup'" in rep
-    assert "(matrix_tail): matrix 'odd': 5 values" in rep and "(non_finite): matrix 'gv': 1 non-finite" in rep
+@pytest.mark.parametrize("lines,kind", [((0,), "denormal"), ((1, 2), "identical_redefinition"), ((3,), "matrix_tail"),
+                                        ((4,), "non_finite")])  # fmt: skip
+def test_what_geant4_refuses_is_refused_with_its_repair_named(tmp_path, lines, kind):
+    define = "\n".join(DEFECTS.splitlines()[i] for i in lines)
+    with pytest.raises(reader.GDMLError, match=f"the repair {kind!r}"):
+        reader.read(_gdml(tmp_path, define=define))
+
+
+def test_an_unused_matrix_that_does_not_evaluate_is_refused(tmp_path):
     with pytest.raises(reader.GDMLError, match="'broken'"):  # unused: Geant4 evaluates every matrix it reads
         reader.read(_gdml(tmp_path, define='<matrix name="broken" coldim="1" values="NOPE"/>'))
+
+
+def test_an_integer_with_a_fractional_part_is_refused_as_geant4_does(tmp_path):
+    """G4GDMLEvaluator::EvaluateInteger (a FatalException, Geant4 10.7.4 G4GDMLEvaluator.cc:260-279) reads coldim,
+    a composite's n and an isotope's Z and N: coldim 2.4 was read as 2 columns before."""
+    with pytest.raises(reader.GDMLError, match="expected to have an integer value"):
+        reader.read(_gdml(tmp_path, define='<matrix name="m" coldim="2.4" values="1 2 3 4"/>'))
+    reader.read(_gdml(tmp_path, define='<matrix name="m" coldim="4/2" values="1 2 3 4"/>'))  # an integer value
 
 
 def test_conflicting_redefinition_is_an_error(tmp_path):

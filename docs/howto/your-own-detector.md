@@ -6,7 +6,8 @@ lined with a black sheet, with 12 disc PMTs. The file was written with two delib
 exporters produce, so that you can see how lumen reports them.
 
 Every code block comes from `examples/your_own_detector.py` and `examples/compare_with_geant4.py`, which run as they
-stand. The outputs shown are from lumen 0.1.1 on an NVIDIA A100.
+stand. The outputs shown in sections 3 and 4 are from lumen 0.2 on an NVIDIA RTX 2080 Ti; the others from lumen 0.1.1
+on an NVIDIA A100.
 
 ```bash
 export LUMEN_DETECTORS=$PWD/lumen-examples/calibrations && mkdir -p $LUMEN_DETECTORS
@@ -27,14 +28,12 @@ from lumen.format.sensorsets import SensorGroup
 RECIPE = Recipe(
     name="demo_barrel",
     detector_volume="BarrelLV",              # the logical volume lumen simulates; light leaving it is absorbed
-    wavelength_range=(300.0, 600.0),         # nm
     groups=(
         SensorGroup(
             "pmt",                           # the group's name: parameter keys are sensors/pmt/<field>
             rule="border_into",              # counted across a border surface into the sensor volume
-            surface="lumen:geant4", model="lumen:pmt",
             lv="PMT",                        # or lv_pattern=r"^PMT" (a regular expression on logical-volume names)
-            defaults="lumen:wcte_r14374@2",  # a shipped PMT value set; or the path of your own JSON file
+            values="examples/data/toy_pmt.json",    # a PMT value set: a JSON file (or <package>:<set>)
             readout={"gate": (-20.0, 80.0)}, # ns after emission
         ),
     ),
@@ -45,30 +44,33 @@ How to fill it in for your detector:
 
 - **The detector volume.** The logical volume that holds everything optical: usually the water or argon volume, or
   the tank around it. Everything outside is absorbed. Pick the smallest volume that still holds every surface light
-  can reach.
-- **The wavelength range** over which your optics tables are read. Every material table must cover it.
+  can reach. A logical volume placed more than once is refused (the message names its placements and their common
+  mother): give the common mother to simulate every placement, or the physvol name or path (`"hall_pv/left_pv"`) of
+  the one to simulate.
 - **The sensor volumes.** One sensor group selects logical volumes, by name (`lv="PMT"`) or by a regular
   expression on the name (`lv_pattern=r"^PMT"`). Each placement of a selected volume becomes one sensor, numbered in
-  placement order. The names are as your GDML writes them, including any `0x...` suffix an exporter added.
+  placement order. The names are as your GDML writes them, including any `0x...` suffix an exporter added. Sensors of
+  one volume that differ by type are split into groups by a column of the id map (`where={"type": "coated"}`, with
+  the recipe's `sensor_columns` giving that column): such groups count by one rule and each has a sensor model.
 - **The counting rule.** `border_into` (PMTs with a photocathode surface): a photon counts when it crosses the GDML
-  border surface into the sensor volume and that surface detects it (with `model="lumen:pmt"`, every absorption
-  there counts and the QE is applied after tracking). `any_entry` (sensitive volumes without a detecting surface): every entry counts.
+  border surface into the sensor volume and that surface detects it (with a value set, `values=`, every absorption
+  there counts and the QE is applied after tracking). `any_entry` (sensitive volumes without a detecting surface): every entry counts,
+  and a photon emitted inside the volume counts where it is emitted, as a Geant4 sensitive detector counts it
+  (`settings={"count": "entry"}` counts only entries).
 - **A PMT interior split into several volumes:** select the volume on the far side of the photocathode border, that
   is, the second `physvolref` of its `<bordersurface>`. Use one `lv_pattern` that matches it in every PMT type.
-- **The surface reader**: `lumen:geant4` reads the detecting surface as stock Geant4 does. `lumen:complex_index` is
-  for a photocathode surface whose GDML carries a complex refractive index (`RINDEX` and `KINDEX` tables, as some
-  experiments' software writes for a thin-film cathode, which stock Geant4 10.7 ignores on a surface): it treats the
-  cathode as a thick absorbing layer of index RINDEX + i KINDEX, with Fresnel reflection off it and the absorbed
-  share detected with `EFFICIENCY`. It does not model the thin film's interference; it is an approximation of it, and
-  it needs both tables flat over the wavelength range.
-- **The sensor model and its values.** `lumen:pmt` with a shipped value set (`lumen:sk_r3600@2`,
-  `lumen:wcte_r14374@2`, `lumen:sbnd_pmt@1`, the ANNIE sets, ...) or your own. To start your own, copy one with
-  `lumen.sensors.write_defaults("lumen:wcte_r14374@2", "my_pmt.json")`, edit it, set `provenance.source` and
-  `provenance.status`, and pass the file's path as `defaults`.
+- **The detecting surface** is read as stock Geant4 reads it. With a value set, the QE applies after tracking: it is
+  the detection at normal incidence, and the surface's `EFFICIENCY` is not read. Without one, the group's setting
+  `entry_efficiency` (else the surface's `EFFICIENCY`) is the detection on entry.
+- **The value set** (`values=`): a JSON file, or `<package>:<set>`, a set an experiment's package ships (lumen-wc's
+  `lumen_wc:sk_r3600`, lumen-tpc's `lumen_tpc:sbnd_pmt`, ...), read by the sensor model after tracking. To start
+  your own, copy one with `lumen.sensors.write_defaults("examples/data/toy_pmt.json", "my_pmt.json")`, edit it, set
+  `provenance.source` and `provenance.status`, and pass the file's path as `values`.
 
-0.1 supports one `border_into` group per detector, and `simulate` reads out at most one group with a sensor model;
-other groups (counting sensors) give arrivals only. Several PMT types in one group share one value set in 0.1
-(per-type values in one group come in 0.2).
+Every group with a value set has its own keys
+(`sensors/<group>/<field>`) and histograms: `light.group("<group>")` (and `light.groups`) holds them, and the readout
+functions take `(light.group(name), params)`.
+Groups without a sensor model (counting sensors) give arrivals only.
 
 ### Borders and skins at the detector volume's boundary
 
@@ -81,82 +83,80 @@ needs to unbind or rebind them:
 - a border whose first volume lies outside the detector volume (wholly outside, or from a neighbour into the detector
   volume) is dropped, with a warning saying so. Geant4 consults a border only for a photon in its first volume, and
   lumen tracks no light outside, so the drop changes nothing;
-- a border from the detector volume into a neighbour other than its mother is refused (`no adjacent world
-  instances`): lumen's outside is one region, so give the surface to every exit with the recipe's `outside_surface`.
+- a border from the detector volume into a neighbour other than its mother (or a sibling that encloses it) is refused
+  (`no adjacent world instances`): lumen's outside is one region.
 
-Skins bind wherever their logical volume is in the kept tree, as in Geant4.
+Skins bind wherever their logical volume is in the kept tree, as in Geant4. Leaving the detector volume, a photon
+meets the skin of the volume Geant4 enters there: a sibling that holds the detector volume in a hole of its solid
+(every face touches it), otherwise the mother.
 
-## 2. Convert, and read the repair warnings
+## 2. Convert: what Geant4 refuses, lumen refuses
 
 ```python
+from lumen.gdml import reader, repair
+
 def convert(gdml, out):
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        path = lumen.convert(gdml, RECIPE, out, overwrite=True)
-    for w in caught:
-        print(f"  warning: {w.message}")
+    path = lumen.convert(gdml, RECIPE, out, overwrite=True)
     det = lumen.load(path)
     for line in det.file.report:
-        if line.startswith("repaired"):
+        if "left out" in line:
             print("   ", line)
     return det
 
-det = convert("examples/data/demo_barrel.gdml", "lumen-examples/demo_barrel_as_given.lumen")
+try:
+    convert("examples/data/demo_barrel.gdml", "lumen-examples/demo_barrel_as_given.lumen")
+except reader.GDMLError as err:
+    print(err)
 ```
 
-Some GDML constructs are refused by stock Geant4, or loaded but read differently from what they say. lumen repairs
-each one so that it reads the file exactly as a working Geant4 would, prints a warning naming the object, how many
-there are and what Geant4 does, and records the repair in the detector file. The example has two.
+lumen reads a GDML file as stock Geant4 (10.7 and 11.2) does, and refuses what Geant4 refuses. The example has an
+unpaired tail on `WATER_ABSLENGTH` (11 values for a two-column table), which Geant4 refuses:
 
 ```
-  warning: gdml examples/data/demo_barrel.gdml: matrix 'WATER_ABSLENGTH': 11 values (as Geant4 counts them) for coldim 2: exporter defect 'matrix_tail', a <matrix> whose value count is not a multiple of its coldim: repaired, the unpaired tail (1) dropped. Stock Geant4 refuses the file (G4GDMLEvaluator::DefineMatrix: InvalidSize, 'Matrix ... is not filled correctly!'); give a Geant4 reference the same file: python -m lumen.gdml.repair SRC DST
-  warning: gdml examples/data/demo_barrel.gdml: opticalsurface 'LinerSurface': property REFLECTIVITY names the constant (coldim 1) matrix 'LINER_REFLECTIVITY': exporter defect 'constant_surface_table', an opticalsurface REFLECTIVITY, TRANSMITTANCE, EFFICIENCY or unified constant given as a constant (a coldim 1 matrix): repaired, dropped: Geant4's default applies. Stock Geant4 loads the file and ignores the value (G4GDMLReadSolids.cc:3556 adds it as a constant property; G4OpBoundaryProcess reads these only as tables, GetProperty, G4OpBoundaryProcess.cc:381-413); give a Geant4 reference the same file: python -m lumen.gdml.repair SRC DST
-  2 repair(s) recorded in demo_barrel_as_given.lumen:
-    repaired (matrix_tail): matrix 'WATER_ABSLENGTH': 11 values (as Geant4 counts them) for coldim 2: the unpaired tail (1) dropped
-    repaired (constant_surface_table): opticalsurface 'LinerSurface': property REFLECTIVITY names the constant (coldim 1) matrix 'LINER_REFLECTIVITY': dropped: Geant4's default applies
+gdml examples/data/demo_barrel.gdml: matrix 'WATER_ABSLENGTH': 11 values (as Geant4 counts them) for coldim 2: Geant4 refuses it too; the repair 'matrix_tail' (the unpaired tail of the matrix dropped) writes a copy Geant4 and lumen both read: python -m lumen.gdml.repair SRC DST, then convert DST
 ```
 
-Read each warning and decide whether the file says what its author meant:
+The repair is a separate step, and its copy is what you convert (the detector file records its name and sha256) and
+what you give Geant4 if you compare with it later:
 
-1. **`matrix_tail`**: `WATER_ABSLENGTH` has 11 values for a two-column table. Stock Geant4 refuses the file; lumen
-   drops the unpaired last value. That is almost certainly what was meant, but check the table, and fix the file
-   when you can.
-2. **`constant_surface_table`**: the liner's `REFLECTIVITY` is a one-column constant. Geant4 loads the file but its
-   boundary process reads REFLECTIVITY only as a table, so it uses its default, 1. lumen does the same, so both codes
-   agree, and the "black" sheet is a perfect reflector:
+```python
+text, edits = repair.repair(open("examples/data/demo_barrel.gdml").read())
+print(edits)
+open("lumen-examples/demo_barrel_repaired.gdml", "w").write(text)
+det = convert("lumen-examples/demo_barrel_repaired.gdml", "lumen-examples/demo_barrel_as_given.lumen")
+p = det.params()
+key = "surfaces/LinerSurface/REFLECTIVITY"
+print(p[key], p.explain(key))
+```
+```
+["matrix 'WATER_ABSLENGTH': 11 values for coldim 2, the unpaired tail (1) dropped"]
+    opticalsurface 'LinerSurface'.REFLECTIVITY: left out: a table key given as a constant (coldim 1): Geant4 stores it as a constant property, which no process reads (matrix 'LINER_REFLECTIVITY')
+1.0 Geant4 default 1, G4OpBoundaryProcess.cc:308
+```
 
-   ```python
-   p = det.params()
-   key = "surfaces/LinerSurface/REFLECTIVITY"
-   print(p[key], p.explain(key))
-   ```
-   ```
-   1.0 Geant4 default 1, G4OpBoundaryProcess.cc:308
-   ```
+The second line is the file's other surprise. The liner's `REFLECTIVITY` is a one-column constant: Geant4 loads it
+as a constant property, but its boundary process reads REFLECTIVITY only as a table, so it uses its default, 1.
+lumen reads it the same way, so both codes agree, and the "black" sheet is a perfect reflector. Fix the file, here
+by writing the reflectivity as a two-column table (and dropping the tail by hand), and convert again:
 
-   This repair changes the physics. Fix the file, here by writing the reflectivity as a two-column table, and
-   convert again:
-
-   ```xml
-   <matrix name="LINER_REFLECTIVITY" coldim="2" values="1.5*eV 0.1 5.0*eV 0.1"/>
-   ```
-   ```
-     0 repair(s) recorded in demo_barrel.lumen:
+```xml
+<matrix name="LINER_REFLECTIVITY" coldim="2" values="1.5*eV 0.1 5.0*eV 0.1"/>
+```
+```
   surfaces/LinerSurface/REFLECTIVITY = Table(energy=array([1.5, 5. ]), value=array([0.1, 0.1])) (from: detector file)
 demo_barrel  (from demo_barrel_fixed.gdml)
   detector volume  BarrelLV; 4 volumes, 4 materials, 2 optical surfaces
   sensors          12 in 1 group(s): pmt
   calibration      nominal
-   ```
+```
 
-The full list of repairs, with what each means, is in [errors](../reference/errors.md#repairs). If you compare
-with Geant4 later, give Geant4 the same repaired file: `python -m lumen.gdml.repair SRC DST REPAIR ...` writes it.
+The repairs, with what each means, are in [errors](../reference/errors.md#repairs).
 
 Conversion refuses what it cannot convert faithfully, with a message that names the object and the fix: a material
 without a composition, an opticalsurface missing an attribute, a surface form lumen does not implement, two skins
 on one volume, a border on a placement name that is not unique. See [errors](../reference/errors.md).
 
-Check the sensors once converted: `det.sensors["ids"]` lists them in order, and a quick simulation of a source at a
+Check the sensors once converted: `det.sensor_table().name` lists them in order, and a quick simulation of a source at a
 symmetric point should light symmetric sensors equally. In writing this guide, two side PMTs of the example first
 saw 40 % of the light of the other two from a central source. Their rotations in the GDML were wrong, so they faced
 along the wall; a quick simulation found it.
@@ -169,14 +169,14 @@ light = lumen.simulate(det, src, samples=2**18, seed=0)
 pe = lumen.readout.pe(light, p0)
 ```
 ```
-   0 BarrelPV/WaterPV/PMT_top_0/PMT arrivals    169.4 +-   6.5   PE    43.1
-   1 BarrelPV/WaterPV/PMT_bottom_0/PMT arrivals    171.6 +-   8.1   PE    43.6
+   0 BarrelPV/WaterPV/PMT_top_0/PMT arrivals    169.8 +-   4.2   PE    43.2
+   1 BarrelPV/WaterPV/PMT_bottom_0/PMT arrivals    171.8 +-   8.5   PE    43.7
    ...
-   8 BarrelPV/WaterPV/PMT_side_0/PMT arrivals    223.6 +-   9.1   PE    56.8
-   9 BarrelPV/WaterPV/PMT_side_1/PMT arrivals    224.0 +-   8.2   PE    57.0
-  10 BarrelPV/WaterPV/PMT_side_2/PMT arrivals    205.8 +-   9.1   PE    52.3
-  11 BarrelPV/WaterPV/PMT_side_3/PMT arrivals    211.5 +-   8.2   PE    53.8
-  health: {'lost': 0.0, 'abandoned': 0.0, 'escaped': 0.0, 'retired': 0.0, 'truncated': 0.0, 'n_truncated': 0.0, 'stuck': 0.0, 'overflow': 0.0}
+   8 BarrelPV/WaterPV/PMT_side_0/PMT arrivals    223.6 +-   8.1   PE    56.8
+   9 BarrelPV/WaterPV/PMT_side_1/PMT arrivals    224.1 +-   8.2   PE    57.0
+  10 BarrelPV/WaterPV/PMT_side_2/PMT arrivals    206.1 +-   9.8   PE    52.4
+  11 BarrelPV/WaterPV/PMT_side_3/PMT arrivals    211.8 +-   4.8   PE    53.8
+  health: {'lost': 0.0, 'abandoned': 0.0, 'escaped': 0.0, 'truncated': 0.0, 'nonfinite': 0.0, 'invalid': 0.0}
 ```
 
 The tutorial explains each number: [the first hour, section 2](../tutorial/first-hour.md#2-simulate-and-what-the-numbers-mean).
@@ -186,47 +186,10 @@ The tutorial explains each number: [the first hour, section 2](../tutorial/first
 Every value except the geometry is a parameter, keyed by its GDML name. A calibration is a named set of values that
 replaces the detector file's values by name, without editing it.
 
-### A source position, with `wrt=`
-
-The derivative with respect to the source position needs `wrt=["source/position"]`. `jax.jacfwd` gives the three
-derivatives at once, and a few Gauss-Newton steps on the Poisson likelihood find the position of a calibration source
-from one event (the truth is (0.10, −0.05, 0.20) m):
-
-```python
-def expected_pe_at(x):
-    s = lumen.sources.Point(position=x, lam=400.0, n_photons=1e5)
-    return lumen.readout.pe(lumen.simulate(det, s, samples=2**18, seed=0, wrt=["source/position"]), p0)
-
-x = jnp.zeros(3, jnp.float32)
-for it in range(8):
-    mu, J = expected_pe_at(x), jax.jacfwd(expected_pe_at)(x)    # J (sensors, 3)
-    fisher = (J / mu[:, None]).T @ J
-    step = jnp.linalg.solve(fisher, J.T @ ((n_obs - mu) / mu))
-    x = x + step * jnp.minimum(1.0, 0.1 / jnp.linalg.norm(step))   # at most 10 cm per step
-```
-```
-  iteration 0: x = [0.037, -0.0266, 0.089] m
-  iteration 1: x = [0.0767, -0.0534, 0.1768] m
-  iteration 2: x = [0.094, -0.0635, 0.2239] m
-  ...
-  iteration 7: x = [0.0926, -0.0541, 0.2255] m
-  fitted [0.0926, -0.0541, 0.2255] +- [0.0213, 0.0206, 0.0183] m; truth [0.1, -0.05, 0.2]
-```
-
-The fit ends within 1.4 errors of the truth. Two things to know:
-
-- **Limit the step.** A Gauss-Newton step can leave the detector, which then gives no light and no derivative; the
-  loop caps each step at 10 cm. From the centre the first step points at the source and is capped.
-- **The derivative agrees with a finite difference.** With 32 seeds of 2^18 photons and a central difference of
-  h = 2 cm, the source-position derivative of every PMT's expected PE agrees with the finite difference within
-  1.8 standard errors at the centre and at z = 0.1 m, with the liner as given and with a black liner (for example
-  PMT_top_0 with a black liner: 94.7 against 95.3 per m at the centre, 129.0 against 129.4 at z = 0.1 m). The
-  collection efficiency is read at the photon's crossing point on the PMT, in the PMT's own frame, so the derivative
-  is smooth through the centre of the tank.
-
 ### An optical value
 
-Changing a value never recompiles the photon loop, so a scan is cheap: each call below took 0.02 s after the first.
+Changing a value never recompiles the photon loop, so a scan is cheap: each call below took under 0.1 s after the
+first.
 Here the liner's reflectivity is fitted to pseudo-data
 made with the sheet reflecting 15 % instead of 10 % (50 flashes of the central source, summed per PMT), by a parabola
 through the likelihood near its minimum:
@@ -243,40 +206,43 @@ for s in np.linspace(0.5, 2.5, 9):
 ```
 ```
   surfaces/LinerSurface/REFLECTIVITY: unit -, range (0.0, 1.0), gradient method reweight
-  REFLECTIVITY 0.050: NLL -209265.45   (0.13 s)
-  REFLECTIVITY 0.075: NLL -209406.34   (0.02 s)
-  REFLECTIVITY 0.100: NLL -209509.16   (0.02 s)
-  REFLECTIVITY 0.125: NLL -209570.97   (0.02 s)
-  REFLECTIVITY 0.150: NLL -209588.33   (0.02 s)
-  REFLECTIVITY 0.175: NLL -209557.33   (0.02 s)
-  REFLECTIVITY 0.200: NLL -209473.66   (0.02 s)
-  REFLECTIVITY 0.225: NLL -209332.44   (0.02 s)
-  REFLECTIVITY 0.250: NLL -209127.94   (0.02 s)
-  fitted REFLECTIVITY 0.1456 +- 0.0036 (truth 0.150)
+  REFLECTIVITY 0.050: NLL -208761.50   (0.41 s)
+  REFLECTIVITY 0.075: NLL -208898.47   (0.09 s)
+  REFLECTIVITY 0.100: NLL -209000.05   (0.08 s)
+  REFLECTIVITY 0.125: NLL -209060.50   (0.09 s)
+  REFLECTIVITY 0.150: NLL -209076.06   (0.08 s)
+  REFLECTIVITY 0.175: NLL -209043.78   (0.08 s)
+  REFLECTIVITY 0.200: NLL -208958.75   (0.08 s)
+  REFLECTIVITY 0.225: NLL -208817.41   (0.09 s)
+  REFLECTIVITY 0.250: NLL -208609.22   (0.10 s)
+  fitted REFLECTIVITY 0.1449 +- 0.0036 (truth 0.150)
 ```
 
-The fit is 1.2 errors from the truth. The error is the statistical one of the data only; the Monte Carlo error of
+The fit is 1.4 errors from the truth. The error is the statistical one of the data only; the Monte Carlo error of
 the model (2^20 photons at one seed) is not included.
 
-The derivative is available through `simulate` too: name the key in `wrt` and trace the value. At the fitted scale
+The derivative is available through `simulate` too: trace the value. At the fitted scale
 the script takes it with `jax.jvp` (one run) and turns it into a Newton step on the parabola's curvature, which should
 be small against the error:
 
 ```python
 def nll(s):
     ps = p0.scale(KEY, s)
-    mu = n_flash * lumen.readout.pe(lumen.simulate(det, src, ps, samples=2**20, seed=0, wrt=[KEY]), ps)
+    mu = n_flash * lumen.readout.pe(lumen.simulate(det, src, ps, samples=2**20, seed=0), ps)
     return jnp.sum(mu - data * jnp.log(mu))
 value, slope = jax.jvp(nll, (s_hat,), (1.0,))
 ```
 ```
-  dNLL/d(scale) at the fit: -8.89 (curvature 775.6: a step of -0.0115)
+  dNLL/d(scale) at the fit: -8.72 (curvature 774.4: a step of -0.0113)
 ```
 
 The step (−0.012 in the scale, −0.0012 in REFLECTIVITY) is a third of the fit's error.
 
 A water absorption length is a poor example in a detector this small: at 60 m against a 1.2 m tank, a 10 % change
 moves the light by about 0.1 %.
+
+A source-position derivative (a tangent on `source/position`) is not available in this version ([known
+limits](../explanation/known-limits.md#derivatives-in-the-source-position)).
 
 `p0.info(KEY)` gives the key's unit, range and gradient method; a value outside the range is refused when you set it.
 
@@ -288,40 +254,49 @@ det.save_calibration(fitted, name, note=note)      # <name>.params.json in the f
 det_cal = lumen.load(det.path, calibration=name)
 ```
 
-A calibration keeps only the values that differ from the detector's, and records the detector file's digest: loading
-it with another detector file raises `CalibrationMismatch`. It keeps each table's energies; a table with a different
-number of knots is a new detector file. Its parent is the calibration the detector was loaded with.
+A calibration keeps only the values that differ from the detector file's own, and records the detector file's digest:
+loading it with another detector file raises `CalibrationMismatch`. It keeps each table's energies; a table with a
+different number of knots is a new detector file. It is flat: saved from a detector loaded with a calibration, it
+holds that calibration's values too, so it loads on the detector file alone.
 
 ## 5. Export to GDML
 
-`lumen.gdml.export` writes the detector file back as GDML that Geant4 10.7 and 11.2 read exactly as lumen does, plus a
-sidecar (`<file>.lumen.json`) with what GDML cannot express: the detector volume and the sensor groups.
+`lumen.gdml.export` writes the detector as lumen simulates it -- geometry, materials with their optical properties,
+optical surfaces -- as a GDML that Geant4 10.7 and 11.2 read as lumen does: the file to run Geant4 on. Every number is
+a bare literal in Geant4's units that reads back to the same double.
 
 ```python
 import lumen.gdml
 
-report = lumen.gdml.export(det.path, "lumen-examples/demo_barrel_export.gdml", scope="full")
-back = lumen.gdml.read_export("lumen-examples/demo_barrel_export.gdml")
-io.equal(back.detector_file, det.file)                 # True: the export is exact
-lumen.gdml.export(det.path, "lumen-examples/demo_barrel_calibrated.gdml", calibration=name, scope="full")
+report = lumen.gdml.export(det.path, "lumen-examples/demo_barrel_export.gdml")
+back = lumen.gdml.importer.read_gdml("lumen-examples/demo_barrel_export.gdml")
+back.solids == det.file.solids and back.placements == det.file.placements   # True
+lumen.gdml.export(det.path, "lumen-examples/demo_barrel_calibrated.gdml", calibration=name)
 ```
 ```
-  wrote lumen-examples/demo_barrel_export.gdml and its sidecar; lossless: True ; g4ref arguments: ('--sens-regex', '^PMT$')
-  re-imported detector file equals the original: True
+  wrote lumen-examples/demo_barrel_export.gdml; lossless: True
+  read back with the same geometry: True
 ```
 
 With `calibration=`, the calibration's values are written into the GDML, so a Geant4 run on it uses your fitted
-values. `scope="active"` writes only the detector volume, in a shell.
+values. What GDML cannot express (the detector volume, the sensor groups, an optics model with no Geant4 form) stays
+in the detector file; `report.annotations` lists it. The arguments g4ref reads the sensors with come from the
+detector file: `python tools/g4ref/sensor_args.py DETECTOR.lumen` prints them (`--sens-regex '^PMT$' --wcsim-hits`
+here).
 
 ## 6. Check against Geant4 with g4ref
 
-g4ref is not published yet: this section assumes you have a build of it. g4ref is a small Geant4 10.7.4 application
-that reads a GDML file, shoots optical photons from point sources and records which sensor volumes they reach.
-lumen's validation uses it for every Geant4 comparison.
+g4ref is a small Geant4 10.7.4 application that reads a GDML file, shoots optical photons from point sources and
+records which sensor volumes they reach; lumen's validation uses it for every Geant4 comparison. Its source is
+`tools/g4ref/g4ref.cc`; build it where Geant4 10.7.4 with GDML is installed (`geant4-config` on the PATH):
+
+```bash
+tools/g4ref/build.sh /path/to/g4ref
+```
 
 **Charge.** Run g4ref and lumen on the same source, and compare the photons each sensor counts. With
 `--wcsim-hits`, g4ref counts a photon absorbed on its way into a sensor volume, which is what lumen's `border_into`
-rule with `lumen:pmt` counts as arrivals:
+rule with a value set counts as arrivals:
 
 ```bash
 echo "100 -50 200 1000000 3.099605" > g4ref_sources.cfg          # x y z (mm), photons, energy (eV) = 400 nm
@@ -354,7 +329,7 @@ total: lumen / Geant4 = 1.0017 +- 0.0078; chi2/ndf = 14.5/12
 lumen's answers, point by point:
 
 ```bash
-python -m lumen.validate.geometry lumen-examples/demo_barrel.lumen --gdml lumen-examples/demo_barrel_fixed.gdml \
+python -m lumen.compare geometry lumen-examples/demo_barrel.lumen --gdml lumen-examples/demo_barrel_fixed.gdml \
        --g4ref /path/to/g4ref --out lumen-examples/geometry_check
 ```
 ```
@@ -368,8 +343,8 @@ python -m lumen.validate.geometry lumen-examples/demo_barrel.lumen --gdml lumen-
 It needs the GDML the detector was converted from. For a detector converted with repairs, it gives Geant4 the
 repaired copy.
 
-For larger comparisons (many sources, the per-sensor χ², the derivatives), `lumen validate charge` and
-`lumen validate gradients` run lumen's own checks from a reference manifest; see
+For larger comparisons (many sources, the per-sensor χ², the derivatives), `python -m lumen.compare charge` and
+`python -m lumen.compare gradients` run lumen's own checks from a reference manifest; see
 [how the checks decide](../explanation/validation.md).
 
 ## Sharing

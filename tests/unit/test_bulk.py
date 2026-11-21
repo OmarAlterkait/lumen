@@ -1,6 +1,7 @@
 """Bulk media: evaluation at a wavelength (index, group index from the same law, absorption, channel rates) and
 fail-closed validation."""
 
+import helpers
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -12,10 +13,10 @@ F32 = jnp.float32
 
 def water():
     ch = (
-        bulk.Channel("rayleigh", phase.RAYLEIGH, laws.power("length")),
+        bulk.Channel("rayleigh", phase.RAYLEIGH, helpers.power("length", points=helpers.VISIBLE)),
         bulk.Channel("other", phase.ISOTROPIC, laws.constant("length")),
     )
-    m = bulk.Medium("water", laws.cauchy(), laws.constant("length"), ch)
+    m = bulk.Medium("water", helpers.cauchy(points=helpers.VISIBLE), laws.constant("length"), ch)
     p = {
         "index": {"A": F32(1.32), "B": F32(0.004), "C": F32(0.0)},
         "absorption": {"value": F32(60.0)},
@@ -38,10 +39,10 @@ def test_medium_evaluates_every_law_at_the_photon_wavelength():
 
 def test_validation_fails_closed():
     m, p = water()
-    bulk.validate(m, p, 300.0, 600.0)
+    bulk.validate(m, p)
     with pytest.raises(laws.LawError):
-        bulk.validate(m, dict(p, absorption={"value": F32(-1.0)}), 300.0, 600.0)
+        bulk.validate(m, dict(p, absorption={"value": F32(-1.0)}))
     m2 = bulk.Medium("x", None, None, (bulk.Channel("c", phase.ISOTROPIC, laws.constant("fraction")),))
     with pytest.raises(laws.LawError):
-        bulk.validate(m2, {"c": {"length": {"value": F32(0.5)}}}, 300.0, 600.0)
+        bulk.validate(m2, {"c": {"length": {"value": F32(0.5)}}})
     assert bulk.Medium("steel", None).opaque

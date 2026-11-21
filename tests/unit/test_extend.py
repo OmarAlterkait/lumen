@@ -1,4 +1,4 @@
-"""The extension API (lumen 0.1.2): declared parameters, source functions, responses, registered models, checks.
+"""The extension API: declared parameters, source functions, responses, registered models, checks.
 
 The derivative checks (AD against FD on the shipped toys) are the physics tier's ``test_extend.py``; here each piece's
 contract: declarations become keys, refusals refuse, built-ins keep their bits.
@@ -13,11 +13,11 @@ from lumen.params import Param, Params, declared
 
 # ------------------------------------------------------------------------------------------------ declared keys
 def test_a_declaration_is_checked_and_hashable():
-    p = Param("m", shape=(3,), moves=True, default=(0.0, 0.0, 0.2))
+    p = Param("m", shape=(3,), method="moving_paths", default=(0.0, 0.0, 0.2))
     assert (
         p.default == (0.0, 0.0, 0.2)
         and p.shape == (3,)
-        and hash(p) == hash(Param("m", shape=[3], moves=True, default=[0, 0, 0.2]))
+        and hash(p) == hash(Param("m", shape=[3], method="moving_paths", default=[0, 0, 0.2]))
     )
     assert Param("", (0, 50), default=4.0).range == (0.0, 50.0)
     with pytest.raises(ValueError, match="shape"):
@@ -38,7 +38,7 @@ def test_declared_parameters_become_keys_with_their_info():
     assert (info.unit, info.range, info.method) == ("pe", (1.0, 1e4), "reweight")
     with pytest.raises(ValueError, match="outside"):
         p.set("sensors/pmt/sat", 0.5)
-    v, s = declared("source/f/", {"x": Param("m", shape=(3,), moves=True, default=(1, 2, 3))})
+    v, s = declared("source/f/", {"x": Param("m", shape=(3,), method="moving_paths", default=(1, 2, 3))})
     assert s["source/f/x"].method == "moving_paths" and v["source/f/x"].dtype == np.float32
     with pytest.raises(TypeError, match="lumen.Param"):
         declared("x/", {"a": 1.0})
@@ -64,7 +64,7 @@ def _noisy(bias=0.0):
 
 
 def test_check_gradient_passes_a_right_derivative_and_fails_a_wrong_one():
-    from lumen.validate import check_gradient
+    from lumen.tools import check_gradient
 
     good = check_gradient(_noisy(), 1.5, seeds=8)
     assert good.passes, good
@@ -77,16 +77,16 @@ def test_check_gradient_passes_a_right_derivative_and_fails_a_wrong_one():
 
 
 # ------------------------------------------------------------------------------------------------ source functions
-def _led(density="direction", give_g=True, m_default=4.0):
+def _led(m_default=4.0):
     import math
 
     import jax
     import jax.numpy as jnp
 
-    from lumen.sources import cone_about, grad_logpdf, reweight
+    from lumen.sources import cone_about, reweight
 
-    @lumen.source(params={"x": Param("m", shape=(3,), moves=True, default=(0.0, 0.0, 0.2)),
-                          "m": Param("", (0, 50), default=m_default)}, density=density)  # fmt: skip
+    @lumen.source(params={"x": Param("m", shape=(3,), method="moving_paths", default=(0.0, 0.0, 0.2)),
+                          "m": Param("", (0, 50), default=m_default)})  # fmt: skip
     def led(v, key, n):
         a = jnp.asarray([0.0, 0.0, -1.0])
         u = jax.random.uniform(key, (n, 2), minval=1e-7, maxval=1.0)
@@ -96,8 +96,7 @@ def _led(density="direction", give_g=True, m_default=4.0):
             return v["m"] * jnp.log(jnp.clip(d_ @ a, 1e-12)) + jnp.log(v["m"] + 1)
 
         w = reweight(jax.vmap(logp)(d)) * 1e3 / n
-        return lumen.Photons(jnp.broadcast_to(v["x"], (n, 3)), d, jnp.zeros(n), jnp.full(n, 420.0), w,
-                             dlogp=grad_logpdf(logp, d) if give_g else None)  # fmt: skip
+        return lumen.Photons(x=jnp.broadcast_to(v["x"], (n, 3)), d=d, t=jnp.zeros(n), lam=jnp.full(n, 420.0), w=w)
 
     return led
 
@@ -106,17 +105,13 @@ def test_a_source_function_is_a_source_with_keys():
     import jax
 
     led = _led()
-    assert led.prefix == "source/led/" and led.MOVING == ("x",) and led.ORIGINS == ("x",) and led.drawn_direction
+    assert led.prefix == "source/led/" and led.MOVING == ("x",)
     p = led.parameters()
     assert set(p) == {"source/led/x", "source/led/m"} and p.info("source/led/x").method == "moving_paths"
     led.check(None)
     e = led.emit(None, jax.random.PRNGKey(1), 64, 0, 256)
-    assert e.x.shape == (64, 3) and e.dlogp.shape == (64, 3) and bool(e.drawn_direction.all())
+    assert e.x.shape == (64, 3)
     np.testing.assert_allclose(float(e.w.sum()), 1e3 * 64 / 256, rtol=1e-6)  # the chunk's share of the photons
-    want = 4.0 * np.array([0, 0, -1.0]) / np.asarray(e.d @ np.array([0, 0, -1.0]))[:, None]  # m a / (d . a)
-    g, d = np.asarray(e.dlogp), np.asarray(e.d)
-    tang = lambda v: v - np.sum(v * d, 1, keepdims=True) * d  # noqa: E731 (only the tangent part is read)
-    np.testing.assert_allclose(tang(g), tang(want), rtol=1e-4, atol=1e-4)
     e2 = led.emit(None, jax.random.PRNGKey(1), 64, 64, 256)
     assert not np.array_equal(np.asarray(e.d), np.asarray(e2.d))  # each chunk its own photons
     whole = led.emit(None, jax.random.PRNGKey(1), 256, 0, 256)
@@ -124,42 +119,51 @@ def test_a_source_function_is_a_source_with_keys():
         assert (a is None and b is None) or np.array_equal(np.asarray(a)[64:128], np.asarray(b))
 
 
+def test_a_source_function_is_called_once_per_run(monkeypatch):
+    """simulate reads a run's photons through ``emitter``: a source function draws all of them once, not per chunk."""
+    import jax
+
+    from lumen.sources import function
+
+    led, calls = _led(), []
+    real = function.FunctionSource.emit
+    monkeypatch.setattr(function.FunctionSource, "emit", lambda self, *a, **k: calls.append(a) or real(self, *a, **k))
+    rows = led.emitter(None, jax.random.PRNGKey(1), 256)
+    chunks = [rows(f, 64) for f in range(0, 256, 64)]
+    whole = real(led, None, jax.random.PRNGKey(1), 256, 0, 256)
+    assert len(calls) == 1
+    np.testing.assert_array_equal(np.concatenate([np.asarray(c.x) for c in chunks]), np.asarray(whole.x))
+
+
 def test_a_source_function_refuses_what_it_cannot_differentiate():
     import jax
     import jax.numpy as jnp
 
-    from lumen import api, sources
-    from lumen.transport.state import Emission
+    from lumen import sources
+    from lumen.record import Photons
 
-    with pytest.raises(sources.SourceError, match="needs dlogp"):
-        _led(give_g=False).check(None)
-    with pytest.raises(sources.SourceError, match="has no dlogp"):
-        _led(density="isotropic").check(None)
-    with pytest.raises(sources.GradientNotAvailable, match="hard angular edge"):
-        _led(m_default=0.0).check(None)  # a uniform cone: no gradient anywhere
     led = _led()
     p = led.parameters()
 
-    def x_of(dx, moving):
+    def x_of(dx):
         q = p.set("source/led/x", jnp.asarray([0.0, 0.0, 0.2]) + dx * jnp.asarray([1.0, 0.0, 0.0]))
-        return led.emit(q, jax.random.PRNGKey(0), 16, 0, 16, moving=moving).x
+        return led.emit(q, jax.random.PRNGKey(0), 16, 0, 16).x
 
-    with pytest.raises(sources.GradientNotAvailable, match="moves=True"):
-        jax.jvp(lambda a: x_of(a, False), (0.0,), (1.0,))
-    assert float(jax.jvp(lambda a: x_of(a, True), (0.0,), (1.0,))[1][:, 0].min()) == 1.0
-    assert api._moving(led, p, ("source/led/x",))[0] and not api._moving(led, p, ("source/led/m",))[0]
+    with pytest.raises(sources.GradientNotAvailable, match="source/led/x|x moves where the light starts"):
+        jax.jvp(x_of, (0.0,), (1.0,))  # a moving parameter's tangent: no source-position derivative
     n = 8
     arr = sources.FromArrays(jnp.zeros((n, 3)), jnp.tile(jnp.asarray([0.0, 0.0, 1.0]), (n, 1)), jnp.zeros(n),
-                             jnp.full(n, 400.0), jnp.ones(n), drawn=True)  # fmt: skip
-    assert api._moving(arr, None, ("source/x",))[0]
-    with pytest.raises(sources.GradientNotAvailable, match="dlogp=jnp.zeros"):
-        arr.emit(None, jax.random.PRNGKey(0), n, moving=True)  # moved without its density's gradient
-    with_g = sources.FromArrays(arr.x, arr.d, arr.t, arr.lam, arr.w, drawn=True, dlogp=jnp.zeros((n, 3)))
-    assert with_g.emit(None, jax.random.PRNGKey(0), n, moving=True).dlogp.shape == (n, 3)
+                             jnp.full(n, 400.0), jnp.ones(n))  # fmt: skip
+
+    def pos_of(dz):
+        a = sources.FromArrays(arr.position + dz * jnp.asarray([0.0, 0.0, 1.0]), arr.direction, arr.time, arr.lam,
+                               arr.weight)  # fmt: skip
+        return a.emit(None, jax.random.PRNGKey(0), n).x
+
+    with pytest.raises(sources.GradientNotAvailable, match="moves where the light starts"):
+        jax.jvp(pos_of, (0.0,), (1.0,))  # rows moved: refused
     e = arr.emit(None, jax.random.PRNGKey(0), n)
-    assert e.dlogp is None and len(e) == len(Emission._fields)  # built-ins: no dlogp, the chain start unchanged
-    with pytest.raises(ValueError, match="density"):
-        lumen.source(density="cone")
+    assert len(e) == len(Photons._fields)
 
 
 def test_concat_reweight_and_the_beam():
@@ -181,7 +185,7 @@ def test_concat_reweight_and_the_beam():
     led = _led()
     a = led(led.values(), jax.random.PRNGKey(2), 8)
     c = concat(a, spot(0.0))
-    assert c.x.shape == (4104, 3) and c.dlogp.shape == (4104, 3) and float(np.abs(c.dlogp[8:]).max()) == 0.0
+    assert c.x.shape == (4104, 3)
     assert c.pol is None
 
 
@@ -210,9 +214,12 @@ def test_a_response_reads_the_histograms_with_its_keys():
     g = jax.grad(lambda s: sat_pe(h, {**p, "sensors/pmt/sat": s}).sum())(300.0)
     want = np.sum(1 - np.exp(-pe / 300.0) - pe / 300.0 * np.exp(-pe / 300.0))
     assert float(g) == pytest.approx(want, rel=1e-4)
-    nodes, late, early = rd.time_nodes(h, p)
+    nodes, late, early = rd.detection.masses(h, rd.detection.values(h, p))
     tot = np.asarray(nodes.sum(-1) + late[:, 0] + early[:, 0])
     np.testing.assert_allclose(tot, pe, rtol=1e-5)  # the time nodes carry pe
+    np.testing.assert_allclose(
+        np.asarray(rd.pe_density(h, p, dark=False).rate).sum(-1), pe, rtol=1e-4
+    )  # the profile: all in the gate
     wrong = lumen.response(group="other")(lambda h_, v: 0.0)
     with pytest.raises(ValueError, match="reads group"):
         wrong(h, p)
@@ -238,77 +245,77 @@ def lined(tmp_path_factory):
     return _examples().lined_tank(tmp_path_factory.mktemp("lined"))
 
 
-def test_a_registered_medium_and_surface_model_build_with_their_keys(lined):
+def test_a_medium_model_passed_as_a_value_builds_with_its_keys(lined):
     import jax
     import jax.numpy as jnp
 
     ex = _examples()
     plain = lumen.load(lined)
-    det = lumen.load(lined, models={"materials/Water": "mylab:water_hg", "surfaces/Liner": "mylab:schlick"})
+    det = lumen.load(lined, parts={"materials/Water": ex.water_hg})
     p = det.params()
     assert p["materials/Water/g"] == 0.9 and p.explain("materials/Water/g") == "model mylab:water_hg default"
-    assert p["surfaces/Liner/R0"] == 0.04 and p.info("surfaces/Liner/R0").range == (0.0, 1.0)
-    assert "materials/Water/g" not in plain.params() and set(plain.params()) <= set(p)
+    assert "materials/Water/g" not in plain.params()
+    assert set(p) - set(plain.params()) == {"materials/Water/g"}
     lib = det.parts.library
     ray = next(c for c in lib.media["Water"].medium.channels if c.name == "rayleigh")
     assert ray.lobe is lumen.media.henyey_greenstein("g")
     assert lib.media["Water"].params["rayleigh"]["lobe"] == {"g": 0.9}
-    assert lib.surfaces["Liner"].surface_type.name == "schlick" and lib.surfaces["Liner"].params == {"R0": 0.04}
-    src = det.parts.sources
+    src = det.parts.key_rows
     assert src[("media", "Water", "rayleigh", "lobe", "g")].key == "materials/Water/g"
-    assert src[("surfaces", "Liner", "R0")].key == "surfaces/Liner/R0"
-    q = p.set("materials/Water/g", 0.5).set("surfaces/Liner/R0", 0.2)
+    q = p.set("materials/Water/g", 0.5)
     named = det.pack(q)  # a value set: applied to the file (the declared property added) and packed
     assert named is not None
-    from lumen.format.apply import apply
-
-    df2 = apply(det.file, q)
-    assert float(df2.materials["Water"].properties["g"].value) == 0.5
     t = jax.jvp(lambda g: det.pack(p.set("materials/Water/g", g)), (jnp.float32(0.9),), (jnp.float32(1.0),))[1]
     assert any(float(jnp.abs(x).max()) == 1.0 for x in jax.tree_util.tree_leaves(t))  # g reaches the packed rows
     assert ex.water_hg.name == "mylab:water_hg"
 
 
-def test_a_detecting_model_and_the_refusals(lined):
-    import jax.numpy as jnp
+def test_the_model_refusals(lined):
+    """A surface is one of lumen's surface types (no surface model of your own); a medium model is a value or one of
+    lumen's own names; nothing is registered: a name the build's table does not hold is refused."""
+    import dataclasses
 
-    from lumen import models, plugins
     from lumen.build.library import LibraryError
 
-    det = lumen.load(lined, models={"surfaces/CathodeSurface": "mylab:schlick_cathode"})
-    sens = det.parts.library.sensors
-    e = next(v for k, v in sens.items() if k.endswith("CathodeSurface"))
-    # under lumen:pmt every absorption entering is counted: eff 1, folded into the type as lumen's own sensors' is
-    assert e.surface_type.name == "schlick_cathode{eff=1}" and e.params == {"R0": 0.04}
-    assert "surfaces/CathodeSurface/R0" in det.params()
-    with pytest.raises(LibraryError, match="not one this library reads"):
-        lumen.load(lined, models={"surfaces/Liner": "mylab:nothing"})
-    with pytest.raises(LibraryError, match="as a medium"):
-        lumen.load(lined, models={"materials/Water": "mylab:schlick"})
+    ex = _examples()
+    assert not hasattr(lumen, "surface_model") and not hasattr(lumen, "plugins")
     with pytest.raises(ValueError, match="not materials"):
-        lumen.load(lined, models={"materials/Nope": "mylab:water_hg"})
+        lumen.load(lined, parts={"surfaces/Liner": ex.water_hg})
+    with pytest.raises(LibraryError, match="neither a medium model"):
+        lumen.load(lined, parts={"materials/Water": "mylab:water_hg"})  # a name alone: no registry to find it in
+    with pytest.raises(ValueError, match="not materials"):
+        lumen.load(lined, parts={"materials/Nope": ex.water_hg})
+    from lumen.build import build
 
-    @lumen.surface_model("test:leaky", params={"a": Param("", (0, 1), default=0.5)})
-    def leaky(surface, base):
-        def probs(p, ctx):
-            return lumen.surfaces.outcome_vector(specular=p["a"] * jnp.ones_like(ctx["lam"]))  # sums to a, not 1
+    named = lumen.load(lined, parts={"materials/Water": ex.water_hg}).file
+    with pytest.raises(LibraryError, match="not one this build reads as a medium"):
+        build.build(named, lumen.load(lined).sensor_set)  # the file names it, the build was not given it
+    water = named.materials["Water"]  # a file naming importable code ("module:attr"): a name, never imported
+    code = dataclasses.replace(named, materials={**named.materials, "Water": dataclasses.replace(
+        water, optics=dataclasses.replace(water.optics, name="json:dumps"))})  # fmt: skip
+    with pytest.raises(LibraryError, match="not one this build reads as a medium"):
+        build.build(code, lumen.load(lined).sensor_set)
 
-        return lumen.surfaces.SurfaceType("leaky", ("a",), (lumen.surfaces.SPECULAR,), probs)
+    @lumen.medium_model("test:twice")
+    def twice(material, base):
+        return base
 
-    with pytest.raises(models.ModelError, match="summing to 1"):
-        lumen.load(lined, models={"surfaces/Liner": "test:leaky"})
-    with pytest.raises(ValueError, match="registered already"):
-        lumen.surface_model("test:leaky")(lambda s, b: None)
+    other = lumen.medium_model("test:twice")(lambda m, b: None)
+    from lumen.models import model_table
+
+    with pytest.raises(ValueError, match="two models of one name"):
+        model_table([twice, other])
+    assert model_table([twice, twice]) == {"test:twice": twice}
     with pytest.raises(ValueError, match="lumen's own"):
         lumen.medium_model("geant4")(lambda m, b: b)
     with pytest.raises(TypeError, match="scalar"):
         lumen.medium_model("test:vec", params={"v": Param("", shape=(2,), default=(0, 0))})
-    assert "test:leaky" in plugins.optics_models.names()
+    assert dataclasses.is_dataclass(twice) and twice.name == "test:twice"
 
 
 def test_a_lobe_is_checked_against_its_density():
-    from lumen.extend import check_lobe
-    from lumen.models import ModelError
+    from lumen._core.errors import ModelError
+    from lumen.tools.extend import check_lobe
 
     hg = lumen.media.henyey_greenstein("g")
     for g in (-0.5, 0.0, 0.9):
@@ -320,19 +327,18 @@ def test_a_lobe_is_checked_against_its_density():
         check_lobe(wrong, {"g": 0.9})
 
 
-def test_lumen_s_own_models_are_registered_like_any_other(lined):
-    """One dispatch: lumen's own models are registry entries, read by name like a user's (and cannot be replaced)."""
-    from lumen import models
+def test_lumen_s_own_models_are_the_build_s_table(lined):
+    """lumen's own models are the build's table by name (no registry), and a model of your own cannot take a name of
+    theirs."""
+    from lumen.build import library
 
-    assert {"geant4", "lumen:opaque", "lumen:same_as", "lumen:larsoft_lar"} <= set(models.names("medium"))
-    assert {"geant4", "lumen:larsoft_reflector", "lumen:wls_film"} <= set(models.names("surface"))
-    assert models.names("reader") == ["lumen:complex_index", "lumen:geant4"] and models.names("counting") == [
-        "lumen:counting"
-    ]
+    assert set(library.MEDIA) == {"geant4", "lumen:opaque"}
     det = lumen.load(lined)
-    assert det.parts.library.surfaces["Liner"].surface_type.name == "specular_metal"
+    from lumen.surfaces import types
+
+    assert det.parts.library.surfaces["Liner"].surface_type == types.no_detection(types.SPECULAR_METAL)
     with pytest.raises(ValueError, match="lumen's own"):
-        lumen.surface_model("lumen:geant4")
+        lumen.medium_model("lumen:geant4")
 
 
 def test_with_responses_adds_keys_and_refuses_a_taken_one(lined):
@@ -346,6 +352,21 @@ def test_with_responses_adds_keys_and_refuses_a_taken_one(lined):
         det.with_responses(taken)
 
 
+def test_a_calibration_of_a_response_loads_with_the_response(lined, tmp_path, monkeypatch):
+    """A calibration saved after with_responses holds the response's keys: it loads with load(responses=), and without
+    them it names the unknown key (UnknownParamKey, the nearest keys), not a bare KeyError."""
+    from lumen.params import UnknownParamKey
+
+    ex = _examples()
+    d2 = lumen.load(lined).with_responses(ex.saturating_pe)
+    d2.save_calibration(d2.params().set("sensors/pmt/sat", 250.0), "satcal", tmp_path)
+    monkeypatch.setenv("LUMEN_DETECTORS", str(tmp_path))
+    back = lumen.load(lined, calibration="satcal", responses=(ex.saturating_pe,))
+    assert back.params()["sensors/pmt/sat"] == 250.0
+    with pytest.raises(UnknownParamKey, match="sensors/pmt/sat"):
+        lumen.load(lined, calibration="satcal")
+
+
 def test_the_guide_shows_the_examples_as_they_are_tested():
     """Every worked example of docs/howto/extending.md is examples/extending.py's code, verbatim."""
     import re
@@ -355,7 +376,7 @@ def test_the_guide_shows_the_examples_as_they_are_tested():
     ex = (root / "examples" / "extending.py").read_text()
     guide = (root / "docs" / "howto" / "extending.md").read_text()
     names = re.findall(r"<!-- example: (\w+) -->", guide)
-    assert set(names) == set(re.findall(r"^# example: (\w+)$", ex, re.M)) and len(names) >= 8
+    assert set(names) == set(re.findall(r"^# example: (\w+)$", ex, re.M)) and len(names) >= 5
     for name in names:
         i = ex.index(f"# example: {name}\n") + len(f"# example: {name}\n")
         code = ex[i : ex.index("# end example", i)].rstrip()
@@ -365,17 +386,17 @@ def test_the_guide_shows_the_examples_as_they_are_tested():
 def test_check_source_compares_the_draws_with_a_density():
     import jax.numpy as jnp
 
-    from lumen.extend import check_source
+    from lumen.tools.extend import check_source
 
     led = _examples().cos_m_led(4.0)
     good = check_source(led, logpdf=lambda d: 4.0 * jnp.log(jnp.clip(-d[2], 1e-12)))
     assert good.passes, good
     bad = check_source(led, logpdf=lambda d: 2.0 * jnp.log(jnp.clip(-d[2], 1e-12)))
-    assert not bad.passes and bad.dlogp_error > 0.1, bad
+    assert not bad.passes, bad
 
 
 def test_every_module_the_guide_names_resolves_after_a_bare_import():
-    """``lumen.X`` as the guide writes it (lumen.validate.check_gradient, lumen.extend, ...), in a fresh interpreter."""
+    """``lumen.X`` as the guide writes it (lumen.tools.check_gradient, lumen.tools.extend, ...), in a new process."""
     import re
     import subprocess
     import sys
@@ -384,7 +405,7 @@ def test_every_module_the_guide_names_resolves_after_a_bare_import():
     root = Path(__file__).resolve().parents[2]
     text = (root / "docs" / "howto" / "extending.md").read_text() + (root / "examples" / "extending.py").read_text()
     names = sorted({m for m in re.findall(r"\blumen\.([a-z_]+)\b", text) if m != "optics_models"})  # a group name
-    assert {"validate", "extend", "sources", "media", "surfaces", "readout"} <= set(names)
+    assert {"tools", "sources", "media", "surfaces", "readout"} <= set(names)
     code = "import lumen\n" + "".join(f"getattr(lumen, {n!r})\n" for n in names)
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=None)
     assert r.returncode == 0, r.stderr[-2000:]

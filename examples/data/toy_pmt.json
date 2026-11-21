@@ -1,9 +1,7 @@
 {
- "schema": "lumen-pmt-values/1",
- "model": "lumen:pmt",
- "model_version": 1,
+ "schema": "lumen-sensor-values/1",
+ "model": "lumen:sensor",
  "name": "toy_pmt",
- "version": 1,
  "readout": "waveform",
  "provenance": {
   "source": "lumen documentation: illustrative values for the tutorial, not a real PMT",
@@ -25,6 +23,6 @@
  "dark_rate_hz": 1000.0,
  "frontend": {"sampling_ns": 2.0, "unit": "ADC", "baseline": 100.0, "noise": 1.0, "window_ns": 0.0,
               "charge_noise_pe": 0.0, "charge_scale": 1.0, "charge_step_pe": 0.05, "charge_max_pe": 32.0},
- "ranges": {"t_offset": [-10.0, 10.0], "tts/sigma": [0.5, 3.0], "pulse/t_peak": [5.0, 20.0],
+ "ranges": {"t_offset": [-10.0, 10.0], "pulse/t_peak": [5.0, 20.0],
             "pulse/sigma_rise": [0.5, 4.0], "pulse/sigma_fall": [2.0, 12.0]}
 }

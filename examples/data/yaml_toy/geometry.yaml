@@ -1,0 +1,32 @@
+# yaml_toy: a water cylinder (radius 0.5 m, height 1 m) lined with a black sheet, with six disc PMTs facing inwards.
+# Written by hand for the lumen documentation (docs/howto/yaml-detector.md); Apache-2.0 like the rest of lumen.
+# Lengths and angles may be written with their unit ("480*mm", "90*deg"); a bare number is in m or rad.
+schema: lumen-detector-yaml/3      # every file starts with the format it is written in
+name: yaml_toy
+detector_volume: Tank            # light leaving the water is absorbed (after the Liner skin)
+# world: left out, so it is the one volume nothing places (World)
+
+solids:                          # Geant4's solids as GDML spells them: a box's x, y, z and a tube's z are full lengths
+  WorldBox: {type: box, params: {x: 3*m, y: 3*m, z: 3*m}}
+  TankTube: {type: tube, params: {rmax: 500*mm, z: 1*m}}       # rmin 0 and a full turn when left out
+  PMTDisc: {type: tube, params: {rmax: 40*mm, z: 20*mm}}
+
+volumes:                         # daughters left out: the placements below, in their order
+  World: {solid: WorldBox, material: Air}
+  Tank: {solid: TankTube, material: Water}
+  PMT: {solid: PMTDisc, material: Glass}
+
+placements:                      # position and rotation default to zero
+  - {name: TankPV, volume: Tank, mother: World}
+  - {name: PMT_top, volume: PMT, mother: Tank, copy: 0, position: [0, 0, 480*mm]}
+  - {name: PMT_bottom, volume: PMT, mother: Tank, copy: 1, position: [0, 0, -480*mm]}
+  - {name: PMT_east, volume: PMT, mother: Tank, copy: 2, position: [460*mm, 0, 0], rotation: [0, 90*deg, 0]}
+  - {name: PMT_west, volume: PMT, mother: Tank, copy: 3, position: [-460*mm, 0, 0], rotation: [0, 90*deg, 0]}
+  - {name: PMT_north, volume: PMT, mother: Tank, copy: 4, position: [0, 460*mm, 0], rotation: [90*deg, 0, 0]}
+  # a rotation may be the matrix that turns the PMT's frame into the tank's (here its axis, z, onto the tank's -y)
+  - name: PMT_south
+    volume: PMT
+    mother: Tank
+    copy: 5
+    position: [0, -460*mm, 0]
+    rotation: {matrix: [[1, 0, 0], [0, 0, -1], [0, 1, 0]]}

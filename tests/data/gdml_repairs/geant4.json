@@ -1,8 +1,8 @@
 {
- "what": "Stock Geant4's GDML reader on one toy per exporter-defect case (tests/data/gdml_repairs/*.gdml), and on each toy repaired by refs/gdml_repair.py with its case's repair (sha256 of the repaired text)",
+ "what": "Stock Geant4's GDML reader on one toy per exporter-defect case (tests/data/gdml_repairs/*.gdml), and on each toy repaired by python -m lumen.gdml.repair with its case's repair (sha256 of the repaired text)",
  "how": "g4ref --gdml TOY --dump '^lumen_no_such_volume$' (load, then exit), G4GDMLParser::Read(file, false)",
  "geant4": {
-  "10.7.4": "develop.sif (Geant4 10.7.4), g4ref built against it (lumen's g4ref/build)",
+  "10.7.4": "a Geant4 10.7.4 image, g4ref built against it (tools/g4ref/build.sh)",
   "11.2.2": "Geant4 11.2.2, g4ref built against it"
  },
  "measured": "2026-11-09",
@@ -84,23 +84,13 @@
    }
   },
   "constant_surface_table": {
-   "case": "constant_surface_table",
+   "case": "accepted",
    "geant4": {
     "10.7.4": {
      "loads": true
     },
     "11.2.2": {
      "loads": true
-    }
-   },
-   "repaired": {
-    "repairs": [
-     "constant_surface_table"
-    ],
-    "sha256": "88aae60dd90fd4406217fad5df1087271febbdfb98b69b47b24a1bd7a3066122",
-    "geant4": {
-     "10.7.4": true,
-     "11.2.2": true
     }
    },
    "geant4_ignores": "loads; G4GDMLReadSolids.cc:3556 stores the coldim 1 TRANSMITTANCE as a constant property, which G4OpBoundaryProcess never reads (GetProperty(kTRANSMITTANCE), G4OpBoundaryProcess.cc:394): T stays at its default 0 (l. 310)"

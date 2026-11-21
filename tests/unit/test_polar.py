@@ -45,7 +45,6 @@ def test_amplitudes_against_float64_and_energy(n1, n2):
         rs, rp, ts, tp = (complex(x) for x in fresnel.amplitudes(F32(c), F32(n1), F32(n2)))
         Rs, Rp = np_reflectances(c, n1, n2)
         assert abs(abs(rs) ** 2 - Rs) < 2e-5 and abs(abs(rp) ** 2 - Rp) < 2e-5, (c, rs, rp, Rs, Rp)
-        assert abs(0.5 * (Rs + Rp) - float(fresnel.unpolarised_reflectance(F32(c), F32(n1), F32(n2)))) < 2e-5
         s2 = (n1 / n2) ** 2 * (1 - c * c)
         if s2 < 1:  # T = (n2 cos_t / n1 cos_i) |t|^2 = 1 - R per component
             f = n2 * math.sqrt(1 - s2) / (n1 * c)

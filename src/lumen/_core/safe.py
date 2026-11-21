@@ -8,6 +8,27 @@ singular (the "double where").
 import jax
 import jax.numpy as jnp
 
+from lumen.rules.choices import FLOOR32
+
+
+def traced(v) -> bool:
+    """Return whether any leaf of the pytree ``v`` is a JAX tracer (a value inside a transformation), not concrete."""
+    return any(isinstance(x, jax.core.Tracer) for x in jax.tree_util.tree_leaves(v))
+
+
+@jax.custom_jvp
+def score(logp):
+    """Return 1, exactly, with the derivative of ``logp``: the weight of draws kept fixed while their log density moves.
+
+    ``w = w0 * score(logp_live(d))``: directions (or wavelengths, positions) drawn once and kept, their density's
+    parameters live; the value is unchanged and the derivative is the score, d logp (``lumen.sources.reweight``; the
+    transport's ``estimator.reweight_log(lp, sg(lp))`` for a finite lp).
+    """
+    return jnp.ones_like(logp)
+
+
+score.defjvp(lambda primals, tangents: (jnp.ones_like(primals[0]), tangents[0]))
+
 
 def sanitize(ok, x, fill):
     """Return x where ok, else a harmless fill value; apply it before a function that is singular where not ok."""
@@ -28,7 +49,19 @@ def unit(v, axis=-1, fallback=None):
     return jnp.where(ok, u, v if fallback is None else fallback)
 
 
-def safe_log(x, floor=1e-30):
+TINY_NORMAL = float(jnp.finfo(jnp.float32).tiny)  # float32's smallest normal number
+
+
+def safe_norm(v, axis=-1):
+    """Return |v| = sqrt(max(sum v^2, TINY_NORMAL)): a positive divisor whose derivative is finite (0) at v = 0.
+
+    ``v / jnp.maximum(jnp.linalg.norm(v), floor)`` is NaN in reverse mode at v = 0 (the norm's derivative v / |v|);
+    here the floor is on the square, below which the derivative is 0, so v / safe_norm(v) is 0 at v = 0 both ways.
+    """
+    return jnp.sqrt(jnp.maximum(jnp.sum(v * v, axis=axis), TINY_NORMAL))
+
+
+def safe_log(x, floor=FLOOR32):
     """Return log(max(x, floor)): finite value and derivative for x <= 0 (derivative 0 below the floor)."""
     ok = x > floor
     return jnp.where(ok, jnp.log(sanitize(ok, x, 1.0)), jnp.log(floor))
@@ -50,6 +83,12 @@ def clip01(x):
 def _clip01_jvp(primals, tangents):
     (x,), (t,) = primals, tangents
     return clip01(x), jnp.where((x >= 0.0) & (x <= 1.0), t, jnp.zeros_like(t))
+
+
+def ratio(live, ref):
+    """Return live / sg(ref): value live / ref (1 when equal), derivative d live / ref; 0 where ref = 0 (the transport's
+    and the sources' one weight of a choice drawn at the reference, ``lumen.transport.estimator``)."""  # noqa: D205, D209
+    return safe_div(live, jax.lax.stop_gradient(ref))
 
 
 def safe_div(a, b, fill=0.0):

@@ -30,14 +30,14 @@ import lumen
 from lumen._core import rng
 from lumen.build import spec
 from lumen.format import schema
-from lumen.gdml import exporter
+from lumen.gdml import exporter, importer
 from lumen.media import bulk, phase
 from lumen.rules import optics as rules
+from lumen.tools.stats import ALPHA, SUITE_TESTS, z_limit
 
 F32 = jnp.float32
 DATA = Path(__file__).resolve().parents[1] / "data" / "g4ref_mie"
-Z_MAX = 4.5
-P_MIN = 1e-3  # the smallest chi2 p-value a distribution test accepts
+P_MIN = ALPHA / SUITE_TESTS  # the smallest chi2 p-value a distribution test accepts: the suites' one level
 G = (0.0, 0.3, 0.9, 0.99, 0.999)
 CASES = [(gf, gb, r) for gf in G for gb in G for r in (0.0, 0.3, 1.0)]
 CASES += [(-0.5, 0.4, 0.6), (0.7, -0.6, 0.2), (-0.999, -0.999, 0.5), (0.6, 0.3, 0.7), (0.0, 0.8, 0.5)]
@@ -200,7 +200,7 @@ def test_the_score_identity_and_finite_derivatives_forward_and_reverse():
                 assert np.max(np.abs(g)) < 1e-5, case
                 continue
             z = g.mean() / max(g.std(ddof=1) / math.sqrt(n), 1e-30)
-            assert abs(z) < Z_MAX, (case, name, z)
+            assert abs(z) < z_limit(len(g_p)), (case, name, z)
         tangent = {k: jnp.ones_like(v) for k, v in p.items()}
         _, t = jax.jvp(lambda q: jax.vmap(lambda w: lp(q, wi, w))(wo[:1000]), (p,), (tangent,))
         assert np.all(np.isfinite(np.asarray(t))), case
@@ -209,14 +209,14 @@ def test_the_score_identity_and_finite_derivatives_forward_and_reverse():
 @pytest.mark.parametrize("case", [(0.0, 0.0, 0.5), (0.6, 0.3, 0.7), (0.0, 0.8, 0.5), (0.95, 0.0, 1.0),
                                   (0.0, 0.9, 0.0), (0.999, 0.999, 0.3), (-0.5, 0.4, 0.6)])  # fmt: skip
 def test_henyey_greenstein_moments(case):
-    """<P_l(mu)> = r g_f^l + (1 - r) (-g_b)^l for l = 1..4 from 1e6 draws, |z| <= 4.5."""
+    """<P_l(mu)> = r g_f^l + (1 - r) (-g_b)^l for l = 1..4 from 1e6 draws, |z| within the suites' threshold."""
     gf, gb, r = case
     _, mu = sample_mu(case, 1_000_000, seed=17)
     for order in range(1, 5):
         pl = np.polynomial.legendre.legval(mu, [0] * order + [1])
         truth = r * gf**order + (1 - r) * (-gb) ** order
         z = (pl.mean() - truth) / (pl.std(ddof=1) / math.sqrt(len(pl)))
-        assert abs(z) < Z_MAX, (case, order, pl.mean(), truth, z)
+        assert abs(z) < z_limit(4), (case, order, pl.mean(), truth, z)
 
 
 @pytest.mark.parametrize("geant4", ["10.7.4", "11.2.2"])
@@ -240,7 +240,7 @@ def test_single_scatter_angles_match_geant4(geant4, name):
 
 # --------------------------------------------------------------------------------------- reading the tables
 def _mie_props(**consts):
-    out = {"MIEHG": schema.Property("MIEHG", np.array([20.0, 5.0]), np.array([2.0, 4.5]))}
+    out = {"MIEHG": schema.Property("MIEHG", np.array([20.0, 5.0]), energy=np.array([2.0, 4.5]))}
     out.update({k: schema.Property(k, np.asarray(v, np.float64)) for k, v in consts.items()})
     return out
 
@@ -262,7 +262,7 @@ def test_the_mie_channel_comes_between_rayleigh_and_wls(liq):
     assert e.params["mie"]["lobe"] == {"g_forward": 0.6, "g_backward": 0.3, "forward_ratio": 0.7}
     ev = bulk.evaluate(e.medium, jax.tree_util.tree_map(lambda x: jnp.asarray(x, F32), e.params), F32(1239.841984 / 4))
     assert abs(float(ev["mu"][1]) - 1 / np.interp(4.0, [2.0, 4.5], [20.0, 5.0])) < 1e-6
-    bulk.validate(e.medium, e.params, 300.0, 600.0)
+    bulk.validate(e.medium, e.params)
     # a medium without MIEHG is unchanged: no channel, no parameters
     assert [c.name for c in rules.medium(liq).medium.channels] == ["rayleigh"]
 
@@ -279,7 +279,7 @@ def test_mie_constants_read_as_geant4_reads_them(liq):
     refused("outside", MIEHG_FORWARD=0.5, MIEHG_BACKWARD=0.3, MIEHG_FORWARD_RATIO=1.2)
     with pytest.raises(rules.OpticsRefused, match="MIEHG must be a table"):
         rules.medium(_with(liq, {"MIEHG": schema.Property("MIEHG", np.asarray(20.0))}))
-    tab = schema.Property("MIEHG_FORWARD", np.array([0.5, 0.6]), np.array([2.0, 4.5]))
+    tab = schema.Property("MIEHG_FORWARD", np.array([0.5, 0.6]), energy=np.array([2.0, 4.5]))
     with pytest.raises(rules.OpticsRefused, match="must be a constant"):
         rules.medium(_with(liq, {**_mie_props(MIEHG_BACKWARD=0.3, MIEHG_FORWARD_RATIO=0.7), "MIEHG_FORWARD": tab}))
     # negative g is Geant4's flipped lobe; a constant never read may be absent (ratio 1: the backward g)
@@ -315,7 +315,7 @@ def test_a_mie_detector_converts_loads_calibrates_and_exports(tmp_path):
     path = lumen.convert(write(tmp_path, MIE_GDML[:start] + MIE_GDML[end:]), RECIPE, tmp_path / "mie.lumen")
     det = lumen.load(path)
     p = det.params()
-    for key, (unit, rng_) in {"MIEHG": ("m", (0.0, math.inf)), "MIEHG_FORWARD": ("", (-0.999, 0.999)),
+    for key, (unit, rng_) in {"MIEHG": ("m", (math.ulp(0.0), math.inf)), "MIEHG_FORWARD": ("", (-0.999, 0.999)),
                               "MIEHG_BACKWARD": ("", (-0.999, 0.999)),
                               "MIEHG_FORWARD_RATIO": ("", (0.0, 1.0))}.items():  # fmt: skip
         info = p.info(f"materials/Water/{key}")
@@ -327,8 +327,8 @@ def test_a_mie_detector_converts_loads_calibrates_and_exports(tmp_path):
     packed = det.pack(p.set("materials/Water/MIEHG_FORWARD", 0.8))
     assert np.asarray(packed["media"][water]["mie"]["lobe"]["g_forward"]).item() == pytest.approx(0.8)
     # GDML export writes the three constants back (coldim 1) and the read-back file is the same
-    exporter.export(det.file, tmp_path / "x" / "mie.gdml", scope="full")
-    back = exporter.read_export(tmp_path / "x" / "mie.gdml").detector_file
+    exporter.export(det.file, tmp_path / "x" / "mie.gdml")
+    back = importer.read_gdml(tmp_path / "x" / "mie.gdml", warn=False)
     for key in ("MIEHG", *rules.MIE_KEYS):
         a, b = det.file.materials["Water"].properties[key], back.materials["Water"].properties[key]
         np.testing.assert_array_equal(a.value, b.value)

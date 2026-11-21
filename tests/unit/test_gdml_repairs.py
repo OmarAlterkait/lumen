@@ -1,8 +1,8 @@
-"""The exporter defects stock Geant4 refuses: lumen repairs each, always, with a warning naming the object, what Geant4
-does and the repair, and the repair is the one lumen.gdml.repair applies to a Geant4 reference input.
+"""lumen's reader refuses what stock Geant4 refuses, and repairs nothing; ``python -m lumen.gdml.repair`` is the one
+repair, run apart, and its copy is what both Geant4 and lumen read.
 
 tests/data/gdml_repairs holds one GDML toy per case and geant4.json, what Geant4 10.7.4 and 11.2.2 did with each
-(g4ref, load and exit) and with each toy repaired by refs/gdml_repair.py (the repaired text's sha256).
+(g4ref, load and exit) and with each toy repaired by python -m lumen.gdml.repair (the repaired text's sha256).
 """
 
 import hashlib
@@ -12,9 +12,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from lumen.format import io
 from lumen.gdml import importer, reader
 from lumen.gdml import repair as gdml_repair
+from lumen.units import HUGE
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "tests" / "data" / "gdml_repairs"
@@ -22,79 +22,75 @@ G4 = json.loads((DATA / "geant4.json").read_text())["toys"]
 REPAIRABLE = sorted(n for n, t in G4.items() if "repaired" in t)
 
 
-def _contents(df):
-    """Every content file, and the report without the repair lines."""
-    f = {k: v for k, v in io.to_files(df).items() if k != "detector.json"}
-    return f, [ln for ln in df.report if not ln.startswith("repaired (")]
-
-
 def test_the_toys_and_both_geant4_versions_agree():
     assert set(G4) == {p.stem for p in DATA.glob("*.gdml")}
     for name, t in G4.items():
         a, b = t["geant4"]["10.7.4"], t["geant4"]["11.2.2"]
         assert a == b, name  # the same verdict and message in both versions
-        assert a["loads"] == (t["case"] == "accepted" or "geant4_ignores" in t), name  # loads, reads it otherwise
+        assert a["loads"] == (t["case"] == "accepted"), name
         assert t.get("repaired", {}).get("geant4", {"10.7.4": True, "11.2.2": True}) == {"10.7.4": True, "11.2.2": True}
-    assert set(gdml_repair.REPAIRS) == set(reader.REPAIRS) == {t["case"] for t in G4.values() if "repaired" in t}
+    assert set(gdml_repair.REPAIRS) == {t["case"] for t in G4.values() if "repaired" in t}
 
 
 @pytest.mark.parametrize("name", sorted(G4))
-def test_lumen_repairs_what_geant4_refuses_with_a_warning(name):
-    """A repairable defect is read with one warning per repair naming the object, Geant4's behaviour and the tool;
-    a case Geant4 refuses that has no repair is still refused, and an accepted file gives no repair warning."""
+def test_lumen_refuses_what_geant4_refuses(name):
+    """A file Geant4 refuses is a GDMLError naming the repair (when there is one); a file it loads is read."""
     t, path = G4[name], DATA / f"{name}.gdml"
-    if "repaired" in t:
-        with pytest.warns(reader.GDMLRepairWarning) as seen:
-            df = importer.read_gdml(path)
-        msgs = [str(w.message) for w in seen if issubclass(w.category, reader.GDMLRepairWarning)]
-        assert all(f"exporter defect {t['case']!r}" in m and "Stock Geant4" in m and path.name in m
-                   and "python -m lumen.gdml.repair SRC DST" in m for m in msgs), msgs  # fmt: skip
-        assert df.provenance["repairs"] == [t["case"]]
-        return
     if t["case"] == "accepted":
-        import warnings
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", reader.GDMLRepairWarning)
-            importer.read_gdml(path)
+        importer.read_gdml(path, warn=False)
         return
-    with pytest.raises((reader.GDMLError, importer.ImportRefused)):
-        importer.read_gdml(path)
+    with pytest.raises(reader.GDMLError) as err:
+        importer.read_gdml(path, warn=False)
+    if "repaired" in t:
+        assert f"the repair {t['case']!r}" in str(err.value) and "python -m lumen.gdml.repair" in str(err.value)
 
 
 @pytest.mark.parametrize("name", REPAIRABLE)
-def test_the_repair_is_the_reference_side_repair(tmp_path, name):
-    """lumen reads the toy with its repair as it reads refs/gdml_repair.py's output (the file Geant4 loaded) without."""
+def test_the_repaired_copy_is_what_geant4_loaded_and_lumen_reads(tmp_path, name):
     t = G4[name]
     src = DATA / f"{name}.gdml"
     text, lines = gdml_repair.repair(src.read_text())  # every repair: each edits only its own defect
     assert lines and hashlib.sha256(text.encode()).hexdigest() == t["repaired"]["sha256"]
     (tmp_path / src.name).write_text(text)
-    with pytest.warns(reader.GDMLRepairWarning):
-        a = importer.read_gdml(src)
-    b = importer.read_gdml(tmp_path / src.name)
-    assert _contents(a) == _contents(b)
-    assert any(ln.startswith(f"repaired ({t['case']})") for ln in a.report)
-    assert a.provenance["repairs"] == [t["case"]] and "repairs" not in b.provenance
+    df = importer.read_gdml(tmp_path / src.name, warn=False)
+    assert df.provenance["source"]["sha256"] == "sha256:" + hashlib.sha256(text.encode()).hexdigest()
 
 
-def test_what_each_repair_reads():
-    def read(name, kind):
-        with pytest.warns(reader.GDMLRepairWarning, match=kind):
-            return importer.read_gdml(DATA / f"{name}.gdml")
+def _repaired(tmp_path, name):
+    (tmp_path / f"{name}.gdml").write_text(gdml_repair.repair((DATA / f"{name}.gdml").read_text())[0])
+    return importer.read_gdml(tmp_path / f"{name}.gdml", warn=False)
 
-    water = read("matrix_tail", "matrix_tail").materials["Water"].properties
+
+def test_what_each_repair_writes(tmp_path):
+    water = _repaired(tmp_path, "matrix_tail").materials["Water"].properties
     np.testing.assert_array_equal(water["ABSLENGTH"].value, [1.0, 2.0])  # m: the tail (5e-06) dropped
-    water = read("constant_property", "constant_property").materials["Water"]
+    water = _repaired(tmp_path, "constant_property").materials["Water"]
     assert "SCINTILLATIONYIELD" not in water.properties and "SCINTILLATIONYIELD" not in water.inert
-    assert "RAYLEIGH" not in read("constant_property_optical", "constant_property").materials["Water"].properties
-    assert read("denormal_attribute", "denormal").placements[0].position == (0.0, 0.0, 0.0)
-    np.testing.assert_array_equal(read("denormal_matrix", "denormal").materials["Water"].properties["ABSLENGTH"].value,
-                                  [1.0, 0.0])  # fmt: skip
-    rix = read("neg_inf_matrix", "non_finite").materials["Water"].properties["RINDEX"].value
-    np.testing.assert_array_equal(rix, [1.33, -1e30])
-    win = read("constant_surface_table", "constant_surface_table").surfaces["Win"]
+    water = _repaired(tmp_path, "constant_property_optical").materials["Water"]
+    assert "RAYLEIGH" not in water.properties  # the GDML's constant deleted
+    from lumen.rules import optics
+
+    assert optics.geant4_rayleigh(water) is not None  # Geant4's own table of Water, derived at load
+    assert _repaired(tmp_path, "denormal_attribute").placements[0].position == (0.0, 0.0, 0.0)
+    abs_ = _repaired(tmp_path, "denormal_matrix").materials["Water"].properties["ABSLENGTH"].value
+    np.testing.assert_array_equal(abs_, [1.0, 0.0])
+    rix = _repaired(tmp_path, "neg_inf_matrix").materials["Water"].properties["RINDEX"].value
+    np.testing.assert_array_equal(rix, [1.33, -HUGE])
+
+
+def test_a_constant_on_a_table_key_is_left_out_on_surfaces_and_materials_alike(tmp_path):
+    """G4GDMLReadSolids / Materials::PropertyRead store a coldim 1 matrix as a constant property, which no process
+    reads under a table key (GetProperty): Geant4 loads the file and the key is absent, on both owners."""
+    df = importer.read_gdml(DATA / "constant_surface_table.gdml", warn=False)
+    win = df.surfaces["Win"]
     assert "TRANSMITTANCE" not in win.properties and "REFLECTIVITY" in win.properties  # Geant4's T: its default 0
+    assert any("opticalsurface 'Win'.TRANSMITTANCE: left out" in ln for ln in df.report)
+    text = (DATA / "constant_surface_table.gdml").read_text()
+    text = text.replace('<property name="RINDEX" ref="RIX"/>', '<property name="RINDEX" ref="STRANS"/>')
+    (tmp_path / "m.gdml").write_text(text)
+    df = importer.read_gdml(tmp_path / "m.gdml", warn=False)
+    assert "RINDEX" not in df.materials["Water"].properties
+    assert any("material 'Water'.RINDEX: left out" in ln for ln in df.report)
 
 
 def test_geant4s_value_count_and_redefinitions_it_accepts():
@@ -104,6 +100,14 @@ def test_geant4s_value_count_and_redefinitions_it_accepts():
     assert any("end in whitespace" in ln for ln in doc.report)
     doc = reader.read(DATA / "redefinition_position.gdml")
     assert doc.positions["P1"] == (0.001, 0.0, 0.0) and any("Geant4 keeps the last" in ln for ln in doc.report)
+
+
+def test_attribute_names_are_matched_exactly(tmp_path):
+    """Geant4 reads ``x`` and ignores ``X`` (it would read x as 0): lumen refuses the file."""
+    text = (DATA / "clean.gdml").read_text().replace('<box name="Tank" x=', '<box name="Tank" X=', 1)
+    (tmp_path / "upper.gdml").write_text(text)
+    with pytest.raises(reader.GDMLError, match="attribute 'X' is not one Geant4 reads for box"):
+        importer.read_gdml(tmp_path / "upper.gdml", warn=False)
 
 
 def test_the_tool_checks_the_repair_names():
@@ -119,13 +123,9 @@ def test_the_tool_keeps_every_other_byte():
     assert gdml_repair.repair(clean, list(gdml_repair.REPAIRS)) == (clean, [])
 
 
-def test_repair_warnings_are_grouped_by_repair_and_object():
-    """Two occurrences of one repair on one object give one warning with the count; the report keeps both."""
-    doc = reader.GDMLDocument("toy.gdml")
-    doc.defect("matrix_tail", "matrix 'A': 5 values", "dropped 1")
-    doc.defect("matrix_tail", "matrix 'A': 7 values", "dropped 1")
-    doc.defect("matrix_tail", "matrix 'B': 3 values", "dropped 1")
-    with pytest.warns(reader.GDMLRepairWarning) as seen:
-        doc.warn_repairs()
-    msgs = [str(w.message) for w in seen]
-    assert len(msgs) == 2 and "(2 occurrences on this object)" in msgs[0] and len(doc.report) == 3
+def test_the_reader_the_repair_and_the_exporter_share_one_set_of_lexical_rules():
+    from lumen.gdml import exporter, lexical, reader, repair
+
+    for name in ("SKIP_LITERALS", "NUMBER", "BIG_EXPONENT", "TINY"):
+        assert getattr(reader, name) is getattr(lexical, name) and getattr(repair, name) is getattr(lexical, name)
+    assert exporter.TINY is lexical.TINY

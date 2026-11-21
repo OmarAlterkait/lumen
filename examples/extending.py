@@ -1,7 +1,7 @@
 """The worked examples of docs/howto/extending.md, as the guide shows them; tests/physics/test_extend.py checks each.
 
 Each example is user code: it imports lumen and nothing private. The detector is the tutorial's tank
-(``example_tank.detector()``); every derivative is checked AD against FD with ``lumen.validate.check_gradient``.
+(``example_tank.detector()``); every derivative is checked AD against FD with ``lumen.tools.check_gradient``.
 """
 # ruff: noqa: D103  (the guide explains each example)
 # fmt: off
@@ -13,17 +13,16 @@ import jax.numpy as jnp
 
 import lumen
 from lumen import Param
-from lumen.sources import cone_about, gaussian_spot, grad_logpdf, reweight
+from lumen.sources import cone_about, gaussian_spot, reweight
 
 
 # ---------------------------------------------------------------- 2. a source function: an LED and a laser in one
 # example: flasher
-@lumen.source(params={"led_x": Param("m", shape=(3,), moves=True, default=(0.0, 0.0, 0.2)),
+@lumen.source(params={"led_x": Param("m", shape=(3,), method="moving_paths", default=(0.0, 0.0, 0.2)),
                       "led_axis": Param("", shape=(3,), default=(0.0, 0.0, -1.0)), "m": Param("", default=4.0),
                       "beam_x": Param("m", shape=(3,), default=(0.1, 0.0, 0.3)),
                       "beam_sigma": Param("m", default=0.003),
-                      "t_led": Param("ns", default=0.0), "t_beam": Param("ns", default=25.0)},
-              density="direction")
+                      "t_led": Param("ns", default=0.0), "t_beam": Param("ns", default=25.0)})
 def flasher(v, key, n):
     k1, k2, k3 = jax.random.split(key, 3)
     h = n // 2
@@ -34,50 +33,31 @@ def flasher(v, key, n):
     def logp(d_):                                                          # cos^m about the live axis (+ a constant)
         return v["m"] * jnp.log(jnp.clip(d_ @ v["led_axis"], 1e-12))
 
-    led = lumen.Photons(jnp.broadcast_to(v["led_x"], (h, 3)), d, v["t_led"] + 2.0 * jax.random.exponential(k2, (h,)),
-                        jnp.full(h, 450.0), reweight(jax.vmap(logp)(d)) * 1e6 / h, dlogp=grad_logpdf(logp, d))
+    led = lumen.Photons(x=jnp.broadcast_to(v["led_x"], (h, 3)), d=d,
+                        t=v["t_led"] + 2.0 * jax.random.exponential(k2, (h,)), lam=jnp.full(h, 450.0),
+                        w=reweight(jax.vmap(logp)(d)) * 1e6 / h)
     beam = gaussian_spot(k3, n - h, centre=v["beam_x"], sigma=v["beam_sigma"], direction=(0.0, 0.0, -1.0),
                          t=v["t_beam"], lam=405.0, photons=1e4)            # a fixed spot, its centre by reweight
-    return lumen.concat(led, beam)                                         # beam rows: dlogp 0, no position tangent
+    return lumen.concat(led, beam)
 # end example
 
 
 # example: cos_m
 def cos_m_led(m):
-    """Return an LED of profile cos^m about -z at (0, 0, 0.2), 420 nm, its position a moving parameter."""
+    """Return an LED of profile cos^m about -z at (0, 0, 0.2), 420 nm, its position a parameter that moves the light."""
 
-    @lumen.source(params={"x": Param("m", shape=(3,), moves=True, default=(0.0, 0.0, 0.2))},
-                  density="direction", name=f"cos{m:g}")
+    @lumen.source(params={"x": Param("m", shape=(3,), method="moving_paths", default=(0.0, 0.0, 0.2))},
+                  name=f"cos{m:g}")
     def led(v, key, n):
         axis = jnp.array([0.0, 0.0, -1.0])
         u = jax.random.uniform(key, (n, 2), minval=1e-7)
         d = cone_about(axis, u[:, 0] ** (1.0 / (m + 1.0)), 2 * math.pi * u[:, 1])
-        logp = lambda d_: m * jnp.log(jnp.clip(d_ @ axis, 1e-12))          # noqa: E731
-        return lumen.Photons(jnp.broadcast_to(v["x"], (n, 3)), d, jnp.zeros(n), jnp.full(n, 420.0),
-                             jnp.ones(n), dlogp=grad_logpdf(logp, d))
+        return lumen.Photons(x=jnp.broadcast_to(v["x"], (n, 3)), d=d, t=jnp.zeros(n), lam=jnp.full(n, 420.0),
+                             w=jnp.ones(n))
 
     return led
 # end example
 
-
-# example: soft_cone
-CONE, EDGE = math.radians(20.0), math.radians(1.0)
-
-
-@lumen.source(params={"x": Param("m", shape=(3,), moves=True, default=(0.0, 0.0, 0.2))}, density="direction")
-def soft_cone(v, key, n):
-    """Draw a 20 degree cone about -z whose edge is a logistic about 1 degree wide (a hard edge is refused)."""
-    axis = jnp.array([0.0, 0.0, -1.0])
-    top = CONE + 8 * EDGE                                                  # drawn uniformly out to 8 widths
-    u = jax.random.uniform(key, (n, 2), minval=1e-7)
-    d = cone_about(axis, 1.0 - u[:, 0] * (1.0 - math.cos(top)), 2 * math.pi * u[:, 1])
-
-    def logp(d_):                                                          # the edge in cos(theta): smooth everywhere
-        return jax.nn.log_sigmoid((d_ @ axis - math.cos(CONE)) / (EDGE * math.sin(CONE)))
-
-    return lumen.Photons(jnp.broadcast_to(v["x"], (n, 3)), d, jnp.zeros(n), jnp.full(n, 420.0),
-                         jnp.exp(jax.vmap(logp)(d)), dlogp=grad_logpdf(logp, d))
-# end example
 
 
 # ---------------------------------------------------------------- 3. a sensor response: one function after tracking
@@ -93,16 +73,16 @@ def saturating_pe(h, v):                    # h: lumen.readout.Histograms; v: th
 # example: my_waveform
 @lumen.response(group="pmt", params={"tau_r": Param("ns", (0.5, 20), default=2.0),
                                      "tau_f": Param("ns", (1, 100), default=8.0),
-                                     "adc_per_pe": Param("ADC", default=10.0)})  # not "gain": lumen:pmt has that key
+                                     "adc_per_pe": Param("ADC", default=10.0)})  # not "gain": lumen:sensor has that key
 def my_waveform(h, v):
-    nodes, _, _ = lumen.readout.time_nodes(h, v)          # (S, nt) expected photoelectrons on t0 + j dt
+    prof = lumen.readout.pe_density(h, v, dark=False).rate  # (S, n) expected photoelectrons per bin dt over the gate
     t = h.grid.dt * jnp.arange(64)
     pulse = jnp.exp(-t / v["tau_f"]) - jnp.exp(-t / v["tau_r"])
-    return v["adc_per_pe"] * jax.vmap(lambda q: jnp.convolve(q, pulse)[: q.shape[0]])(nodes)
+    return v["adc_per_pe"] * jax.vmap(lambda q: jnp.convolve(q, pulse)[: q.shape[0]])(prof)
 # end example
 
 
-# ---------------------------------------------------------------- 4. registered medium and surface models
+# ---------------------------------------------------------------- 4. a medium model (a value)
 # example: water_hg
 @lumen.medium_model("mylab:water_hg", params={"g": Param("", (-0.99, 0.99), default=0.9)})
 def water_hg(material, base):               # base: the Geant4 reading of this material (lumen.media.MediumSpec)
@@ -110,28 +90,6 @@ def water_hg(material, base):               # base: the Geant4 reading of this m
     return base.with_channel("rayleigh", lobe=hg)        # or add_channel(...), with_absorption(...)
 # end example
 
-
-# example: schlick
-@lumen.surface_model("mylab:schlick", params={"R0": Param("", (0, 1), default=0.04)}, detects=False)
-def schlick(surface, base):
-    def probs(p, ctx):                                    # ctx: lam, wi, n, n1, n2, Jones vector (as today)
-        c = lumen.surfaces.cos_incidence(ctx)
-        r = p["R0"] + (1 - p["R0"]) * (1 - c) ** 5
-        return lumen.surfaces.outcome_vector(specular=r, absorb=1 - r)
-    return lumen.surfaces.SurfaceType("schlick", ("R0",), (lumen.surfaces.SPECULAR, lumen.surfaces.ABSORB), probs)
-# end example
-
-
-# example: schlick_cathode
-@lumen.surface_model("mylab:schlick_cathode", params={"R0": Param("", (0, 1), default=0.04)}, detects=True)
-def schlick_cathode(surface, base):
-    def probs(p, ctx):                                    # Schlick's reflectance, the rest detected with eff
-        c = lumen.surfaces.cos_incidence(ctx)
-        r = p["R0"] + (1 - p["R0"]) * (1 - c) ** 5
-        return lumen.surfaces.outcome_vector(specular=r, detect=(1 - r) * p["eff"], absorb=(1 - r) * (1 - p["eff"]))
-    return lumen.surfaces.SurfaceType("schlick_cathode", ("R0", "eff"),
-                                      (lumen.surfaces.SPECULAR, lumen.surfaces.DETECT, lumen.surfaces.ABSORB), probs)
-# end example
 
 
 def lined_tank(out):
@@ -143,13 +101,12 @@ def lined_tank(out):
 
     liner = ('  <opticalsurface name="Liner" model="unified" finish="polished" type="dielectric_metal" value="0">\n'
              '    <property name="REFLECTIVITY" ref="LINER_REFLECTIVITY"/>\n  </opticalsurface>\n</solids>')
-    gdml = example_tank.GDML.read_text().replace("</solids>", liner).replace(
+    skin = ('  <skinsurface name="LinerSkin" surfaceproperty="Liner"> <volumeref ref="World"/> </skinsurface>\n'
+            '</structure>')
+    gdml = example_tank.GDML.read_text().replace("</solids>", liner).replace("</structure>", skin).replace(
         "</define>", '  <matrix name="LINER_REFLECTIVITY" coldim="2" values="1.5*eV 0.5 5.0*eV 0.5"/>\n</define>')
     src = Path(out) / "lined_tank.gdml"
     src.write_text(gdml)
-
-    def outside_liner(df, inputs):                        # a recipe decision: the outside carries the liner
-        return dataclasses.replace(df, outside_surface="Liner")
-
-    recipe = dataclasses.replace(example_tank.RECIPE, name="lined_tank", decisions=(outside_liner,))
+    # the liner is the skin of the tank's mother: leaving the tank, Geant4 meets it, and so does lumen
+    recipe = dataclasses.replace(example_tank.RECIPE, name="lined_tank")
     return lumen.convert(src, recipe, Path(out) / "lined_tank.lumen")

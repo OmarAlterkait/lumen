@@ -1,4 +1,4 @@
-"""A small GDML exercising the lowering (mm; materials are names only), and a loader for it.
+"""A small GDML exercising the lowering (mm; materials with a nominal composition only), and a loader for it.
 
   World (Air, 2 m box)
     Tank (Water, 1.6 m box) tank_pv
@@ -29,7 +29,14 @@ GDML = """<?xml version="1.0"?>
   <position name="v0" x="0" y="0" z="0"/><position name="v1" x="100" y="0" z="0"/>
   <position name="v2" x="0" y="100" z="0"/><position name="v3" x="0" y="0" z="100"/>
  </define>
- <materials/>
+ <materials>
+  <element name="O" formula="O" Z="8"><atom value="16"/></element>
+  <material name="Air"><D value="1"/><fraction n="1" ref="O"/></material>
+  <material name="Water"><D value="1"/><fraction n="1" ref="O"/></material>
+  <material name="Glass"><D value="1"/><fraction n="1" ref="O"/></material>
+  <material name="Steel"><D value="1"/><fraction n="1" ref="O"/></material>
+  <material name="Vacuum"><D value="1"/><fraction n="1" ref="O"/></material>
+ </materials>
  <solids>
   <box name="wbox" x="2000" y="2000" z="2000" lunit="mm"/>
   <box name="tankbox" x="1600" y="1600" z="1600" lunit="mm"/>
@@ -108,6 +115,11 @@ def write(tmp_path, name="scene.gdml", text=GDML):
     p = tmp_path / name
     p.write_text(text)
     return str(p)
+
+
+def read(tmp_path, text=GDML, name="scene.gdml"):
+    """The fixture (or a variant of its text) imported: ``read_gdml(path)``."""
+    return importer.read_gdml(write(tmp_path, name, text))
 
 
 def load(tmp_path, text=GDML, name="scene.gdml", **kw):

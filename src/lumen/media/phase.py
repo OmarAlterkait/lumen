@@ -23,24 +23,19 @@ import math
 import jax.numpy as jnp
 
 from lumen._core import frames
-from lumen._core.safe import safe_sqrt, sanitize, unit
-from lumen.surfaces.lobes import Lobe
+from lumen._core.safe import safe_log, safe_sqrt, unit
+from lumen.lobes import Lobe
+from lumen.rules.choices import FLOOR32  # the density's floor in the logarithm, where no light goes
+from lumen.units import TWO_PI
 
-TWO_PI = 2.0 * math.pi
 FOUR_PI = 4.0 * math.pi
 EIGHT_PI_3 = 8.0 * math.pi / 3.0
-LOG_TINY = 1e-30  # the density's floor in the logarithm, where no light goes
-MIE_G_MAX = 0.999  # the largest |g| of a Mie lobe: float32 resolves directions to ~3.5e-4 rad, the lobe is ~1 - g wide
 MIE_PARAMS = ("g_forward", "g_backward", "forward_ratio")  # MIEHG_FORWARD, MIEHG_BACKWARD, MIEHG_FORWARD_RATIO
 
 
 def _about(axis, mu, phi):
     s = safe_sqrt(1.0 - mu * mu)
     return frames.to_world(jnp.stack([s * jnp.cos(phi), s * jnp.sin(phi), mu], -1), axis)
-
-
-def _ones(p, wi, n, wo):
-    return jnp.ones(wi.shape[:-1])
 
 
 def _cbrt(x):
@@ -77,31 +72,24 @@ def rayleigh_sample(er, ei, rand):
 def rayleigh_logpdf(er, ei, k):
     """Return the log of 3 / (8 pi) (1 - |k . E|^2) for a state with |E| = 1."""
     v = 1.0 - jnp.sum(k * er, -1) ** 2 - jnp.sum(k * ei, -1) ** 2
-    ok = v > LOG_TINY
-    return jnp.where(ok, jnp.log(sanitize(ok, v, 1.0)), math.log(LOG_TINY)) - math.log(EIGHT_PI_3)
+    return safe_log(v, FLOOR32) - math.log(EIGHT_PI_3)
 
 
 ISOTROPIC = Lobe(
     "isotropic",
-    delta=False,
     surface=False,
     n_rand=2,
     params=(),
     sample=lambda p, wi, n, rand: _about(wi, 1.0 - 2.0 * rand[..., 0], TWO_PI * rand[..., 1]),
-    logpdf=lambda p, wi, n, wo: jnp.full(wi.shape[:-1], -math.log(FOUR_PI)),
-    weight=_ones,
-    axis=lambda p, wi, n: wi,
+    logpdf=lambda p, wi, n, wo: jnp.full(wi.shape[:-1], -math.log(FOUR_PI), wi.dtype),
 )
 RAYLEIGH = Lobe(
     "rayleigh",
-    delta=False,
     surface=False,
     n_rand=2,
     params=(),
     sample=lambda p, wi, n, rand: _about(wi, rayleigh_mu(rand[..., 0]), TWO_PI * rand[..., 1]),
     logpdf=lambda p, wi, n, wo: jnp.log(3.0 / (16.0 * math.pi) * (1.0 + jnp.sum(wo * wi, -1) ** 2)),
-    weight=_ones,
-    axis=lambda p, wi, n: wi,
     pol_sample=lambda p, wi, er, ei, rand: rayleigh_sample(er, ei, rand),
     pol_logpdf=lambda p, wi, er, ei, wo: rayleigh_logpdf(er, ei, wo),
 )
@@ -149,10 +137,21 @@ def mie_hg_sample(p, wi, rand):
     g = jnp.where(forward, p["g_forward"], p["g_backward"])
     c_minus, c_plus = mie_hg_cos(g, rand[..., 1])
     c_minus, c_plus = jnp.where(forward, c_minus, c_plus), jnp.where(forward, c_plus, c_minus)
+    return hg_direction(c_minus, c_plus, rand[..., 2], wi)
+
+
+def hg_direction(c_minus, c_plus, u_phi, wi):
+    """Return the direction about ``wi`` at c_minus = 1 - mu, c_plus = 1 + mu (``mie_hg_cos``), azimuth 2 pi u_phi."""
     mu = jnp.where(c_minus < c_plus, 1.0 - c_minus, c_plus - 1.0)
     s = safe_sqrt(c_minus * c_plus)
-    phi = TWO_PI * rand[..., 2]
+    phi = TWO_PI * u_phi
     return frames.to_world(jnp.stack([s * jnp.cos(phi), s * jnp.sin(phi), mu], -1), wi)
+
+
+def hg_cosines(wi, wo):
+    """Return (1 - mu, 1 + mu) of ``wo`` about ``wi`` as |wo - wi|^2 / 2 and |wo + wi|^2 / 2 (unit vectors: neither
+    cancels)."""  # noqa: D205, D209
+    return 0.5 * jnp.sum((wo - wi) ** 2, -1), 0.5 * jnp.sum((wo + wi) ** 2, -1)
 
 
 def mie_hg_logpdf(p, wi, wo):
@@ -160,27 +159,33 @@ def mie_hg_logpdf(p, wi, wo):
 
     Notes
     -----
-    1 - mu = |wo - wi|^2 / 2 and 1 + mu = |wo + wi|^2 / 2 for unit vectors (neither cancels); the forward lobe is
-    HG(g_f) and the backward one HG(-g_b). For |g| <= MIE_G_MAX each lobe lies in [2e-6, 1.6e5] per sr, so the
-    mixture is summed directly.
+    1 - mu and 1 + mu from ``hg_cosines``; the forward lobe is HG(g_f) and the backward one HG(-g_b). For
+    |g| <= MIE_G_MAX (``lumen.rules.choices``) each lobe lies in [2e-6, 1.6e5] per sr, so the mixture is summed
+    directly.
     """
     r = p["forward_ratio"]
-    c_minus = 0.5 * jnp.sum((wo - wi) ** 2, -1)
-    c_plus = 0.5 * jnp.sum((wo + wi) ** 2, -1)
+    c_minus, c_plus = hg_cosines(wi, wo)
     forward = hg_density(p["g_forward"], c_minus, c_plus)
     backward = hg_density(-p["g_backward"], c_minus, c_plus)
     return jnp.log(r * forward + (1.0 - r) * backward)
 
 
+def _mie_cover(r, e):
+    """Return the forward ratio the lobe choice is drawn at: the one defensive mixture over (r, 1 - r)
+    (``lumen.transport.estimator.defensive_q``): 1 - e at r = 1, e at r = 0, r itself between."""  # noqa: D205, D209
+    from lumen.transport.estimator import defensive_q
+
+    return defensive_q(jnp.stack([r, 1.0 - r]), jnp.ones(2, bool), e)[0]
+
+
 MIE_HG = Lobe(
     "mie_hg",
-    delta=False,
     surface=False,
     n_rand=3,
     params=MIE_PARAMS,
     sample=lambda p, wi, n, rand: mie_hg_sample(p, wi, rand),
     logpdf=lambda p, wi, n, wo: mie_hg_logpdf(p, wi, wo),
-    weight=_ones,
-    axis=lambda p, wi, n: wi,
-    domains={"forward_ratio": (0.0, 1.0)},  # at 0 or 1 one HG lobe is never drawn
+    # at a forward ratio of 0 or 1 one HG lobe is never drawn: the lobe choice (r, 1 - r) is a categorical part
+    defensive={"forward_ratio": "zero"},
+    cover=lambda p, e: dict(p, forward_ratio=_mie_cover(p["forward_ratio"], e)),
 )

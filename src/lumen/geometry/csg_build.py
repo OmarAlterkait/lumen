@@ -17,16 +17,15 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from lumen.build import solids
+from lumen.geometry import solids
+from lumen.rules.tolerances import DIVISOR_FLOOR, KIND_BOX_PAD_REL, TINY_HALF
+from lumen.units import HUGE
 
-INF = 1e30  # "no crossing"; compared, never squared
 OPS = {"union": 1, "inter": 2, "sub": 3}
 MAX_DEPTH = 31  # the operand stack lives in one int32's bits
 BOX_GRID = 8  # leaf boxes: cells per axis of the grid over the kind's box
 BOX_LEVELS = 2  # ... refined this many times on the leaf's own box
-BOX_PAD_REL = 1e-5  # ... padded by this times the kind box's extent
 BOX_MIN_LEAVES = 3  # kinds with fewer leaves get no leaf boxes (every leaf is evaluated)
-TINY_HALF = 1e-12  # m: a box half-size floor
 
 
 @dataclass(frozen=True)
@@ -35,7 +34,7 @@ class CsgTables:
 
     ``T`` leaf tables (one entry per leaf, plus one empty leaf past the end; planes ``n0..n2``, ``h`` per plane),
     ``K`` per kind (``l0``, ``nl``: its leaf range; ``p0``, ``pl``: its program range), ``G`` the programs (``op``,
-    ``arg``); ``kind_box`` per kind (centre, half) in its frame; ``maxnl`` the largest leaf count; ``empty_leaf`` the
+    ``arg``); ``kind_box`` per kind (centre, half) in its frame; ``empty_leaf`` the
     index every finished leaf loop reads; ``has_torus`` whether the torus kernel is needed.
     """
 
@@ -43,9 +42,6 @@ class CsgTables:
     K: dict
     G: dict
     kind_box: tuple
-    n_leaves: tuple
-    n_kinds: int
-    maxnl: int
     empty_leaf: int
     has_torus: bool
 
@@ -81,8 +77,8 @@ def leaf_boxes(leaves, c, h, n=BOX_GRID):
 
     The AABB of the cells of an n^3 grid over the kind's box where the leaf is possibly true (first-order interval
     bounds of its plane and quadric functions; a torus by its canonical box), refined on the leaf's own box, padded by
-    ``BOX_PAD_REL`` times the extent. Outside the kind's box the solid is false whatever its leaves, so a leaf box may
-    stop there; an empty box has lo > hi.
+    ``KIND_BOX_PAD_REL`` times the extent. Outside the kind's box the solid is false whatever its leaves, so a leaf box
+    may stop there; an empty box has lo > hi.
     """
     g = (np.arange(n) + 0.5) / n * 2.0 - 1.0
     grid = np.stack(np.meshgrid(g, g, g, indexing="ij"), -1).reshape(-1, 3)
@@ -97,7 +93,7 @@ def leaf_boxes(leaves, c, h, n=BOX_GRID):
             lo[k], hi[k] = np.maximum(lo[k], w.min(0)), np.minimum(hi[k], w.max(0))
             continue
         lo[k], hi[k] = _quad_cells(lf, lo[k], hi[k], grid, n)
-    pad = BOX_PAD_REL * (np.linalg.norm(c) + np.linalg.norm(h))
+    pad = KIND_BOX_PAD_REL * (np.linalg.norm(c) + np.linalg.norm(h))
     ok = lo[:, 0] <= hi[:, 0]
     lo[ok] -= pad
     hi[ok] += pad
@@ -129,7 +125,7 @@ def _leaf_row(lf, blo, bhi, planes):
     if lf.kind == "q":
         qo, bq, cq = solids.quad_frame(lf)
         row.update(typ=1 if lf.has_q else 0, A=lf.A, b=bq, c=cq, q=row["o"] + qo,
-                   sa=max(float(np.max(np.abs(lf.A))), 1e-30), np_=lf.N.shape[0])  # fmt: skip
+                   sa=max(float(np.max(np.abs(lf.A))), DIVISOR_FLOOR), np_=lf.N.shape[0])  # fmt: skip
         planes += [(lf.N[k], lf.H[k]) for k in range(lf.N.shape[0])]
     else:
         row.update(typ=2, R=lf.R, r=lf.r, minv=np.linalg.inv(lf.lin))
@@ -147,7 +143,7 @@ def _kind(node, rows, planes, prog):
     if len(leaves) >= BOX_MIN_LEAVES:
         blo, bhi = leaf_boxes(leaves, c, h)
     else:
-        blo, bhi = np.full((len(leaves), 3), -INF), np.full((len(leaves), 3), INF)
+        blo, bhi = np.full((len(leaves), 3), -HUGE), np.full((len(leaves), 3), HUGE)
     l0 = len(rows)
     for li, lf in enumerate(leaves):
         rows.append(_leaf_row(lf, blo[li], bhi[li], planes))
@@ -174,8 +170,8 @@ def _leaf_table(rows, planes):
         t[f"o{a}"] = _f32([r["o"][a] for r in rows])
         t[f"b{a}"] = _f32([r["b"][a] for r in rows])
         t[f"q{a}"] = _f32([r["q"][a] for r in rows])
-        t[f"bl{a}"] = _f32([np.clip(r["blo"][a], -INF, INF) for r in rows])
-        t[f"bh{a}"] = _f32([np.clip(r["bhi"][a], -INF, INF) for r in rows])
+        t[f"bl{a}"] = _f32([np.clip(r["blo"][a], -HUGE, HUGE) for r in rows])
+        t[f"bh{a}"] = _f32([np.clip(r["bhi"][a], -HUGE, HUGE) for r in rows])
         for b in range(3):
             t[f"A{a}{b}"] = _f32([r["A"][a, b] for r in rows])
             t[f"m{a}{b}"] = _f32([r["minv"][a, b] for r in rows])
@@ -187,29 +183,24 @@ def _leaf_table(rows, planes):
 
 
 def csg_tables(kinds) -> CsgTables:
-    """Return the CSG tables of the solids ``kinds`` (one ``lumen.build.solids`` node per kind, its frame, m)."""
-    rows, planes, prog, krows, boxes, nls = [], [], [], [], [], []
+    """Return the CSG tables of the solids ``kinds`` (one ``lumen.geometry.solids`` node per kind, its frame, m)."""
+    rows, planes, prog, krows, boxes = [], [], [], [], []
     for node in kinds:
         box, nl, krow = _kind(node, rows, planes, prog)
         boxes.append(box)
-        nls.append(nl)
         krows.append(krow)
     has_torus = any(r["typ"] == 2 for r in rows)
     empty_leaf = len(rows)  # past-the-end index of every leaf loop (a finished lane still runs the body there)
     empty = dict(typ=0, o=np.zeros(3), A=np.zeros((3, 3)), b=np.zeros(3), c=0.0, sa=1.0, p0=len(planes), np_=0,
-                 R=0.0, r=0.0, minv=np.eye(3), q=np.zeros(3), blo=np.full(3, INF), bhi=np.full(3, -INF))  # fmt: skip
+                 R=0.0, r=0.0, minv=np.eye(3), q=np.zeros(3), blo=np.full(3, HUGE), bhi=np.full(3, -HUGE))  # fmt: skip
     rows.append(empty)
     kcols = {k: [x[j] for x in krows] for j, k in enumerate(("l0", "nl", "p0", "pl"))}
-    maxnl = int(max(kcols["nl"])) if kcols["nl"] else 0
     prog = prog or [(0, 0)]
     return CsgTables(
         T=_leaf_table(rows, planes),
         K={k: _i32(v) for k, v in kcols.items()},
         G=dict(op=_i32([g[0] for g in prog]), arg=_i32([g[1] for g in prog])),
         kind_box=tuple(boxes),
-        n_leaves=tuple(nls),
-        n_kinds=len(krows),
-        maxnl=maxnl,
         empty_leaf=empty_leaf,
         has_torus=has_torus,
     )

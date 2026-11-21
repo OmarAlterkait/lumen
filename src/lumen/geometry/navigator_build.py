@@ -1,19 +1,29 @@
 """The navigator's arrays (host): a lowered Scene as volumes, daughter BVHs in frame groups, meshes and CSG tables.
 
     arrays = build(scene)                      # NavArrays: host arrays, names, definitions, statistics
+    arrays = finish(prepare(scene), classes)   # the same: the class-free stage (ownership), then the classes'
     arrays = arrays.with_classes(vol_cls, mesh_cls, outside_cls)     # another class per volume (a new NavArrays)
 
-- **Volumes:** one per placed single-member definition, in the canonical depth-first order (the oracle's instances);
-  a member-less definition (an assembly) places its daughters in the nearest ancestor volume; a definition of several
-  members fails closed.
-- **Meshes** (opaque tessellated parts): pseudo-volumes (a mesh holds no point); their triangle chunks are daughter
-  items of their mother volume (watertight ray-triangle test).
+- **Volumes:** one per instance of a definition with a CSG member, in the canonical order
+  (``lumen.geometry.scene.instances``, the walk every consumer reads); a member-less definition (an assembly) places
+  its daughters in the nearest ancestor volume.
+- **Meshes** (opaque tessellated parts): pseudo-volumes (a mesh holds no point; a facet met, from either side, is an
+  entry into it); their triangle chunks are daughter items of their mother volume (watertight ray-triangle test).
 - **Frame groups:** per volume its daughters sharing a rotation (at least ``MIN_GROUP``, or all) whose world boxes are
-  at least ``GROUP_GAIN`` times their own get a BVH in that rotation's frame (SBND's diagonal wires); the rest one
+  at least ``GROUP_GAIN`` times their own get a BVH in that rotation's frame (diagonal wire planes); the rest one
   world-frame BVH.
-- **Overlapping siblings** need no configuration (``lumen.rules.navigation``); **coincident siblings** (one mother,
-  one solid, one pose) get their partner ``coin_hi``; the import's lowered holes (a solid kept without its holes, the
-  siblings filling them, ``Scene.hole_fillers``) make those siblings daughter candidates of the holed solid (``fill``).
+- **Overlaps and protrusions** (``lumen.geometry.ownership``: one owner per point, level by
+  level): a sibling that may own part of a volume (or of an ancestor; a mesh as its triangle chunks; the filler of a
+  lowered hole) is a candidate of that volume (where it holds a point, the point is not the volume's); an
+  ancestor a volume is not proved inside is a candidate whose face is its exit (``size``: the volumes below each, so
+  an ancestor is known); ``prio``, the rule's order, decides a locate and an entry tie. The containment tests decide
+  every point at run time.
+- **Transparent volumes** (``classes`` given): a volume of the class of every volume listing it as a candidate (or
+  one interchangeable with it: ``lumen.build.tracked.interchangeable``), no sensor, not of a class with a surface
+  between two of its volumes (a self pair), owning no part of a mesh, with everything below it proved inside it,
+  bounds nothing a photon sees: it is no candidate, its candidates are its listers' instead, and a volume below it
+  exits to its nearest ancestor that is not transparent (``host["parent"]``). The tree (names, ``size``) is
+  unchanged.
 
 The navigator follows Geant4's tracking, with no configuration.
 """
@@ -22,21 +32,19 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass
+from typing import NamedTuple
 
 import numpy as np
 
-from lumen.build import scene as sc
-from lumen.geometry import bvh
+from lumen.geometry import bvh, ownership
+from lumen.geometry import scene as sc
 from lumen.geometry.csg_build import CsgTables, csg_tables
+from lumen.rules.tolerances import DIVISOR_FLOOR, WORLD_BOX_PAD_ABS, WORLD_BOX_PAD_REL
 
 STACK = 32  # the traversal's stack: one entry per BVH level
 MESH_CHUNK = 8  # triangles per mesh chunk (one BVH item)
-BOX_PAD_REL = 1e-6  # world boxes are padded by this times (|centre| + half) ...
-BOX_PAD_ABS = 1e-9  # ... plus this (m)
-NORMAL_FLOOR = 1e-30  # a degenerate triangle's normal length floor
 MORTON_BITS = 10  # mesh chunks: triangles ordered along a Morton curve of this many bits per axis
 SRF_LIMIT = 2**31  # surface codes are int32
-HOLES = "|holes:"  # a definition variant with its holes dropped
 
 
 @dataclass(frozen=True, eq=False)
@@ -44,10 +52,18 @@ class NavArrays:
     """The navigator's host arrays and what they index.
 
     ``host``: the device arrays' host values (BVH nodes, frame groups, volume poses, kinds, classes, meshes);
-    ``csg``: the CSG tables; ``n`` volumes, ``n_mesh`` meshes, ``chunk`` triangles per mesh chunk; ``ch0`` the
-    first mesh-chunk item; ``srf`` = (su, sm, LM, FM), the surface codes' layout; ``names``, ``defs`` per volume its
-    placement path and definition; ``coincident``: groups of coincident siblings; ``kids``: per volume (and the
-    outside, then each mesh) its daughter items; ``lo_w``, ``hi_w``: the volumes' padded world boxes (float64).
+    ``csg``: the CSG tables; ``n`` volumes, ``n_mesh`` meshes, ``chunk`` triangles per mesh chunk; ``ch0`` the first
+    mesh-chunk item; ``srf`` = (su, sm, FM), the surface codes' layout (``host["ub"]``: per volume its first leaf
+    slot); ``names``, ``defs`` per volume its placement path and definition; ``origins`` per volume, the outside
+    ("OUT") and per mesh, the logical volume its definition was lowered from (its definition when none is recorded);
+    ``pieces`` per volume the split union instance it is a piece of (-1 none: ``Definition.piece_of``); ``owned``:
+    the overlapping siblings (non-owner, owner, forced: a lowered hole and its filler; a mesh k as its pseudo-volume
+    n + 1 + k); ``clipped``: the (volume, mother) pairs where a volume reaches out of its mother; ``thin``: the
+    sibling pairs that may share a point, not deeper than the contact tolerance (touching here); ``kids``: per volume
+    (and the outside, then each mesh) its candidate items: daughters, owners, the ancestors it reaches out of;
+    ``lo_w``, ``hi_w``: the volumes' padded world boxes (float64); ``probe``: host arrays only the placement check
+    reads (``uc``, ``uh`` each volume's padded box in its frame, ``cmoth`` each mesh chunk's mother), never device
+    operands of the navigator.
     """
 
     host: dict
@@ -57,14 +73,18 @@ class NavArrays:
     chunk: int
     ch0: int
     srf: tuple
-    bg: int
     names: tuple
     defs: tuple
     stats: dict
-    coincident: tuple
+    owned: tuple
+    clipped: tuple
     kids: tuple
     lo_w: np.ndarray
     hi_w: np.ndarray
+    probe: dict
+    origins: tuple
+    pieces: tuple
+    thin: tuple
 
     def with_classes(self, vol_cls, mesh_cls=(), outside_cls=None):
         """Return these arrays with another class per volume, mesh and the outside (``host["cls"]``)."""
@@ -75,6 +95,21 @@ class NavArrays:
         if self.n_mesh:
             c[self.n + 1 :] = np.asarray(mesh_cls, np.int32)
         return dataclasses.replace(self, host=dict(self.host, cls=c))
+
+
+def navigable(arrays: NavArrays) -> np.ndarray:
+    """Return the volumes the navigator can be in (ascending): those reachable from the outside's candidates through
+    the candidates of the volumes reached (``kids``). A transparent volume (dissolved: module docstring) is none of
+    them: it is no candidate of a volume reached (its own row keeps its daughters, but no walk visits it). What the
+    navigator can meet is these volumes and every mesh (``lumen.geometry.clearance``)."""  # noqa: D205, D209
+    n = int(arrays.n)
+    seen, todo = np.zeros(n, bool), [n]
+    while todo:
+        for x in arrays.kids[todo.pop()]:
+            if x < n and not seen[x]:
+                seen[x] = True
+                todo.append(int(x))
+    return np.flatnonzero(seen)
 
 
 # ------------------------------------------------------------------------------------------------- the scene walk
@@ -89,212 +124,139 @@ def morton(c, bits=MORTON_BITS):
     return code
 
 
-def _placements(d):
-    """Return a definition's placements as arrays: (R, t, sensor, step name, definition name)."""
-    return (np.stack([np.asarray(p.R, float) for p in d.placements]),
-            np.stack([np.asarray(p.t, float) for p in d.placements]),
-            np.array([int(p.sensor) for p in d.placements]),
-            [p.name or f"{p.definition}#{k}" for k, p in enumerate(d.placements)],
-            [p.definition for p in d.placements])  # fmt: skip
-
-
-def _place_level(scene, dix, cache, prev):
-    """Return the next level of the walk: every (instance, placement) pair of one definition at one depth in a batch."""
-    dn, Rl, tl, ml, pl_ = prev
-    out = []
-    dnames = list(scene.definitions)
-    for d_ in np.unique(dn):
-        D = scene.definitions[dnames[d_]]
-        if not D.placements:
-            continue
-        if d_ not in cache:
-            Rp, tp, sp, nm_, dp = _placements(D)
-            cache[d_] = (Rp, tp, sp, nm_, np.array([dix[x] for x in dp]))
-        Rp, tp, sp, nm_, dp = cache[d_]
-        ix = np.flatnonzero(dn == d_)
-        P = len(Rp)
-        Rc = np.matmul(Rl[ix][:, None], Rp[None])  # Rw @ R_
-        tc = np.matmul(Rl[ix][:, None], tp[None, :, :, None])[..., 0] + tl[ix][:, None]  # Rw @ t_ + tw
-        out.append((np.repeat(ix, P), np.tile(np.arange(P), len(ix)), Rc.reshape(-1, 3, 3), tc.reshape(-1, 3),
-                    np.tile(dp, len(ix)), np.where(sp[None] >= 0, sp[None], ml[ix][:, None]).ravel(),
-                    [(pl_[i_] + "/" + q_) if pl_[i_] else q_ for i_ in ix for q_ in nm_]))  # fmt: skip
-    return out
-
-
-def _walk(scene):
-    """Walk the scene level by level; return dict of per-instance arrays (definition, pose, parent, ...) and levels."""
-    dix = {d_: i_ for i_, d_ in enumerate(scene.definitions)}
-    cache = {}
-    L = dict(dn=[np.array([dix[scene.root]])], R=[np.eye(3)[None]], t=[np.zeros((1, 3))], par=[np.array([-1])],
-             sib=[np.array([0])], msen=[np.array([-1])], path=[[""]], lev=[np.array([0])])  # fmt: skip
-    n_all = 1
-    while True:
-        base = n_all - len(L["dn"][-1])
-        out = _place_level(scene, dix, cache, (L["dn"][-1], L["R"][-1], L["t"][-1], L["msen"][-1], L["path"][-1]))
-        if not out:
-            break
-        L["par"].append(base + np.concatenate([o[0] for o in out]))
-        L["sib"].append(np.concatenate([o[1] for o in out]))
-        L["R"].append(np.concatenate([o[2] for o in out]))
-        L["t"].append(np.concatenate([o[3] for o in out]))
-        L["dn"].append(np.concatenate([o[4] for o in out]))
-        L["msen"].append(np.concatenate([o[5] for o in out]))
-        L["path"].append([x for o in out for x in o[6]])
-        L["lev"].append(np.full(len(L["par"][-1]), len(L["lev"])))
-        n_all += len(L["par"][-1])
-    W = {k: np.concatenate(v) for k, v in L.items() if k != "path"}
-    W["paths"] = [x for p_ in L["path"] for x in p_]
-    W["lv_off"] = np.cumsum([0] + [len(x) for x in L["dn"]])
-    W["n_all"] = n_all
-    return W
-
-
-def _preorder(W):  # noqa: N803 -- W the walk's arrays
-    """Return the depth-first order of the instances (preorder, children by placement order)."""
-    n_all, par, sib, lv_off = W["n_all"], W["par"], W["sib"], W["lv_off"]
-    n_lev = len(lv_off) - 1
-    sub = np.ones(n_all, np.int64)
-    for L_ in range(n_lev - 1, 0, -1):  # subtree sizes bottom-up
-        c_ = np.arange(lv_off[L_], lv_off[L_ + 1])
-        np.add.at(sub, par[c_], sub[c_])
-    pre = np.zeros(n_all, np.int64)
-    for L_ in range(1, n_lev):  # then each child's offset
-        c_ = np.arange(lv_off[L_], lv_off[L_ + 1])
-        o_ = c_[np.lexsort((sib[c_], par[c_]))]  # by parent, then placement order
-        ex = np.cumsum(sub[o_]) - sub[o_]  # the earlier siblings' (and others') sizes
-        ps = par[o_]
-        first = np.r_[True, ps[1:] != ps[:-1]]
-        ex = ex - np.maximum.accumulate(np.where(first, ex, 0))
-        pre[o_] = pre[ps] + 1 + ex
-    return np.argsort(pre, kind="stable")
-
-
-def _check_definitions(scene, dn):
-    """Fail closed on what the navigator cannot place: several members, a mesh with daughters or a mesh sensor."""
-    dnames = list(scene.definitions)
-    for d_ in np.unique(dn):
-        D = scene.definitions[dnames[d_]]
-        if len(D.members) > 1:
-            raise NotImplementedError(f"navigator: definition {dnames[d_]!r} has {len(D.members)} members (one solid "
-                                      "per volume: the lowering gives one member per logical volume)")  # fmt: skip
-        if D.members and isinstance(D.members[0].solid, sc.Mesh):
+def _check_definitions(scene, T):  # noqa: N803 -- T the instance table
+    """Fail closed on what the navigator cannot place: a mesh with daughters or a mesh sensor."""
+    for dname in set(T.defn):
+        D = scene.definitions[dname]
+        if D.member is not None and isinstance(D.member.solid, sc.Mesh):
             if D.placements:
-                raise NotImplementedError(f"navigator: mesh definition {dnames[d_]!r} with daughters")
-            if int(D.members[0].label.sensor) != -1:
-                raise NotImplementedError(f"navigator: mesh definition {dnames[d_]!r} is a sensor")
+                raise NotImplementedError(f"navigator: tessellated volume {dname!r} has daughters: a mesh is "
+                                          "opaque (first hit only), so place them in its mother")  # fmt: skip
+            if int(D.member.label.sensor) != -1:
+                raise NotImplementedError(f"navigator: tessellated volume {dname!r} is a sensor: a mesh reports "
+                                          "its first hit only; select a volume of a CSG solid")  # fmt: skip
 
 
-def _mothers(W, vol, order):  # noqa: N803 -- W the walk's arrays
-    """Return (the volumes' instances in depth-first order, each instance's mother volume: the nearest above it)."""
-    vo = order[vol[order]]
-    vidx = np.full(W["n_all"], -1, np.int64)
+def _volumes(scene, T):  # noqa: N803 -- T the instance table
+    """Return (V: per volume its kind, pose, medium, parent, depth, name, definition, origin, piece; kinds; meshes).
+
+    The volumes are the instances with a CSG member, in the canonical order (``lumen.geometry.scene.instances``); a
+    volume's (and a mesh's) mother is the nearest volume above it.
+    """
+    defs = scene.definitions
+    _check_definitions(scene, T)
+    n_all = len(T.defn)
+    mem = [defs[d_].member for d_ in T.defn]
+    mesh = np.array([m is not None and isinstance(m.solid, sc.Mesh) for m in mem], bool)
+    vol = np.array([m is not None for m in mem], bool) & ~mesh
+    vo = np.flatnonzero(vol)
+    vidx = np.full(n_all, -1, np.int64)
     vidx[vo] = np.arange(len(vo))
-    moth = np.full(W["n_all"], -1, np.int64)
-    lv_off, par = W["lv_off"], W["par"]
-    for L_ in range(1, len(lv_off) - 1):
-        c_ = np.arange(lv_off[L_], lv_off[L_ + 1])
-        p_ = par[c_]
-        moth[c_] = np.where(vol[p_], vidx[p_], moth[p_])
-    return vo, moth
-
-
-def _volumes(scene, W):  # noqa: N803 -- W the walk's arrays
-    """Return (V: per volume its kind, pose, medium, sensor, parent, depth, name, definition; kinds; meshes)."""
-    defs, dnames = scene.definitions, list(scene.definitions)
-    dn = W["dn"]
-    order = _preorder(W)
-    _check_definitions(scene, dn)
-    is_mesh = np.array([bool(defs[d_].members) and isinstance(defs[d_].members[0].solid, sc.Mesh) for d_ in dnames])
-    has_m = np.array([bool(defs[d_].members) for d_ in dnames])
-    vol = has_m[dn] & ~is_mesh[dn]
-    vo, moth = _mothers(W, vol, order)
-    V = dict(kind=[], R=W["R"][vo], t=W["t"][vo], med=[], sen=[], parent=moth[vo].tolist(), depth=W["lev"][vo].tolist(),
-             name=[W["paths"][i_] for i_ in vo], defn=[dnames[d_] for d_ in dn[vo]])  # fmt: skip
-    kinds, kid_of, path_id = [], {}, 0
-    for i_ in vo:  # the kinds (first met), sensors, media: per volume
-        m = defs[dnames[dn[i_]]].members[0]
+    moth = np.full(n_all, -1, np.int64)
+    for i in range(1, n_all):  # parents come first in the canonical order
+        p = int(T.parent[i])
+        moth[i] = vidx[p] if vol[p] else moth[p]
+    V = dict(kind=[], R=T.R[vo], t=T.t[vo], med=[], parent=moth[vo].tolist(), depth=T.depth[vo].tolist(),
+             name=[T.path[i_] for i_ in vo], defn=[T.defn[i_] for i_ in vo])  # fmt: skip
+    V["origin"] = [defs[d_].origin or d_ for d_ in V["defn"]]
+    whole: dict = {}  # a split union's instance (the instance placing its pieces) -> its group
+    V["piece"] = [whole.setdefault(int(T.parent[i_]), len(whole)) if defs[d_].piece_of else -1
+                  for i_, d_ in zip(vo, V["defn"], strict=True)]  # fmt: skip
+    kinds, kid_of = [], {}
+    for i_ in vo:  # the kinds (first met), media: per volume
+        m = mem[i_]
         k = id(m.solid)
         if k not in kid_of:
             kid_of[k] = len(kinds)
             kinds.append(m.solid)
-        s = int(m.label.sensor)
-        if s == sc.PATH:
-            s = path_id
-            path_id += 1
-        elif s == sc.PLACEMENT:
-            s = int(W["msen"][i_])
         V["kind"].append(kid_of[k])
         V["med"].append(int(m.label.medium))
-        V["sen"].append(s)
-    meshes = []  # (world triangles, medium, mother)
-    for i_ in order[(has_m[dn] & is_mesh[dn])[order]]:
-        m = defs[dnames[dn[i_]]].members[0]
-        meshes.append((m.solid.tris @ W["R"][i_].T + W["t"][i_], int(m.label.medium), int(moth[i_])))
+    meshes = [
+        (mem[i_].solid.tris @ T.R[i_].T + T.t[i_], int(mem[i_].label.medium), int(moth[i_]), T.defn[i_], int(i_))
+        for i_ in np.flatnonzero(mesh)
+    ]  # (world triangles, medium, mother, definition, instance)
+    V["inst"] = vo.tolist()
     return V, kinds, meshes
 
 
 # ------------------------------------------------------------------------------------------------- links
 def _pad(c, h):
-    return BOX_PAD_REL * (np.abs(c) + h) + BOX_PAD_ABS
+    return WORLD_BOX_PAD_REL * (np.abs(c) + h) + WORLD_BOX_PAD_ABS
 
 
-def _hole_links(scene, V, parent, lo, hi, kids):  # noqa: N803 -- V the volumes' columns
-    """Link the import's hole fillers as daughter candidates of the holed solid whose box they meet; return the count.
-
-    The filler siblings (``Scene.hole_fillers``, placed after) win where they hold a point, as any later sibling.
-    """
-    n = len(V["defn"])
-    ov = set(scene.hole_fillers)
-    ud, inv_d = np.unique(np.asarray(V["defn"], dtype=object).astype(str), return_inverse=True)  # per definition
-    holed = np.array([HOLES in d_ for d_ in ud], bool)[inv_d.ravel()]
-    flag = (np.array([any(d_ == o_ or d_.startswith(o_ + "|") for o_ in ov) for d_ in ud], bool)[inv_d.ravel()]
-            if ov else np.zeros(n, bool))  # fmt: skip
-    n_hole = 0
-    for u in np.flatnonzero(holed):
-        sib = np.flatnonzero((parent[:n] == parent[u]) & flag & ~holed & (np.arange(n) > u))
-        meet = sib[np.all((lo[sib] <= hi[u]) & (hi[sib] >= lo[u]), axis=1)]
-        kids[u].extend(int(i) for i in meet)
-        n_hole += len(meet)
-    return n_hole
-
-
-def kind_signatures(tables):
-    """Return per kind an id equal for kinds of the same solid (leaf tables, boolean program).
-
-    Coincident siblings may be placements of two definitions with one shape (MicroBooNE's PMT lens and underside).
-    """
-    T, K, G = tables.T, tables.K, tables.G
-    nL = len(T["typ"])
-    lf = [f for f in sorted(T) if f != "p0" and np.shape(T[f])[0] == nL]
-    seen, out = {}, np.zeros(tables.n_kinds, np.int64)
-    for k in range(tables.n_kinds):
-        l0, nl, p0, pl = (int(K[x][k]) for x in ("l0", "nl", "p0", "pl"))
-        rows = []
-        for l_ in range(l0, l0 + nl):
-            pp = slice(int(T["p0"][l_]), int(T["p0"][l_]) + int(T["np_"][l_]))
-            rows.append(np.r_[[T[f][l_] for f in lf], T["n0"][pp], T["n1"][pp], T["n2"][pp], T["h"][pp]].tobytes())
-        key = (tuple(rows), np.asarray(G["op"][p0 : p0 + pl]).tobytes(), np.asarray(G["arg"][p0 : p0 + pl]).tobytes())
-        out[k] = seen.setdefault(key, len(seen))
-    return out
-
-
-def _coincident(tables, kind, parent, Rh, th):  # noqa: N803 -- Rh the volumes' rotations
-    """Return (coin_hi, groups): per volume its coincident partner (-1 none), and the coincident groups.
-
-    One mother, one solid, one pose: the lowest index fills the region; leaving a member, Geant4 locates the photon in
-    the highest-index other member (LevelLocate excludes only the volume left).
-    """
+def _ownership(scene, V, kinds, tables, geo):  # noqa: N803 -- V the volumes' columns
+    """Return the Ownership (``lumen.geometry.ownership``) of the volumes, then the meshes (units n, n + 1, ...)."""
+    kind, parent, Rh, th, lo, hi, meshes = geo
     n = len(kind)
-    coin_hi = np.full(n, -1, np.int32)
-    ks = kind_signatures(tables)  # one id per distinct solid (two definitions of one shape: one)
-    ck = np.c_[parent[:n], ks[kind], Rh.reshape(n, 9), th]
-    _, ci, cc = np.unique(ck, axis=0, return_inverse=True, return_counts=True)
-    ci = ci.ravel()
-    for g_ in np.flatnonzero(cc > 1):
-        m_ = np.flatnonzero(ci == g_)
-        coin_hi[m_[:-1]] = m_[-1]
-        coin_hi[m_[-1]] = m_[-2]
-    return coin_hi, tuple(tuple(np.flatnonzero(ci == g_).tolist()) for g_ in np.flatnonzero(cc > 1))
+    nodes = list(kinds) + [sc.Mesh(m[0]) for m in meshes]  # a mesh: its world triangles
+    boxes = tuple(tables.kind_box) + tuple(ownership.box_of(nd) for nd in nodes[len(kinds) :])
+    defn = list(V["defn"]) + [m[3] for m in meshes]
+    ukind = np.r_[np.asarray(kind, np.int64), len(kinds) + np.arange(len(meshes), dtype=np.int64)]
+    upar = np.r_[np.where(parent[:n] >= n, -1, parent[:n]), [m[2] for m in meshes]].astype(np.int64)
+    eye = np.broadcast_to(np.eye(3), (len(meshes), 3, 3))
+    mlo = np.array([m[0].reshape(-1, 3).min(0) for m in meshes]).reshape(-1, 3)
+    mhi = np.array([m[0].reshape(-1, 3).max(0) for m in meshes]).reshape(-1, 3)
+    place = np.r_[np.asarray(V["inst"], np.int64), [m[4] for m in meshes]].astype(np.int64)
+    units = ownership.Units(parent=upar, kind=ukind, nodes=nodes, box=boxes, R=np.concatenate([Rh, eye]),
+                            t=np.concatenate([th, np.zeros((len(meshes), 3))]), place=place,
+                            forced=ownership.hole_pairs(*ownership.hole_kinds(scene, defn), upar, np.r_[lo, mlo],
+                                                        np.r_[hi, mhi]))  # fmt: skip
+    return ownership.resolve(units)
+
+
+def _transparent(n, parent, own, classes):
+    """Return per volume whether it is transparent (module docstring): ``classes`` = (per volume, per mesh, the
+    outside's class, the volumes never transparent, per class the class it is interchangeable with)."""  # noqa: D205, D209
+    vol_cls, mesh_cls, out_cls, kept, canon = classes
+    cls = np.asarray(canon, np.int64)[np.r_[np.asarray(vol_cls, np.int64), [int(out_cls)],
+                                             np.asarray(mesh_cls, np.int64)].astype(np.int64)]  # fmt: skip
+    ok = np.ones(n, bool)
+    ok[np.asarray(kept, np.int64)] = False
+    for u in range(n):
+        ok[[a for a in own.clips[u] if a < n]] = False  # something below reaches out of it
+        if cls[parent[u]] != cls[u]:
+            ok[u] = False
+        for w in own.owners[u]:  # it lists its owners: they must be of its class
+            if w < n and cls[u] != cls[w]:
+                ok[w] = False
+    for a, b in own.pairs:  # an owner of part of a mesh (a mesh: unit n + k, class n + 1 + k)
+        if a >= n and b < n:
+            ok[b] = False
+    return ok
+
+
+def _dissolve(kids, parent, clear, clips):
+    """Return (the candidates, the exit parents) with the transparent volumes ``clear`` replaced by their candidates
+    (its daughters and owners; not the ancestors it is not proved inside: its listers lie inside them)."""  # noqa: D205, D209
+    n = len(clear)
+    memo = {}
+
+    def expand(k):
+        if k >= n or not clear[k]:
+            return [k]
+        if k not in memo:
+            memo[k] = [x for j in kids[k] if j not in clips[k] for x in expand(j)]
+        return memo[k]
+
+    out = []
+    for v, ks in enumerate(kids):
+        seen, row = set(), []
+        for x in [y for k in ks for y in expand(k)] if v >= n or not clear[v] else list(ks):
+            if x not in seen:
+                seen.add(x)
+                row.append(x)
+        out.append(row)
+    up = np.asarray(parent).copy()
+    for i in range(n):  # depth-first order: a mother's exit parent is final before its daughters'
+        p = up[i]
+        if p < n and clear[p]:
+            up[i] = up[p]
+    return out, up
+
+
+def _nav_id(i, n):
+    """Return the navigator's id of ownership unit i: a volume as is, mesh k (unit n + k) as its pseudo-volume."""
+    return int(i) if i < n else int(i) + 1
 
 
 def _mesh_chunks(meshes, n, mesh_chunk, kids):
@@ -302,7 +264,7 @@ def _mesh_chunks(meshes, n, mesh_chunk, kids):
     out_ = n
     ch0 = n + 1 + len(meshes)
     Vt, cst, cnn, cmesh, chm = [], [], [], [], []
-    for m_, (T, _med, mother) in enumerate(meshes):
+    for m_, (T, _med, mother, *_) in enumerate(meshes):
         T = T[np.argsort(morton(T.mean(1)), kind="stable")]
         k0 = sum(len(x) for x in Vt)
         for s in range(0, len(T), mesh_chunk):
@@ -321,12 +283,12 @@ def _mesh_chunks(meshes, n, mesh_chunk, kids):
     for c in range(len(cst)):  # each chunk: an item of its mesh's mother (Geant4: not of the volumes below it)
         kids[chm[c]].append(ch0 + c)
     nrm = np.cross(Vt[:, 1] - Vt[:, 0], Vt[:, 2] - Vt[:, 0])
-    nrm /= np.maximum(np.linalg.norm(nrm, axis=1, keepdims=True), NORMAL_FLOOR)
+    nrm /= np.maximum(np.linalg.norm(nrm, axis=1, keepdims=True), DIVISOR_FLOOR)
     return dict(Vt=Vt, cst=cst, cnn=cnn, cmesh=cmesh, chm=chm, clo=clo, chi=chi, nrm=nrm, ch0=ch0)
 
 
 # ------------------------------------------------------------------------------------------------- frame groups
-def _entries(kids, n, mesh, rot, min_group, gain):
+def _entries(kids, n, mesh, rot):
     """Return the daughter entries of every volume ordered (mother, group key, daughters' order) and their groups."""
     Rh, hb = rot
     nv = n + 1 + mesh["n_mesh"]
@@ -334,7 +296,7 @@ def _entries(kids, n, mesh, rot, min_group, gain):
     kf = np.concatenate([np.asarray(x, np.int64) for x in kids]) if lens.sum() else np.zeros(0, np.int64)
     vf = np.repeat(np.arange(len(kids)), lens)
     un = kf < n
-    gkey, G, Rg_all, _ = bvh.frame_groups_all(Rh, hb, vf[un], kf[un], min_group, gain)
+    gkey, G, Rg_all = bvh.frame_groups_all(Rh, hb, vf[un], kf[un])
     # one sequence: (mother, group key, kids order); a mother's mesh chunks after its unit groups
     ent_v = np.r_[vf[un], vf[~un]]
     ent_k = np.r_[gkey, np.full(int((~un).sum()), 3 * (G + nv), np.int64)]
@@ -379,73 +341,79 @@ def _group_boxes(E, n, mesh, poses):  # noqa: N803 -- E the daughter entries
     ch = ~unit
     if ch.any():  # mesh chunks: their world boxes
         kc = ent_i[ch] - mesh["ch0"]
-        cp = BOX_PAD_REL * (np.abs(mesh["clo"][kc]) + np.abs(mesh["chi"][kc])) + BOX_PAD_ABS
+        cp = WORLD_BOX_PAD_REL * (np.abs(mesh["clo"][kc]) + np.abs(mesh["chi"][kc])) + WORLD_BOX_PAD_ABS
         blo[ch], bhi[ch] = mesh["clo"][kc] - cp, mesh["chi"][kc] + cp
     return blo, bhi, ge
 
 
-def _trees(E, boxes, leaf_size):  # noqa: N803 -- E the daughter entries
-    """Return every group's BVH, built in one level-synchronous pass: (node arrays, g0, g1, depth)."""
+def _trees(E, boxes):  # noqa: N803 -- E the daughter entries
+    """Return every group's BVH, built in one level-synchronous pass: the node arrays, each group's first and
+    past-the-end node (g0, g1) and the depth; None when there are no groups."""  # noqa: D205, D209
     blo, bhi, ge = boxes
     if not len(E["gs"]):
-        return [], [], [], [], [], [], [], [], 0
-    B_ = bvh.build_many(blo, bhi, ge, leaf_size)
+        return None
+    B_ = bvh.build_many(blo, bhi, ge)
     t0 = np.r_[B_["tree0"], len(B_["skip"])]
-    return ([B_["lo"]], [B_["hi"]], [B_["skip"]], [B_["start"]], [B_["count"]],
-            [E["i"][B_["items"]].astype(np.int32)], t0[:-1].tolist(), t0[1:].tolist(), int(B_["n_levels"]))  # fmt: skip
+    return dict(lo=B_["lo"], hi=B_["hi"], skip=B_["skip"], start=B_["start"], count=B_["count"],
+                items=E["i"][B_["items"]].astype(np.int32), g0=t0[:-1], g1=t0[1:],
+                depth=int(B_["n_levels"]))  # fmt: skip
 
 
-def _cat(xs, shape, dt):
-    return np.concatenate(xs).astype(dt) if xs else np.zeros(shape, dt)
+def _node(trees, k, shape, dt):
+    """Return a node array of the BVHs as ``dt`` (a placeholder of ``shape`` when there are none)."""
+    return np.zeros(shape, dt) if trees is None else np.asarray(trees[k]).astype(dt)
 
 
 def _host(E, trees, vols, mesh, bg):  # noqa: N803 -- E the daughter entries
     """Return the host arrays of the navigator."""
-    L, H, SK, ST, CN, IT, G0, G1, _ = trees
-    V, kind, parent, Rh, th, cb, hb, coin_hi, fill = vols
+    V, kind, parent, Rh, th, prio = vols
     nv, g_v, g_mesh = E["nv"], E["g_v"], E["g_mesh"]
     av = np.arange(nv)
     vg0 = np.searchsorted(g_v, av, "left").astype(np.int32)
     vg1 = np.searchsorted(g_v, av, "right").astype(np.int32)
     vg1u = (vg0 + np.bincount(g_v[~g_mesh], minlength=nv)[:nv]).astype(np.int32)
-    n_mesh = mesh["n_mesh"]
     out_ = len(kind)
     mmed = np.asarray([x[1] for x in mesh["meshes"]], np.int32)
     mpar = np.asarray([out_ if x[2] < 0 else x[2] for x in mesh["meshes"]], np.int32)
-    Vt, cst, cnn, cmesh, chm = mesh["Vt"], mesh["cst"], mesh["cnn"], mesh["cmesh"], mesh["chm"]
+    Vt, cst, cnn, cmesh = mesh["Vt"], mesh["cst"], mesh["cnn"], mesh["cmesh"]
     GR = E["GR"]
-    return dict(lo=_cat(L, (1, 3), np.float32), hi=_cat(H, (1, 3), np.float32), skip=_cat(SK, (1,), np.int32),
-                start=_cat(ST, (1,), np.int32), count=_cat(CN, (1,), np.int32), items=_cat(IT, (1,), np.int32),
+    return dict(lo=_node(trees, "lo", (1, 3), np.float32), hi=_node(trees, "hi", (1, 3), np.float32),
+                skip=_node(trees, "skip", (1,), np.int32), start=_node(trees, "start", (1,), np.int32),
+                count=_node(trees, "count", (1,), np.int32), items=_node(trees, "items", (1,), np.int32),
                 gR=(np.stack(GR) if GR else np.eye(3)[None]).astype(np.float32),
-                g0=np.asarray(G0 or [0], np.int32), g1=np.asarray(G1 or [0], np.int32), vg0=vg0, vg1=vg1,
+                g0=_node(trees, "g0", (1,), np.int32), g1=_node(trees, "g1", (1,), np.int32), vg0=vg0, vg1=vg1,
                 vg1u=np.maximum(vg1u, vg0),
-                parent=np.concatenate([parent, mpar]).astype(np.int32),
+                parent=np.concatenate([parent, [out_], mpar]).astype(np.int32),  # per navigator id
                 cls=np.concatenate([np.asarray(V["med"], np.int32), [bg], mmed]).astype(np.int32),
-                sen=np.concatenate([np.asarray(V["sen"], np.int32), np.full(1 + n_mesh, -1)]).astype(np.int32),
-                kind=kind.astype(np.int32), R=Rh.astype(np.float32), t=th.astype(np.float32), coin_hi=coin_hi,
-                uc=cb.astype(np.float32), uh=(hb + 1e-6 * (np.abs(cb) + hb) + 1e-9).astype(np.float32),
+                kind=kind.astype(np.int32), R=Rh.astype(np.float32), t=th.astype(np.float32),
+                prio=np.asarray(prio, np.int32),
                 V0=Vt[:, 0].astype(np.float32), V1=Vt[:, 1].astype(np.float32), V2=Vt[:, 2].astype(np.float32),
                 N=mesh["nrm"].astype(np.float32), cstart=np.asarray(cst if len(cst) else [0], np.int32),
                 cn=np.asarray(cnn if len(cnn) else [0], np.int32),
-                cmesh=np.asarray(cmesh if cmesh else [0], np.int32),
-                cmoth=np.asarray(chm if chm else [out_], np.int32), fill=fill)  # fmt: skip
+                cmesh=np.asarray(cmesh if cmesh else [0], np.int32))  # fmt: skip
 
 
-def _srf_layout(tables, n, ch0, mesh):
-    """Return the surface codes' layout (su, sm, LM, FM) and the triangle -> chunk table.
+def _srf_layout(tables, kind, ch0, mesh):
+    """Return the surface codes' layout (su, sm, FM), the per-volume leaf base ``ub`` and the triangle -> chunk table.
 
-    Above the items (a plain item: the band rules): units su + ((item * LM + leaf) * FM + face) * 4 + 2 o + e, mesh
-    triangles sm + 4 k + 2 o + e (o: the outward normal is +grad; e: the event entered the item).
+    Above the items (a plain item: the band rules): units su + ((ub[item] + leaf) * FM + face) * 4 + 2 o + e, with
+    ub[i] the leaves of the volumes before i (each volume spans its own kind's leaves: the code space is the scene's
+    leaves, not the volumes times the largest solid's); mesh triangles sm + 4 k + 2 o + e (o: the outward normal is
+    +grad; e: the event entered the item).
     """
-    LM, FM = max(int(tables.maxnl), 1), 1 + int(np.max(tables.T["np_"]))
+    FM = 1 + int(np.max(tables.T["np_"]))
+    nl = np.maximum(np.asarray(tables.K["nl"], np.int64)[np.asarray(kind, np.int64)], 1)
+    ub = np.concatenate([[0], np.cumsum(nl)])
     cst, Vt = mesh["cst"], mesh["Vt"]
     su = ch0 + len(cst)
-    sm = su + n * LM * FM * 4
+    sm = su + int(ub[-1]) * FM * 4
     if sm + 4 * len(Vt) >= SRF_LIMIT:
-        raise ValueError(f"navigator: srf codes overflow int32 ({sm + 4 * len(Vt)})")
+        raise ValueError(f"navigator: the surface codes overflow int32 ({sm + 4 * len(Vt)}): the detector volume "
+                         "holds too many solid leaves and mesh triangles; simplify its largest solids or "
+                         "meshes")  # fmt: skip
     tchunk = ((np.searchsorted(cst, np.arange(len(Vt)), side="right") - 1).clip(0).astype(np.int32)
               if len(cst) else np.zeros(1, np.int32))  # fmt: skip
-    return (su, sm, LM, FM), tchunk
+    return (su, sm, FM), ub.astype(np.int32), tchunk
 
 
 def _volume_boxes(tables, V):  # noqa: N803 -- V the volumes' columns
@@ -461,10 +429,41 @@ def _volume_boxes(tables, V):  # noqa: N803 -- V the volumes' columns
     return kind, Rh, th, cb, hb, cw - hw - pad, cw + hw + pad
 
 
-def build(scene, min_group=bvh.MIN_GROUP, gain=bvh.GROUP_GAIN, leaf_size=bvh.LEAF_SIZE, mesh_chunk=MESH_CHUNK):
-    """Return the NavArrays of a lowered Scene (``lumen.build.scene``; a label's medium is the class reported)."""
-    W = _walk(scene)
-    V, kinds, meshes = _volumes(scene, W)
+def _candidates(own, n, kids, mesh, n_mesh):
+    """Add each volume's owners (a mesh: its triangle chunks) and the ancestors it is not proved inside to its
+    candidates."""  # noqa: D205, D209
+    chunks_of = [[] for _ in range(n_mesh)]
+    for c, m_ in enumerate(mesh["cmesh"]):
+        chunks_of[m_].append(mesh["ch0"] + c)
+    for u in range(n):  # an owner is a candidate of its non-owner and of the volumes below it it reaches (a mesh: its
+        # triangle chunks); an ancestor u reaches out of is a candidate too (its exit is u's)
+        kids[u].extend(w if w < n else c for w in own.owners[u] for c in ([w] if w < n else chunks_of[w - n]))
+        kids[u].extend(own.clips[u])
+
+
+@dataclass(frozen=True, eq=False)
+class Stage:
+    """The class-free part of a build (``prepare``): the volumes, CSG tables, boxes, meshes, ownership and candidates.
+
+    It reads no optics, so one Stage serves every set of classes (``finish``); its ownership (``own``) is the costly
+    part, which the build cache keeps per scene (``lumen.geometry.cache``).
+    """
+
+    scene: object
+    V: dict
+    kinds: list
+    meshes: list
+    tables: CsgTables
+    boxes: tuple  # (kind, Rh, th, cb, hb, lo, hi)
+    parent: np.ndarray
+    kids: list  # per volume, the outside, then each mesh: its candidate items (before any dissolution)
+    own: object  # lumen.geometry.ownership.Ownership
+    mesh: dict
+
+
+def prepare(scene, own=None) -> Stage:
+    """Return the class-free Stage of a lowered Scene; ``own``: its Ownership if already known (a Stage's ``own``)."""
+    V, kinds, meshes = _volumes(scene, sc.instances(scene))
     n = len(V["kind"])
     if n == 0:
         raise ValueError("navigator: a scene without volumes")
@@ -474,23 +473,78 @@ def build(scene, min_group=bvh.MIN_GROUP, gain=bvh.GROUP_GAIN, leaf_size=bvh.LEA
     kids = [[] for _ in range(n + 1)]
     for i in range(n):
         kids[parent[i]].append(i)
-    n_hole = _hole_links(scene, V, parent, lo, hi, kids)
-    # the volumes with a daughter candidate that is not their daughter (a sibling filling a lowered hole): where that
-    # candidate holds a point, the point is not theirs (fill)
-    fill = np.array([any(k_ < n and parent[k_] != u for k_ in kids[u]) for u in range(n)] or [False], bool)
-    coin_hi, coincident = _coincident(tables, kind, parent, Rh, th)
-    mesh = _mesh_chunks(meshes, n, mesh_chunk, kids)
+    if own is None:
+        own = _ownership(scene, V, kinds, tables, (kind, parent, Rh, th, lo, hi, meshes))
+    mesh = _mesh_chunks(meshes, n, MESH_CHUNK, kids)
     mesh.update(n_mesh=len(meshes), meshes=meshes)
-    E = _entries(kids, n, mesh, (Rh, hb), min_group, gain)
-    trees = _trees(E, _group_boxes(E, n, mesh, (Rh, th, cb, hb)), leaf_size)
-    host = _host(E, trees, (V, kind, parent, Rh, th, cb, hb, coin_hi, fill), mesh, int(scene.outside.medium))
-    dmax = trees[-1]  # the deepest BVH: the traversal's stack holds one entry per level; a deeper one would drop nodes
+    _candidates(own, n, kids, mesh, len(meshes))
+    return Stage(scene, V, kinds, meshes, tables, (kind, Rh, th, cb, hb, lo, hi), parent, kids, own, mesh)
+
+
+class Classes(NamedTuple):
+    """The classes a navigator reports and dissolves by (``lumen.build.tracked``)."""
+
+    volume: tuple  # per volume
+    mesh: tuple  # per mesh
+    outside: int
+    kept: tuple  # the volumes never transparent (a sensor's, a self pair class's)
+    canon: tuple  # per class, the class it is interchangeable with
+
+
+def build(scene, classes: Classes | None = None):
+    """Return the NavArrays of a lowered Scene (``lumen.geometry.scene``): ``finish(prepare(scene))``.
+
+    ``classes``: the classes reported, and the transparent volumes dissolved (module docstring); None: a label's
+    medium is the class reported, nothing dissolved.
+    """
+    return finish(prepare(scene), classes)
+
+
+def finish(st: Stage, classes: Classes | None = None):
+    """Return the NavArrays of a Stage for ``classes`` (``build``): the transparent volumes dissolved, the BVHs."""
+    scene, V, kinds, meshes, tables, own, mesh, parent = st.scene, st.V, st.kinds, st.meshes, st.tables, st.own, \
+        dict(st.mesh), st.parent  # fmt: skip
+    kind, Rh, th, cb, hb, lo, hi = st.boxes
+    n = len(V["kind"])
+    kids = [list(k) for k in st.kids]
+    clear = _transparent(n, parent, own, classes) if classes is not None else np.zeros(n, bool)
+    kids, up = _dissolve(kids, parent, clear, own.clips) if clear.any() else (kids, parent)
+    E = _entries(kids, n, mesh, (Rh, hb))
+    trees = _trees(E, _group_boxes(E, n, mesh, (Rh, th, cb, hb)))
+    # the rule's order per navigator id (volumes, the outside last, then each mesh as its unit)
+    prio = np.r_[own.prio[:n], [len(own.prio)], own.prio[n:]]
+    host = _host(E, trees, (V, kind, up, Rh, th, prio), mesh, int(scene.outside.medium))
+    for k, m_ in enumerate(meshes):  # a mesh in a transparent volume: its exit parent is that volume's
+        if m_[2] >= 0 and clear[m_[2]]:
+            host["parent"][n + 1 + k] = up[m_[2]]
+    size = np.ones(n, np.int64)  # the volumes below each, itself included: depth-first order makes them contiguous
+    for i in range(n - 1, -1, -1):
+        if parent[i] < n:
+            size[parent[i]] += size[i]
+    host["size"] = np.concatenate([size, np.zeros(1 + len(meshes), np.int64)]).astype(np.int32)
+    host["piece"] = np.concatenate([np.asarray(V["piece"], np.int64), np.full(1 + len(meshes), -1)]).astype(np.int32)
+    dmax = (
+        0 if trees is None else trees["depth"]
+    )  # the deepest BVH: the traversal's stack holds one entry per level; a deeper one would drop nodes
     if dmax > STACK:
-        raise ValueError(f"navigator: a BVH of depth {dmax} > the traversal stack ({STACK})")
-    srf, host["tchunk"] = _srf_layout(tables, n, mesh["ch0"], mesh)
+        raise ValueError(f"navigator: a BVH of depth {dmax} exceeds the traversal stack ({STACK}): a volume has "
+                         f"too many daughters ({max(len(k_) for k_ in kids)}): group them in sub-volumes")  # fmt: skip
+    srf, host["ub"], host["tchunk"] = _srf_layout(tables, kind, mesh["ch0"], mesh)
     stats = dict(volumes=n, kinds=len(kinds), meshes=len(meshes), chunks=len(mesh["cst"]), groups=len(E["GR"]),
-                 framed=int(E["g_rot"].sum()), hole_links=n_hole, max_daughters=int(max(len(k_) for k_ in kids)),
+                 framed=int(E["g_rot"].sum()), hole_links=int(own.forced.sum()), links=int((~own.forced).sum()),
+                 owner_links=sum(len(x) for x in own.owners), clip_links=sum(len(x) for x in own.clips),
+                 transparent=int(clear.sum()), max_daughters=int(max(len(k_) for k_ in kids)),
                  bvh_depth=dmax)  # fmt: skip
-    return NavArrays(host=host, csg=tables, n=n, n_mesh=len(meshes), chunk=int(mesh_chunk), ch0=mesh["ch0"], srf=srf,
-                     bg=int(scene.outside.medium), names=tuple(V["name"]), defs=tuple(V["defn"]), stats=stats,
-                     coincident=coincident, kids=tuple(tuple(k_) for k_ in kids), lo_w=lo, hi_w=hi)  # fmt: skip
+    defs_, chm = scene.definitions, mesh["chm"]
+    probe = dict(uc=cb.astype(np.float32), uh=(hb + _pad(cb, hb)).astype(np.float32),
+                 cmoth=np.asarray(chm if chm else [n], np.int32))  # fmt: skip
+    arrays = NavArrays(host=host, csg=tables, n=n, n_mesh=len(meshes), chunk=MESH_CHUNK, ch0=mesh["ch0"], srf=srf,
+                     names=tuple(V["name"]), defs=tuple(V["defn"]), stats=stats,
+                     owned=tuple((_nav_id(a, n), _nav_id(b, n), bool(f))
+                                 for (a, b), f in zip(own.pairs, own.forced, strict=True)),
+                     clipped=tuple((_nav_id(a, n), _nav_id(b, n)) for a, b in own.protrude),
+                     kids=tuple(tuple(k_) for k_ in kids), lo_w=lo, hi_w=hi, probe=probe,
+                     origins=tuple(V["origin"]) + ("OUT",) + tuple(defs_[m[3]].origin or m[3] for m in meshes),
+                     pieces=tuple(V["piece"]),
+                     thin=tuple((_nav_id(a, n), _nav_id(b, n)) for a, b in own.thin))  # fmt: skip
+    return arrays if classes is None else arrays.with_classes(classes.volume, classes.mesh, classes.outside)

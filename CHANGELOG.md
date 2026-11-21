@@ -3,6 +3,118 @@
 Changes a user of lumen can see, newest first. Each entry says what changed, what an old file, key or script does
 now, and what to do.
 
+## 0.2.0 (2026-11-20)
+
+lumen 0.2 is a rewrite of the photon loop's outputs, of how a detector is described and of where the experiments'
+detectors live. A 0.1 detector file, value set or calibration does not load: convert the detector again and save the
+calibration again. The git history keeps the detail of every step.
+
+### Results that change
+
+- **Exact sums.** Every histogram cell, tangent and reverse cotangent is the correctly rounded float32 of the exact sum
+  of what was added to it (0.1's fixed point set a tangent below its quantum to 0). A cell is exact or NaN, counted in
+  `light.health.nonfinite`. `backend="xla"` sums exactly too.
+- **The roulette's ε is 0.01** (was 0.1), on the photon's weight relative to its emission row; one ε, in `Controls`.
+  Values and derivatives move within the Monte Carlo error; derivatives of surface reflectivities get tighter.
+- **`speed="fast"` is the default**: in a Rayleigh-only medium the photon walks its own scatterings inside a ball the
+  geometry proves empty. Exact in law, other random numbers; `speed="exact"` is the plain loop. A probe diagnostic
+  runs exact; `Light.provenance` says which ran.
+- **Other random numbers, the same law**: the unpolarised linear state is drawn like every other draw, and one
+  dielectric reflectance serves every Fresnel branch.
+- **One meaning of "detected".** `arrivals`, the histograms and the checks count the same deposit; under a model that
+  applies the QE after tracking, SK's, WCTE's and ANNIE's arrivals are 1/0.68 of 0.1's (photoelectrons unchanged).
+- **As in Geant4**: facet loops uncapped (G4OpBoundaryProcess); Cherenkov light spans its medium's RINDEX table; a
+  user GROUPVEL times the photons.
+- **No time cut**: every photon is followed until the roulette, absorption, escape or the vertex guard ends it, and
+  every output counts all the light (a readout's gate sets only the time histogram's extent; light before or after
+  it is in the early / late cells). `Controls.t_end` and `health.retired` are gone.
+- **A time spread's fit range is derived** ([1/2, 2] times the set's width): time grids change, charges do not.
+- **Errors from per-photon moments; no replicas**: `simulate` has no `replicas` and the charge histogram no replica
+  axis (charge is (S, *axes)). `arrivals_error` and `lumen.readout.pe_error(light)` (at the run's values only) come
+  from each cell's per-photon second moment (`Histograms.charge2`, `lumen.readout.grid.moment_error`): unbiased for
+  i.i.d. photons, its own scatter about 15 % on a cell of tens of photons (41 % from 4 replicas). Arrivals move by the
+  replica sum's float32 rounding. The checks (`compare.charge`, `overlaps`, `event`) read the moments of a
+  `photons.Detected`; the gradient check's `--replicas` is `--seeds`.
+- **`chunk` is a memory lever**: by default at most 2^20, smaller when the rows or the records do not fit (a launch
+  whose records do not fit runs again, smaller); a given chunk whose records do not fit is refused.
+
+### Added
+
+- **One run entry**: `lumen.simulate(det, source, params, *, ..., diagnostics=(), truth=None, records=None)` returns a
+  `Light`: `arrivals` and their error, `health` (a `Health` record, a pytree: `lost`, `abandoned`, `escaped`,
+  `truncated`, `records`, `records_dropped`, `records_mismatch`, `nonfinite`, `invalid`), each modelled group's
+  histograms (`light.group(name)`), `diagnostics` and `truth` (one row per detected photon, `lumen.readout.Truth`); an
+  event axis with `events=E` (`light.event(e)`), labels on sources.
+- **Deposit records.** The photon loop emits one record per deposit and the readout builds every output from them.
+  Under `jax.jit` or `jax.vmap` their number is given, `simulate(records=)`, bounded by `health.records` of the run
+  with values (`RecordsUnknown` without it). The readout runs per block of sensors that fits the device: Hyper-K's and
+  DUNE FD1's time profiles run on an 11 GB GPU. A value run and the primal of its derivative agree bit for bit.
+- **`simulate(..., reference=params0)`**: every random choice at the reference values, the light at the values given,
+  so a finite difference converges to the derivative at a fixed seed.
+- **Sensors**: `lumen.SensorGroup` (keyword-only past its name); several `border_into` groups; groups selecting on the
+  id map's columns (`where=`); a readout gate per timed group; `Detector.sensor_table()`, a `SensorTable` in the
+  arrivals' order; `lumen.readout.pe(light, params)`.
+- **Sources**: `CherenkovSteps` and `ScintillationSteps` (Geant4's steps, energies in MeV), `FromArrays`,
+  `@lumen.source`, `Point` and the other built-ins.
+- **Physics**: G4OpWLS's delta time profile and WLSMEANNUMBERPHOTONS, Geant4 11's third scintillation component. Every
+  re-emission (bulk WLS, a surface's) samples one emission record; the WLS spectrum is a parameter with a derivative.
+- **Parts are values, no registries**: passed at load by their path, `lumen.load(path, parts={...})`: a medium model
+  (`@lumen.medium_model`, `"materials/<M>"`) or a channel's phase function (`lumen.media.phase_function`,
+  `"materials/<M>/<channel>"`, its keys `materials/<M>/<channel>/<name>`; without the polarised pair it declares
+  `unpolarised=True`). A detector file records a part's name, never code; a run records the parts it read
+  (`Light.provenance`'s `"parts"`, with "unpolarised" and "fast walk off"). Geant4's surface models are interaction
+  values (parameters, continuing shares, deposits) read by one kernel, not hooks in 0.2 (docs/howto/extending.md).
+- **Inputs**: Geant4-10 scintillation keys are translated wherever they enter (GDML, recipe, YAML), checked against
+  Geant4 10.7.4's reading and recorded in the provenance, or refused (`TranslationRefused`). Unchecked or
+  unsupported inputs are refused at conversion, naming what to change; nothing falls back silently.
+- **YAML detectors**, converted like a GDML (`lumen.convert` takes a GDML with its recipe, or YAML files).
+- **`lumen.tools`**: `Space`, `jacobian`, `fisher`, `fit` (Fisher scoring on a Poisson likelihood), `descend`,
+  `profile`, `coverage`, `scan`, `check_gradient`, `lumen.tools.plot` (extra `plot`).
+- **`lumen.compare`**, one command: `python -m lumen.compare charge|geometry|gradients|overlaps|report|export|gate`.
+  `gate --package PKG` is the bitwise Monte Carlo gate over a package's manifest. The Geant4 comparisons gate on the
+  overlap-free export of the detector's GDML (`export`), the original GDML's run reported beside it.
+- **Reference data is fetched** from its release asset into `LUMEN_DATA` (default under `LUMEN_CACHE`) on first use and
+  checked by sha256; `LUMEN_ASSETS` names a mirror of the assets.
+- **For detector packages**: `lumen.DetectorEntry` (a package's `DETECTORS`, `lumen.convert("package:name")`) and
+  `lumen.testing` (value-set, readout-gate and manifest checks, the notebooks' runner).
+- **The CPU target**: without a GPU the photon loop compiles to C++ with OpenMP (`backend="cpu"`).
+- **Overlaps are resolved statically**: a point belongs to one owner, level by level; the conversion reports
+  overlapping placements, and the GDML export writes the resolution out.
+
+### Migrating a 0.1 script
+
+- **Formats**: detector files `lumen-detector/5`, calibrations `lumen-calibration/1` (tied to their detector file by
+  its digest), value sets `lumen-sensor-values/1`. Older ones are refused: convert again, save calibrations again.
+- **No registries.** `lumen.plugins`, the detector registry and `lumen.load("sk")` are gone: a detector is its file
+  (`lumen.convert(...)` once, `lumen.load(path)`); one sensor model, `lumen:sensor` (was `lumen:pmt`).
+- **A GDML that Geant4 refuses is refused**: run `python -m lumen.gdml.repair SRC DST` and convert `DST`. A detector
+  volume placed more than once is refused, naming the common mother of its placements.
+- **`simulate` takes a `lumen.sources.Source` only**; `Geant4Steps` is `CherenkovSteps` or `ScintillationSteps`
+  (`edep` in MeV); `simulate_truth` and `lumen.diagnostics.run` are `simulate(truth=)` and `simulate(diagnostics=)`.
+- **Records by attribute**: `light.health.lost` (was `health["lost"]`; `out_of_range` is `invalid`),
+  `det.sensor_table().name`; public records are built by keyword. `Light.histograms` is `light.group(name)`,
+  `lumen.tools.pe` is `lumen.readout.pe`.
+- **No source-position derivative**: the moving-source method is removed for 0.2. A tangent on a field that moves where
+  the light starts (a position, a direction, a photon list's rows, a source function's `method="moving_paths"`
+  parameter) raises `GradientNotAvailable`; use a finite difference. With it go `Photons.drawn` and `Photons.dlogp`,
+  `Source.drawn_direction`, `FromArrays(drawn=, dlogp=)`, `lumen.source(density=)` and `lumen.sources.grad_logpdf`
+  (drop them; a direction density that depends on a parameter enters by `reweight`), and `check_source`'s
+  `dlogp_error`.
+- **Gone**: layered surfaces and thin-film photocathodes (`lumen:wls_film`, `lumen:thin_film`, `lumen:complex_index`,
+  ...), the weight scale and `SumOverflow`, `CallableSource`, `lumen.validate` (now `lumen.tools` and
+  `lumen.compare`), YAML writing and the Python builder, `lumen.gdml.import_gdml` (use `lumen.convert`).
+- **`import lumen` no longer turns on JAX's persistent compilation cache** (set `JAX_COMPILATION_CACHE_DIR` yourself);
+  every cache lives under `LUMEN_CACHE` (never HOME).
+- **Pinned**: JAX 0.6.2 and tallymap v0.8.0 (installed from its git tag).
+
+### The detectors left lumen
+
+The experiments' recipes, value sets, reference manifests and comparisons moved to
+[lumen-wc](https://github.com/OmarAlterkait/lumen-wc) (Super-K, WCTE, ANNIE, Hyper-K, IWCD) and
+[lumen-tpc](https://github.com/OmarAlterkait/lumen-tpc) (SBND, MicroBooNE, ICARUS, DUNE):
+`lumen.convert("lumen_wc:sk", out=..., data=...)`; a value set is a path or `<package>:<set>` (`lumen_wc:sk_r3600`).
+lumen ships none (`examples/data/toy_pmt.json` is the toy).
+
 ## 0.1.3 (2026-11-11)
 
 - tallymap 0.6.0, the final release (rc1 plus four fixes in its CPU backend and process spawning), installed from
@@ -102,4 +214,4 @@ The first public release. Files and keys from the pre-release tag `0.0.1` are st
 | `Point(x=)`, `source/x` | `Point(position=)`, `source/position` | rename in scripts; positional use is unchanged |
 | `SensorGroup.model` naming the surface reader (`lumen:geant4`, `lumen:counting`) | `SensorGroup.surface`; `model` is only the sensor model (`lumen:pmt`) | a `lumen-sensors/1` file is read as `lumen-sensors/2` |
 | `build_options` in `detector.json` | removed (every build rewrite is a rule) | an empty one is read; a non-empty one is refused |
-| health key `late` | `retired` (a photon stopped past `t_end`); `late` / `early` is light outside the time grid | – |
+| health key `late` | gone (no time cut); `late` / `early` the time grid's overflow | – |

@@ -213,6 +213,7 @@ TOYS = {
     "k_scintillation": toy('  <box name="b" x="100" y="100" z="100" lunit="mm"/>', vol("lvS", "b"), pv("lvS", "pS"),
                            water_props='<property name="FASTCOMPONENT" ref="REF"/><property name="SLOWCOMPONENT" '
                                        'ref="REF"/><property name="FASTTIMECONSTANT" ref="C1"/><property '
+                                       'name="SLOWTIMECONSTANT" ref="C1"/><property '
                                        'name="YIELDRATIO" ref="C1"/><property name="SCINTILLATIONYIELD" ref="LEN1"/>'
                                        '<property name="RAYLEIGH" ref="LEN1"/>'),
     "all_solids": _all_solids(),

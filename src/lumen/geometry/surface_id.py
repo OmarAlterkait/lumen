@@ -4,11 +4,12 @@ The photon's side of the surface it sits on is its state (its volume), so at the
 (Geant4's fEntering / fExiting). The code (``srf``) holds the item met with its leaf, face and outward sign:
 
 - a plain item (or -1): the item itself, with no face (the band rules);
-- a volume's face: ``su + ((item * LM + leaf) * FM + face) * 4 + 2 o + e``;
+- a volume's face: ``su + ((ub[item] + leaf) * FM + face) * 4 + 2 o + e``;
 - a mesh triangle k: ``sm + 4 k + 2 o + e``;
 
 where o says the outward normal is +grad and e that the event entered the item. Notation: su, sm the first unit and
-mesh codes, LM the most leaves of a kind, FM the most faces of a leaf.
+mesh codes, ub[i] the leaves of the volumes before volume i (a volume spans its own solid's leaves), FM the most faces
+of a leaf.
 
 Gradients: the traversal is detached; the winning (item, leaf, face) is re-evaluated live, ``dt = -g . (do + t dd) /
 (g . d)`` (a custom_jvp), g the winning leaf's gradient (a mesh triangle's normal).
@@ -20,19 +21,18 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 
+from lumen._core.safe import safe_norm
 from lumen.rules import navigation as rules
+from lumen.rules.tolerances import MESH_PARALLEL, SLOPE_REL
+from lumen.units import HUGE
 
 F32, I32 = jnp.float32, jnp.int32
-INF = float(jnp.finfo(jnp.float32).max)
-NORM_FLOOR = 1e-30  # a gradient's norm floor
-SLOPE_REL = 1e-12  # the live t's denominator g . d below this times |g| is no crossing (zero derivative)
-MESH_PARALLEL = 1e-6  # a mesh hit's plane is used where |n . d| is above this
 sg = lax.stop_gradient
 
 
 def srf_decode(nav, s):
     """Return (item, leaf, face, o, known, e) of a surface code; a plain item (or -1): leaf -1, not known."""
-    su, sm, LM, FM = nav.SRF
+    su, sm, FM = nav.SRF
     D = nav.dev()
     s = jnp.asarray(s, I32)
     isu, ism = (s >= su) & (s < sm), s >= sm
@@ -40,7 +40,9 @@ def srf_decode(nav, s):
     eu, u = u % 2, u // 2
     ou, u = u % 2, u // 2
     fu, u = u % FM, u // FM
-    lu, iu = u % LM, u // LM
+    ub = D["ub"]
+    iu = jnp.clip(jnp.searchsorted(ub, u, side="right") - 1, 0, ub.shape[0] - 2).astype(I32)
+    lu = u - ub[iu]
     km = jnp.maximum(s - sm, 0)
     em, km = km % 2, km // 2
     om, km = km % 2, km // 2
@@ -53,10 +55,11 @@ def srf_decode(nav, s):
 
 def srf_pack(nav, item, leaf, face, o, e):
     """Return the surface code of (item, leaf, face, o, e); without a leaf (or a unit face) the plain item."""
-    su, sm, LM, FM = nav.SRF
+    su, sm, FM = nav.SRF
     mesh = item >= nav.CH0
     b2 = 2 * o.astype(I32) + e.astype(I32)
-    cu = su + ((item * LM + leaf) * FM + face) * 4 + b2
+    ub = nav.dev()["ub"]
+    cu = su + ((ub[jnp.clip(item, 0, ub.shape[0] - 1)] + leaf) * FM + face) * 4 + b2
     cm = sm + leaf * 4 + b2
     return jnp.where((item < 0) | (leaf < 0) | (~mesh & (face < 0)), item, jnp.where(mesh, cm, cu)).astype(I32)
 
@@ -70,6 +73,14 @@ def hit_grad(nav, item, leaf, face, x):
     if not nav.n_mesh:
         return g
     return jnp.where(item >= nav.CH0, D["N"][jnp.clip(leaf, 0, D["N"].shape[0] - 1)], g)
+
+
+def face_dist(nav, item, leaf, face, x):
+    """Return the distance of x (world) from a volume's leaf face (``Csg.leaf_dist``): exact for a plane."""
+    D = nav.dev()
+    i = jnp.clip(item, 0, nav.n - 1)
+    R, t = D["R"][i], D["t"][i]
+    return nav.E.leaf_dist(D["kind"][i], leaf, face, R.T @ (x - t))
 
 
 def _live_rule(nav):
@@ -88,7 +99,7 @@ def _live_rule(nav):
         t_ = live(o_, d_, it_, lf_, fc_, t0_, arrays)
         g = hit_grad(nav.bind(arrays), it_, lf_, fc_, o_ + t_ * d_)  # the navigator's arrays: arguments, not captures
         den = jnp.dot(g, d_)
-        ok = jnp.abs(den) > SLOPE_REL * jnp.maximum(jnp.linalg.norm(g), NORM_FLOOR)
+        ok = jnp.abs(den) > SLOPE_REL * safe_norm(g)
         dt = jnp.where(ok, -jnp.dot(g, do_ + t_ * dd_) / jnp.where(ok, den, 1.0), 0.0)
         return t_, dt
 
@@ -102,8 +113,8 @@ def live_t(nav, item, leaf, face, o, d, bt):  # noqa: PLR0913 -- the winner and 
     """
     if nav._live is None:
         nav._live = _live_rule(nav)
-    t0 = sg(jnp.where(bt < INF, bt, 0.0))
-    return jnp.where(bt < INF, nav._live(o, d, item, leaf, face, t0, nav.operands()), bt)
+    t0 = sg(jnp.where(bt < HUGE, bt, 0.0))
+    return jnp.where(bt < HUGE, nav._live(o, d, item, leaf, face, t0, nav.operands()), bt)
 
 
 def mesh_plane_t(nav, win, od, dd, xa):

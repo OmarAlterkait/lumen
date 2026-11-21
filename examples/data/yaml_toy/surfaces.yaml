@@ -1,0 +1,29 @@
+# yaml_toy's optical surfaces: a black liner on the tank, and the PMTs' cathodes.
+schema: lumen-detector-yaml/3      # every file starts with the format it is written in
+surfaces:
+  Liner:                         # Geant4's four surface attributes, all given
+    type: dielectric_metal
+    model: unified
+    finish: ground
+    value: 0.1                   # sigma_alpha (rad) of a unified surface
+    properties:
+      REFLECTIVITY: {energy: [1.5, 5.0], value: [0.1, 0.1]}
+  Cathode:
+    type: dielectric_metal
+    model: unified
+    finish: polished
+    value: 0
+    properties:
+      REFLECTIVITY: {energy: [1.5, 5.0], value: [0.0, 0.0]}
+      EFFICIENCY: {energy: [1.5, 5.0], value: [1.0, 1.0]}
+
+skins:                           # a skin covers every placement of a logical volume
+  - {name: LinerSkin, surface: Liner, volume: Tank}
+
+borders:                         # a border goes from one placement into another, by name
+  - {name: Cathode_top, surface: Cathode, pv1: TankPV, pv2: PMT_top}
+  - {name: Cathode_bottom, surface: Cathode, pv1: TankPV, pv2: PMT_bottom}
+  - {name: Cathode_east, surface: Cathode, pv1: TankPV, pv2: PMT_east}
+  - {name: Cathode_west, surface: Cathode, pv1: TankPV, pv2: PMT_west}
+  - {name: Cathode_north, surface: Cathode, pv1: TankPV, pv2: PMT_north}
+  - {name: Cathode_south, surface: Cathode, pv1: TankPV, pv2: PMT_south}

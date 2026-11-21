@@ -1,6 +1,5 @@
-"""GDML: the reader, the importer that converts a GDML file into a detector file, and the exporter back to GDML."""
+"""GDML: the reader, the importer (``lumen.convert`` converts a GDML file into a detector file), and the exporter."""
 
-from lumen.gdml.exporter import ExportError, ExportReport, export, read_export
-from lumen.gdml.importer import import_gdml
+from lumen.gdml.exporter import ExportError, ExportReport, export
 
-__all__ = ["ExportError", "ExportReport", "export", "import_gdml", "read_export"]
+__all__ = ["ExportError", "ExportReport", "export"]

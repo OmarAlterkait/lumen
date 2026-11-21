@@ -1,0 +1,118 @@
+{
+ "schema": "lumen-references/1",
+ "checks": {
+  "overlaps": [
+   {
+    "direction": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "energy_ev": 2.95,
+    "isotropic": [
+     "cs_A",
+     "cs_AB",
+     "cs_B",
+     "cs_BA"
+    ],
+    "name": "coinc_sib",
+    "reference": "g4ref-overlap-toys-owned-9fd555c0",
+    "sensor_lv": "volS",
+    "source_mm": [
+     -800.0,
+     0.0,
+     0.0
+    ],
+    "toys": [
+     "coinT_AB",
+     "coinT_BA",
+     "cs_A",
+     "cs_AB",
+     "cs_B",
+     "cs_BA",
+     "partT_AB",
+     "partT_BA",
+     "partTm_AB",
+     "partTm_BA",
+     "single_B",
+     "single_B3",
+     "vx3_ABC",
+     "vx3_ACB",
+     "vxc_AB",
+     "vxc_BA",
+     "xl_AS",
+     "xl_SA"
+    ],
+    "world": "volWorld"
+   }
+  ]
+ },
+ "products": {
+  "g4ref-overlap-toys-owned-9fd555c0": {
+   "files": {
+    "coinT_AB.gdml": "sha256:7c121a3764f6acbed57d1777ae804f93a3fe4fb6460864c0c97ed19c3bbe3a2c",
+    "coinT_AB.npz": "sha256:86051a099c0f95f38fbc8e51e306f1f3ca487fd5ba7fcced4765d503e4450d15",
+    "coinT_BA.gdml": "sha256:d2d61e9a75bf7468bd53a42d5db16f07a0ffff2732ea90fdc1a7892a39d35b83",
+    "coinT_BA.npz": "sha256:ea86080870b62857fe82ede9dddf20653fc31814ab3ea45c8f22bf8619013367",
+    "cs_A.gdml": "sha256:54678f547a8bab2bf4602262d3a77cc9e49eae8fc3e9768a0af8b9ec2a8067d1",
+    "cs_A.npz": "sha256:ef12454a807300631351ed161d4b870f59a4259e1637305f7c21320e9968d339",
+    "cs_AB.gdml": "sha256:161291cb2f7444db43380daeb6c133a3369e38a196214338338c17f60c109a7b",
+    "cs_AB.npz": "sha256:ef12454a807300631351ed161d4b870f59a4259e1637305f7c21320e9968d339",
+    "cs_B.gdml": "sha256:aaf327aefa1c58c8ecfc0be8dbf9b708d0237b49baf1f49b36d514813fa96f78",
+    "cs_B.npz": "sha256:3cf1a75d2dbde8a1eea976f37aa549bff9095340995d71d557aef6a13338a607",
+    "cs_BA.gdml": "sha256:b119a51bfd5a2efa0e9cf7a035ee889826fa8e7ff2cc98d535052e8d1bc7c348",
+    "cs_BA.npz": "sha256:3cf1a75d2dbde8a1eea976f37aa549bff9095340995d71d557aef6a13338a607",
+    "launched.json": "sha256:de56a9d239a8a8d38a8b26b539da18ae0baff1c6744da2a79e418b8adf82584b",
+    "partT_AB.gdml": "sha256:ed54f710551dc12d1dced7fb19de60a0acd104f5532370a2e824e5a95f6f15e3",
+    "partT_AB.npz": "sha256:0778d28145c4598b8f52155a7f6be359cd08316605edf2d84c015de26eb3632b",
+    "partT_BA.gdml": "sha256:066517b7395a21d278ba4ab126a35ada527938b91248836ca263fa9c4119e085",
+    "partT_BA.npz": "sha256:7a44fb55b4e38193cb122433484f45509ee8d4a7c3f398e8c90c424ffc638849",
+    "partTm_AB.gdml": "sha256:2b395f7f84d3320dd5c2bf3f07d4504ca61b1ba81f47e59d26e82171234ae469",
+    "partTm_AB.npz": "sha256:6c709d0bca5e2b56edd172c3f9d8b69747a391ef8dc6804770cda310563fa547",
+    "partTm_BA.gdml": "sha256:f81aa7fe3328a80cf24aa4f9f391590799c7c628a5d8580425771770ac289199",
+    "partTm_BA.npz": "sha256:1fa63227833a2d79b23c223d3c693dd35b79d693fd6f1bf278092a9fc80decb4",
+    "single_B.gdml": "sha256:f5e6b94a562be8c76ee6d500628179ddf00e06feb01e4942c290651cb2f08081",
+    "single_B.npz": "sha256:7f06dc4fd529b4bb3b9c2d77918a47b9323b419ff65b78283777c280fbafb068",
+    "single_B3.gdml": "sha256:4e814ea00dc845920364c63087c9189fa2812b85076ffadcfb8508ef019144c8",
+    "single_B3.npz": "sha256:8e33a61458ac62e9e4079f3371bbac082439bad21546c471faf695b1a0949220",
+    "vx3_ABC.gdml": "sha256:a13bc10f33fc9e9546499840d6f398c60a99ec2c4d3a77964b914e14b588858b",
+    "vx3_ABC.npz": "sha256:cfe79666a8c561852844681cac0ec9edd5d9c60b60084b344396f8c9d21b4c8f",
+    "vx3_ACB.gdml": "sha256:4a46f9742c9bb10531de68adfcc3b19c7c9c02355e93b63c2c790c4fb49a7127",
+    "vx3_ACB.npz": "sha256:5892a0b41e6101a6efaa3f854dded1bc80ca2167f926d419284caeefce303a89",
+    "vxc_AB.gdml": "sha256:9d2337191a355330ad934232cdead5d04e62a32c73e06fd94dfcf06ddd4c1f66",
+    "vxc_AB.npz": "sha256:86f9d9792ca9a8920b3a61796657f5167ebc903f61972967ee410ed0f7f2b485",
+    "vxc_BA.gdml": "sha256:68cdd520f2ffd868e5b57a3c96143c549017a953119466954f5a152861e155b3",
+    "vxc_BA.npz": "sha256:d91f846608c5059ac04d856e2cd0567e4e067962a4dc242d9d7baafd963a2fd8",
+    "xl_AS.gdml": "sha256:5101a67eb04c0ea53d5d84b2ceeec1733f64ba652515c64c33151b6ba5a15461",
+    "xl_AS.npz": "sha256:597945ec56d4894b70124fb1669cfe62d52a0534733e522da21e769b05048f12",
+    "xl_SA.gdml": "sha256:d31964b4ee4beffd9313949192a23775a6aed167184e0254446d966d923bac1c",
+    "xl_SA.npz": "sha256:19ba0ecbf12ae67b95a834ba46717797befd3995495eb92a2d3f132701c71ad5"
+   },
+   "id": "g4ref-overlap-toys-owned-9fd555c0",
+   "inputs": {},
+   "producer": {
+    "binary": "g4ref",
+    "binary_sha256": "9fd555c0c4982458834db9800bfcd7e5c7a4815de5c1e4005f4910018a24fd84",
+    "flags": [
+     "--no-rayleigh",
+     "--no-absorption",
+     "--no-wls",
+     "--no-mie"
+    ],
+    "geant4": "10.7.4",
+    "geometry": "each toy's overlap-free GDML (lumen.validate.ownership.owned, now lumen.compare.ownership.owned, of the toy's GDML, scope full): the region overlapping siblings share given to the smaller volume, then the first placed",
+    "image": "Geant4 10.7.4 image",
+    "patch": "tools/g4ref/velocity_after_relocation.patch (the photon speed after a reflection at a relocation: the medium of the volume it continues in)",
+    "seed": 1,
+    "sens_regex": "^volS",
+    "source_sha256": "50ca6bdd08af3a082399778e86a1b260dae39a89a6d5131e7093f27b046528a1",
+    "sources": "the cs_ toys: isotropic photons (coinc_sib/src.cfg); the others a pencil beam along +x (G4REF_PENCIL=1,0,0), from x = -800 mm, 2.95 eV, the photon count of each toy's config",
+    "tool": "g4ref"
+   },
+   "reduced": "2026-11-16",
+   "toys": 18,
+   "url": "https://github.com/OmarAlterkait/lumen/releases/download/v0.2.0/g4ref-overlap-toys-owned-9fd555c0.tar.gz",
+   "sha256": "sha256:5851335c33862171cd81e966b9f442c0eb0ef090c4a95ff1a9c7acd69511ce99"
+  }
+ }
+}

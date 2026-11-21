@@ -1,12 +1,11 @@
-"""The film toy: CPA-like foil holders in a liquid tank, each a WLS film on one face of a painted foil.
+"""The film toy: CPA-like foil holders in a liquid tank, each a WLS slab on one face of a painted foil.
 
-``film_gdml(holders, ...)`` returns the GDML: a 2 m liquid tank (light leaving it ends) in a vacuum world; each
-holder is a liquid box exactly foil (1 mm, material Steel, skin ``paint``: groundfrontpainted) plus film (20 nm,
-material Shifter: index-matched to the liquid, WLSABSLENGTH 1e-11 mm above 7.5 eV, emission at 2.5-3.4 eV) thick,
-400 mm square, the film on the foil's local +x face; ``holders`` gives each holder's (position mm, GDML rotation
-deg). Two 1 cm counting slabs at y = +-0.7 m (Slab0LV, Slab1LV) see both sides of every holder. Variants for the
-fail-closed rules: ``films`` ("+x", "both": a film on each face), ``film_side`` (the film's square side, mm:
-smaller is partial coverage) and ``bare`` (one more foil placed alone in the tank).
+``film_gdml(holders, film)`` returns the GDML: a 2 m liquid tank (light leaving it ends) in a vacuum world; each
+holder is a liquid box exactly foil (1 mm, material Steel, skin ``paint``: groundfrontpainted) plus WLS slab (``film``
+mm, 25.4 um by default as SBND's split TPB; material Shifter: index-matched to the liquid, WLSABSLENGTH 1e-11 mm above
+7.5 eV, emission at 2.5-3.4 eV) thick, 400 mm square, the slab on the foil's local +x face; ``holders`` gives each
+holder's (position mm, GDML rotation deg). Two 1 cm counting slabs at y = +-0.7 m (Slab0LV, Slab1LV) see both sides
+of every holder. The slab is tracked as a volume (bulk WLS); one thinner than the band is refused at conversion.
 """
 
 from __future__ import annotations
@@ -14,11 +13,10 @@ from __future__ import annotations
 from lumen.format.sensorsets import SensorGroup
 from lumen.recipe import Recipe
 
-FOIL, FILM, SIDE = 1.0, 2e-5, 400.0  # mm
-BAND = (110.0, 600.0)  # nm: inside the tables (1-12 eV)
-SLABS = tuple(SensorGroup(f"slab{k}", "any_entry", "lumen:counting", lv=f"Slab{k}LV", settings={"efficiency": 1.0})
+FOIL, FILM, SIDE = 1.0, 0.0254, 400.0  # mm
+SLABS = tuple(SensorGroup(f"slab{k}", rule="any_entry", lv=f"Slab{k}LV", settings={"entry_efficiency": 1.0})
               for k in (0, 1))  # fmt: skip
-RECIPE = Recipe("film_toy", "TankLV", BAND, SLABS)
+RECIPE = Recipe("film_toy", "TankLV", groups=SLABS)
 
 HEAD = """<?xml version="1.0" encoding="UTF-8"?>
 <gdml>
@@ -43,29 +41,24 @@ HEAD = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
-def film_gdml(holders=(((0.0, 0.0, 0.0), None),), films="+x", film_side=SIDE, bare=False) -> str:
+def film_gdml(holders=(((0.0, 0.0, 0.0), None),), film=FILM) -> str:
     """Return the film toy's GDML (see the module docstring)."""
-    n = 2 if films == "both" else 1
-    thick = FOIL + n * FILM
-    xf = -thick / 2 + (FILM if n == 2 else 0.0) + FOIL / 2  # the foil's centre; the film(s) beyond it
-    film_pvs = "".join(f'<physvol name="film{k}"><volumeref ref="FilmLV"/><position name="pf{k}" unit="mm" '
-                       f'x="{xf + s * (FOIL + FILM) / 2!r}" y="0" z="0"/></physvol>'
-                       for k, s in enumerate((1.0, -1.0)[:n]))  # fmt: skip
+    thick = FOIL + film
+    xf = -thick / 2 + FOIL / 2  # the foil's centre; the slab beyond it
+    film_pvs = (f'<physvol name="film0"><volumeref ref="FilmLV"/><position name="pf0" unit="mm" '
+                f'x="{xf + (FOIL + film) / 2!r}" y="0" z="0"/></physvol>')  # fmt: skip
     pvs = []
     for k, (pos, rot) in enumerate(holders):
         r = "" if rot is None else f'<rotation name="r{k}" unit="deg" x="{rot[0]}" y="{rot[1]}" z="{rot[2]}"/>'
         pvs.append(f'<physvol name="holder{k}" copynumber="{k}"><volumeref ref="HolderLV"/><position name="p{k}" '
                    f'unit="mm" x="{pos[0]}" y="{pos[1]}" z="{pos[2]}"/>{r}</physvol>')  # fmt: skip
-    if bare:
-        pvs.append('<physvol name="bare"><volumeref ref="FoilLV"/><position name="pb" unit="mm" x="0" y="0" '
-                   'z="-800"/></physvol>')  # fmt: skip
     pvs += [f'<physvol name="slab{k}"><volumeref ref="Slab{k}LV"/><position name="ps{k}" unit="mm" x="0" y="{y}" '
             'z="0"/></physvol>' for k, y in enumerate((700, -700))]  # fmt: skip
     body = f"""<solids>
   <box name="WorldS" x="3000" y="3000" z="3000" lunit="mm"/>
   <box name="TankS" x="2000" y="2000" z="2000" lunit="mm"/>
   <box name="FoilS" x="{FOIL}" y="{SIDE}" z="{SIDE}" lunit="mm"/>
-  <box name="FilmS" x="{FILM}" y="{film_side}" z="{film_side}" lunit="mm"/>
+  <box name="FilmS" x="{film}" y="{SIDE}" z="{SIDE}" lunit="mm"/>
   <box name="HolderS" x="{thick!r}" y="{SIDE}" z="{SIDE}" lunit="mm"/>
   <box name="SlabS" x="1800" y="10" z="1800" lunit="mm"/>
   <opticalsurface name="paint" model="unified" finish="groundfrontpainted" type="dielectric_dielectric" value="0.8">

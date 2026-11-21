@@ -1,8 +1,8 @@
 """BVHs and frame groups (host): the navigator's daughter boxes, binned-SAH trees built level by level.
 
-    tree = build_bvh(lo, hi)                       # dict(lo, hi (m, 3) float32, skip, start, count, items)
-    trees = build_many(lo, hi, bounds)             # the trees of the box ranges [bounds[i], bounds[i + 1]) at once
-    gkey, n_groups, rotations, accepted = frame_groups_all(R, hb, mother, daughter)
+    trees = build_many(lo, hi, bounds)             # the trees of the box ranges [bounds[i], bounds[i + 1]) at once:
+                                                   # dict(lo, hi (m, 3) float32, skip, start, count, items, ...)
+    gkey, n_groups, rotations = frame_groups_all(R, hb, mother, daughter)
 
 A tree is stored depth first: a node's left child follows it, ``skip`` is the node after its subtree (the stackless
 order), and a leaf (``count`` > 0) covers ``items[start:start + count]``.
@@ -13,20 +13,12 @@ from __future__ import annotations
 import jax.numpy as jnp
 import numpy as np
 
+from lumen.rules.tolerances import IDENT_ATOL, IDENT_RTOL
+
 LEAF_SIZE = 2  # a node of at most this many boxes is a leaf
 BINS = 16  # SAH bins per axis
 MIN_GROUP = 8  # a rotation shared by at least this many daughters (or by all) may be a frame group
 GROUP_GAIN = 4.0  # ... when its daughters' world boxes are at least this times their own (summed surface areas)
-ROT_DECIMALS = 6  # rotations are grouped by their entries rounded to this many decimals
-IDENT_ATOL = 1e-9  # np.allclose(R, I, atol=1e-9): an identity rotation is no frame group
-IDENT_RTOL = 1e-5
-
-
-def build_bvh(lo, hi, leaf_size=LEAF_SIZE, bins=BINS):
-    """Return the binned-SAH BVH of the boxes (lo, hi): dict(lo, hi, skip, start, count, items)."""
-    out = build_many(lo, hi, [0, len(lo)], leaf_size, bins)
-    del out["tree0"], out["n_levels"]
-    return out
 
 
 def _area3(a, b):
@@ -187,11 +179,12 @@ def _depth_first(N_l, L_, R_, n_roots):  # noqa: N803 -- per-level children, as 
 def build_many(lo, hi, bounds, leaf_size=LEAF_SIZE, bins=BINS):
     """Return the BVHs of the box ranges [bounds[i], bounds[i + 1]) built in one pass.
 
-    One dict as ``build_bvh``'s, the trees' nodes concatenated in range order (each depth first; skip and start
-    absolute; ``tree0``: each tree's first node; ``n_levels``: the deepest tree's depth), items a permutation within
-    each range. Each tree is the recursive builder's exactly: every node of one depth (of every tree) is one segment
-    of ``items``, binned, costed and partitioned in the same numpy calls (the cheapest of the bins - 1 planes per axis,
-    the first axis on ties, a stable partition; all centroids coincident: the list's halves; a leaf at <= leaf_size).
+    A dict (lo, hi, skip, start, count, items): the trees' nodes concatenated in range order (each depth first; skip
+    and start absolute; ``tree0``: each tree's first node; ``n_levels``: the deepest tree's depth), items a
+    permutation within each range. Each tree is the recursive builder's exactly: every node of one depth (of every
+    tree) is one segment of ``items``, binned, costed and partitioned in the same numpy calls (the cheapest of the
+    bins - 1 planes per axis, the first axis on ties, a stable partition; all centroids coincident: the list's halves;
+    a leaf at <= leaf_size).
     """
     lo, hi = np.asarray(lo), np.asarray(hi)
     bounds = np.asarray(bounds, np.int64)
@@ -226,15 +219,15 @@ def frame_groups_all(R, hb, vm, km, min_group=MIN_GROUP, gain=GROUP_GAIN):  # no
 
     ``vm``, ``km``: each daughter's mother and itself (a mother's in its daughters' order); ``gkey`` per daughter: its
     group's key (a rotation group's index, or G + vm for its mother's world-frame group: sorting by (vm, gkey) gives
-    the groups in order). Per mother: a rotation shared by at least min_group daughters (or by all) whose world boxes
-    are at least gain times their own boxes (summed surface areas: what a BVH pays for) is a group of its own, in the
-    order of the rotations' keys; the rest one world-frame group, last. Notation: R the volumes' rotations, G the
-    number of rotation keys.
+    the groups in order). Per mother: a rotation (equal entries) shared by at least min_group daughters (or by all)
+    whose world boxes are at least gain times their own boxes (summed surface areas: what a BVH pays for) is a group
+    of its own, in the order of the rotations' keys; the rest one world-frame group, last. Notation: R the volumes'
+    rotations, G the number of rotation keys.
     """
     N = len(km)
     if not N:
         return np.zeros(0, np.int64), 0, np.zeros((0, 3, 3)), np.zeros(0, bool)
-    rows = np.column_stack([vm.astype(np.float64), np.round(R[km].reshape(N, 9), ROT_DECIMALS)])
+    rows = np.column_stack([vm.astype(np.float64), R[km].reshape(N, 9)])  # equal rotations (each box is its own)
     _, inv, cnt = np.unique(rows, axis=0, return_inverse=True, return_counts=True)
     inv = inv.ravel()
     G = len(cnt)
@@ -259,7 +252,7 @@ def frame_groups_all(R, hb, vm, km, min_group=MIN_GROUP, gain=GROUP_GAIN):  # no
             aw[g], ab[g] = np.sum(tw[m]), np.sum(tb[m])
         acc = cand & ~(aw < gain * ab)
     gkey = np.where(acc[inv], inv, G + vm)
-    return gkey, G, Rg, acc
+    return gkey, G, Rg
 
 
 def slab(lo, hi, o, inv):

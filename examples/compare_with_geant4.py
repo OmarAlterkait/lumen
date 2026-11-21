@@ -66,6 +66,6 @@ print(f"total: lumen / Geant4 = {ratio:.4f} +- {ratio * np.hypot(tot_e / tot_l, 
 
 # --- the geometry-import check: lumen's point location against Geant4's navigator on the GDML it was converted from
 source_gdml = OUT / "demo_barrel_fixed.gdml"
-subprocess.run([sys.executable, "-m", "lumen.validate.geometry", str(det.path), "--gdml", str(source_gdml),
+subprocess.run([sys.executable, "-m", "lumen.compare", "geometry", str(det.path), "--gdml", str(source_gdml),
                 "--g4ref", G4REF, "--out", str(OUT / "geometry_check")], check=True)
 print((OUT / "geometry_check" / "geometry.json").read_text()[:1500])

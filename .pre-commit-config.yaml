@@ -43,15 +43,18 @@ repos:
         files: ^src/lumen/
         types: [python]
         stages: [pre-commit]
-      - id: jargon
-        name: plain words in user-facing text (style rule 10)
-        entry: python tools/hooks/jargon.py
+      - id: constants-lint
+        name: constants lint (no bare number in src/lumen outside rules/choices.py, rules/tolerances.py, units.py)
+        entry: python tools/lint/constants.py
         language: system
-        files: ^(README\.md|docs/(tutorial|howto|reference|explanation)/.*\.md|src/lumen/(api|params|extend|units)\.py)$
+        pass_filenames: false
+        files: ^(src/lumen/|tools/lint/)
         stages: [pre-commit]
       - id: no-site-paths
-        name: no absolute site paths or Slurm accounts in src/, tests/, refs/ or tools/ (style rule 9)
-        entry: '(/sdf/|/lscratch|/fs/ddn|/fs/gpfs|/afs/|/home/|--account[ =][a-z]|--partition[ =][a-z]|--qos[ =][a-z])'
+        name: no absolute paths outside the repository or Slurm accounts in src/, tests/, tools/ or examples/ (style rule 9)
+        # an absolute path whose first component is not a system directory, or a Slurm account, partition or QOS
+        entry: '(^|[\s"''=(`])/(?!dev/|tmp\b|usr/|etc/|proc/|sys/|app/|bin/|opt/|path/|jax/|x/|nowhere/)[A-Za-z_][\w.-]*/|--(account|partition|qos)[ =][a-z]'
         language: pygrep
-        files: ^(src|tests|refs|tools)/
+        files: ^(src|tests|tools|examples)/
+        exclude: \.cc$  # C++: Geant4's UI commands ("/run/verbose") read as paths
         stages: [pre-commit]

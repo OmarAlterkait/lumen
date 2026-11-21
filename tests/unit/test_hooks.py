@@ -1,4 +1,4 @@
-"""The commit hooks: the privacy guard and the plain-words check."""
+"""The commit hooks: the privacy guard."""
 
 import subprocess
 import sys
@@ -6,7 +6,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 GUARD = ROOT / "tools" / "hooks" / "privacy_guard.py"
-JARGON = ROOT / "tools" / "hooks" / "jargon.py"
 
 
 def git(repo, *args):
@@ -97,19 +96,3 @@ def test_privacy_guard_pre_push_reads_commits_archives_authors_and_refs(tmp_path
     git(repo, "reset", "-q", "--hard", "HEAD~1")
     r = push_guard(repo, pats, ref="refs/tags/forbiddenword-1")
     assert r.returncode == 1 and "ref name" in r.stderr
-
-
-def test_jargon_hook(tmp_path):
-    good = tmp_path / "errors.py"
-    good.write_text('class LumenError(Exception):\n    """Raised when a photon is lost."""\n')
-    bad = tmp_path / "api.py"
-    bad.write_text('def f():\n    raise ValueError("the optical class has no chart (see E1)")\n')
-    doc = tmp_path / "tut.md"
-    doc.write_text("Plain prose.\n\n```python\nclass R9000:  # a model\n    pass\n```\n\nThe overlay is applied.\n")
-    run = lambda *p: subprocess.run([sys.executable, str(JARGON), *map(str, p)], capture_output=True, text=True)  # noqa: E731
-    assert run(good).returncode == 0
-    r = run(bad, doc)
-    assert r.returncode == 1
-    for word in ("'class'", "'chart'", "'E1'", "'overlay'"):
-        assert word in r.stdout
-    assert "tut.md:4" not in r.stdout  # the keyword `class` in code is fine

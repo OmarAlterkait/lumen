@@ -5,26 +5,31 @@ The file is untrusted input: no ``eval``; expressions go through a small recursi
     doc = read(path)                            # GDMLDocument: defines, materials, solids, volumes, surfaces
 
 Values: lengths are in m, a plain literal in a decimal length unit converted exactly (``12.5`` mm is exactly 0.0125,
-rounded once) and anything else evaluated as Geant4 does and divided by 1000 once; angles in rad as Geant4 computes
-them; matrices (property tables) in Geant4's internal units (MeV, mm, ns), with the source text of every value kept
-so the importer can convert those exactly too.
+rounded once) and anything else evaluated with CLHEP's units (``lumen.gdml.units``) and divided by 1000 once; angles
+in rad; matrices (property tables) in Geant4's internal units (MeV, mm, ns), with the source text of every value kept
+so the importer can convert plain literals exactly too. CLHEP's units are those of Geant4's C++ (SystemOfUnits.h,
+1 eV = 1e-6 MeV); Geant4's GDML evaluator derives its energy and mass units from the 1993 electron charge instead
+(G4GDMLEvaluator, Geant4 10.7.4, measured: 1*eV is 1.0000004344090314e-06 MeV), so a value written with an energy or
+mass unit reads 4.3e-7 (relative) larger in Geant4 than here. Bare literals in internal units read the same in both
+(the GDML exporter writes only those).
 
-Fail closed: an expression that does not evaluate, a reference to a missing position, rotation, solid or volume, and
-every construct lumen does not support -- ``<loop>``, replicavol, divisionvol, paramvol, a physvol ``<file>`` -- raise
-GDMLError.
+Follows Geant4 (10.7.4 and 11.2.2, measured: tests/data/gdml_repairs): what Geant4's reader refuses is a GDMLError
+here too, and nothing is repaired on the way -- a denormal or out-of-range number literal, an inf or a NaN in a
+matrix, a matrix whose value count is not a multiple of its coldim (counted as Geant4 counts: a values attribute that
+ends in whitespace, or is empty, has one more value, 0, as ``while (!eof) stream >> token`` reads it), a constant,
+variable, quantity, expression or matrix defined twice, and a ``<property>`` whose ref names no matrix. Each such
+error names the repair ``python -m lumen.gdml.repair SRC DST`` writes (``lumen.gdml.repair``): convert the repaired
+copy, whose sha256 the detector file then records as its source. Attribute names are matched exactly, as Geant4
+matches them (``<tube RMAX=...>`` is refused: Geant4 would ignore it and read rmax as 0); a ``<property>`` keeps
+its matrix's shape, as G4GDMLReadMaterials / Solids::PropertyRead do: coldim 1 is a constant property, anything wider
+an (energy, value) table, on materials and surfaces alike.
 
-Exporter defects (``REPAIRS``) are constructs stock Geant4 (10.7.4 and 11.2.2, measured: tests/data/gdml_repairs)
-refuses, or loads but reads otherwise than the file says (a constant surface table: ``IGNORED_BY_GEANT4``). Each one
-found is repaired, always, with a warning (``GDMLRepairWarning``: the object, the count, what Geant4 does with the
-file and what the repair does) and a ``repaired (<kind>): ...`` line of ``doc.report``; ``doc.repairs`` holds the kinds
-applied. ``python -m lumen.gdml.repair`` applies the same repairs to the GDML a Geant4 reference loads, so both sides
-read the same file. A matrix's values are counted as
-Geant4 counts them: a values attribute that ends in whitespace (or is empty) has one more value, 0 (G4GDMLReadDefine
-reads with ``while (!eof) stream >> token``). A conflicting re-definition is a GDMLError, as are an overflowing literal
-and a matrix with a value that does not evaluate (a NaN, an unknown name), used or not, as in Geant4.
+Fail closed: an expression that does not evaluate, a reference to a missing position, rotation, solid or volume, an
+attribute Geant4 does not read on a solid, and every construct lumen does not support -- ``<loop>``, replicavol,
+divisionvol, paramvol, a physvol ``<file>`` -- raise GDMLError.
 
 Beyond the geometry the reader keeps what the importer needs: material compositions, elements, isotopes, temperatures
-and pressures, nested auxiliary tags, the top-level userinfo, and the setup named ``Default``.
+and pressures, and the setup named ``Default``.
 """
 
 from __future__ import annotations
@@ -32,70 +37,30 @@ from __future__ import annotations
 import collections
 import math
 import re
-import sys
-import warnings
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from decimal import Decimal
-from pathlib import Path
 
 import numpy as np
 
-from lumen.gdml.units import ENERGY_EV, LENGTH_M, MM_PER_M, UNITS, exact, is_literal
+from lumen.format import solids as catalogue
+from lumen.gdml.lexical import BIG_EXPONENT, LONG_LITERAL, NUMBER, SKIP_LITERALS, TINY
+from lumen.gdml.units import UNITS, is_literal
+from lumen.units import ENERGY_EV, LENGTH_M, MM_PER_M, exact
 
 
 class GDMLError(ValueError):
     """A GDML file lumen cannot read as Geant4 would: the message names the element and the reason."""
 
 
-# kind -> (the case, what Geant4 10.7.4 and 11.2.2 do (both FatalException), what the repair does)
-REPAIRS = {
-    "matrix_tail": ("a <matrix> whose value count is not a multiple of its coldim",
-                    "G4GDMLEvaluator::DefineMatrix: InvalidSize, 'Matrix ... is not filled correctly!'",
-                    "the unpaired tail values are dropped"),
-    "identical_redefinition": ("a constant, variable, quantity, expression or matrix defined again, identically",
-                               "G4GDMLEvaluator::DefineConstant / DefineVariable: InvalidExpression, 'Redefinition "
-                               "of constant or variable'", "the first definition is kept, the others dropped"),
-    "constant_property": ("a <property> whose ref names a define that is not a <matrix> (e.g. a <constant>)",
-                          "G4GDMLReadDefine::GetMatrix: ReadError, 'Matrix ... was not found!'",
-                          "the property is dropped (not read as a constant property)"),
-    "undefined_matrix_property": ("a <property> whose ref names no define at all",
-                                  "G4GDMLReadDefine::GetMatrix: ReadError, 'Matrix ... was not found!'",
-                                  "the property is dropped"),
-    "constant_surface_table": ("an opticalsurface REFLECTIVITY, TRANSMITTANCE, EFFICIENCY or unified constant given "
-                               "as a constant (a coldim 1 matrix)", "G4GDMLReadSolids.cc:3556 adds it as a constant "
-                               "property; G4OpBoundaryProcess reads these only as tables, GetProperty, "
-                               "G4OpBoundaryProcess.cc:381-413", "the property is dropped, so Geant4's default "
-                               "applies, as in Geant4"),
-    "denormal": ("a nonzero number literal below the smallest normal double (strtod sets ERANGE)",
-                 "G4GDMLEvaluator::Evaluate: InvalidExpression, 'Error in expression'", "the literal is written 0"),
-    "non_finite": ("an inf or -inf <matrix> value", "G4GDMLEvaluator::Evaluate: InvalidExpression, 'Error in "
-                   "expression: inf'", "the value is written +-1e30, as the importer stores a non-finite table value"),
-}  # fmt: skip
-IGNORED_BY_GEANT4 = {"constant_surface_table"}  # a defect Geant4 loads but reads differently from what it says
-TABLE_ONLY_SURFACE_KEYS = (
-    "REFLECTIVITY",
-    "TRANSMITTANCE",
-    "EFFICIENCY",
-    "SPECULARLOBECONSTANT",
-    "SPECULARSPIKECONSTANT",
-    "BACKSCATTERCONSTANT",
-)  # G4OpBoundaryProcess reads them with GetProperty (tables)
-SKIP_LITERALS = {"name", "ref", "formula", "state", "surfaceproperty", "auxtype", "auxvalue", "auxunit", "version"}
-LITERAL_NUMBER = re.compile(r"(?<![\w.])(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?(?![\w.])")
-_BIG_EXPONENT = re.compile(r"\d[eE][-+]?\d{3}")  # a literal out of range has one (or > 300 digits)
+def refused(kind: str) -> str:
+    """Return the tail of a GDMLError for what Geant4 refuses: the repair (``lumen.gdml.repair.REPAIRS``) or none."""
+    from lumen.gdml.repair import REPAIRS
 
-
-class GDMLRepairWarning(UserWarning):
-    """An exporter defect Geant4 refuses or reads otherwise (``kind``: a key of REPAIRS), repaired on import."""
-
-
-def repair_message(kind, where, done):
-    """Return the warning of one applied repair: the object and count, Geant4's behaviour, the repair, the reference."""
-    case, g4, _ = REPAIRS[kind]
-    verb = "loads the file and ignores the value" if kind in IGNORED_BY_GEANT4 else "refuses the file"
-    return (f"{where}: exporter defect {kind!r}, {case}: repaired, {done}. Stock Geant4 {verb} ({g4}); give a Geant4 "
-            f"reference the same file: python -m lumen.gdml.repair SRC DST")  # fmt: skip
+    if kind not in REPAIRS:
+        return "Geant4 refuses it too"
+    return (f"Geant4 refuses it too; the repair {kind!r} ({REPAIRS[kind]}) writes a copy Geant4 and lumen both read: "
+            "python -m lumen.gdml.repair SRC DST, then convert DST")  # fmt: skip
 
 
 FUNCS = {
@@ -104,15 +69,10 @@ FUNCS = {
     "log": math.log, "log10": math.log10, "sqrt": math.sqrt, "pow": math.pow, "abs": abs, "fabs": abs,
     "min": min, "max": max, "floor": math.floor, "ceil": math.ceil, "int": lambda x: float(int(x)),
 }  # fmt: skip
-TINY = sys.float_info.min  # the smallest normal double: a nonzero number below it is a denormal
 _TOK = re.compile(
     r"\s*(?:(\d+\.?\d*(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?)|([A-Za-z_][A-Za-z0-9_]*)|(\*\*|[-+*/^(),\[\]]))"
 )
-ANGLE_ATTRS = {"startphi", "deltaphi", "starttheta", "deltatheta", "theta", "phi", "alpha", "alpha1", "alpha2",
-               "phitwist", "twistedangle", "inst", "outst", "alph"}  # fmt: skip
-UNITLESS_ATTRS = {"numsides", "lowx", "lowy", "lowz", "highx", "highy", "highz", "scalingfactor", "zorder", "sx",
-                  "sy", "sz", "nseg", "nsides"}  # fmt: skip
-SKIP_ATTRS = {"name", "lunit", "aunit", "unit", "ref", "type"}
+UNIT_ATTRS = {"name", "lunit", "aunit"}  # beside a solid's own attributes (lumen.format.solids.ATTRIBUTES)
 BOOLEAN = ("union", "subtraction", "intersection")
 UNSUPPORTED = ("replicavol", "divisionvol", "paramvol", "loop")
 PASCAL_PA = {"pascal": "1", "Pa": "1"}  # the pressure units that are exact multiples of a pascal
@@ -318,7 +278,6 @@ class Transform:
     position: tuple[float, float, float] = (0.0, 0.0, 0.0)
     rotation: tuple[float, float, float] = (0.0, 0.0, 0.0)
     scale: tuple[float, float, float] | None = None
-    position_text: tuple | None = None  # the position as written: (unit or None, (x, y, z) texts)
 
 
 @dataclass
@@ -335,17 +294,6 @@ class Solid:
     sections: list = field(default_factory=list)  # xtru (z, x offset, y offset, scaling factor)
     facets: list = field(default_factory=list)  # tessellated: (position refs, "ABSOLUTE" | "RELATIVE")
     tet: tuple = ()  # tet: (position refs, the lunit in mm)
-    texts: dict = field(default_factory=dict)  # the lengths as written: unit, params, planes, vertices, sections
-
-
-@dataclass
-class Aux:
-    """An auxiliary tag and its nested tags."""
-
-    type: str
-    value: str
-    unit: str = ""
-    children: list = field(default_factory=list)
 
 
 @dataclass
@@ -369,7 +317,6 @@ class Volume:
     material: str | None = None
     solid: str | None = None
     placements: list = field(default_factory=list)
-    aux: list = field(default_factory=list)
     assembly: bool = False
 
 
@@ -428,7 +375,6 @@ class GDMLDocument:
 
     def __init__(self, path):
         self.path = str(path)
-        self.repairs = set()  # the exporter-defect kinds repaired (REPAIRS)
         self.ev = Evaluator()
         self.positions, self.rotations, self.scales = {}, {}, {}
         self.solids = collections.OrderedDict()
@@ -438,29 +384,14 @@ class GDMLDocument:
         self.isotopes = collections.OrderedDict()
         self.surfaces = collections.OrderedDict()
         self.borders, self.skins = [], []  # (name, surface, [pv, pv]) and (name, surface, [lv])
-        self.userinfo = []
         self.matrix_text = {}  # name -> the source tokens of its values
-        self.matrix_unit = {}  # name -> its unit attribute (Geant4 does not read it)
-        self.position_text = {}  # name -> (unit or None, (x, y, z) texts) of a defined position
         self.world = None
         self.report = []
         self._defs = {}
-        self._defects = {}  # (repair, object) -> [(where, done)]
 
-    def warn_repairs(self):
-        """Warn once per repair and object (``GDMLRepairWarning``): the first occurrence's text and the count."""
-        for (kind, _), hits in self._defects.items():
-            where, done = hits[0]
-            more = f" ({len(hits)} occurrences on this object)" if len(hits) > 1 else ""
-            warnings.warn(repair_message(kind, f"gdml {Path(self.path).name}: {where}", done) + more,
-                          GDMLRepairWarning, stacklevel=3)  # fmt: skip
-
-    def defect(self, kind, where, done):
-        """Repair an exporter defect: a report line saying what was done, and a warning at the end of the read
-        (``warn_repairs``: one per repair and object, with its count)."""  # noqa: D205, D209
-        self._defects.setdefault((kind, where.split(":")[0]), []).append((where, done))
-        self.repairs.add(kind)
-        self.report.append(f"repaired ({kind}): {where}: {done}")
+    def refuse(self, kind, where):
+        """Raise the GDMLError of what Geant4 refuses (``kind``: a repair of ``lumen.gdml.repair``, or another)."""
+        raise GDMLError(f"gdml {self.path}: {where}: {refused(kind)}")
 
     # ---- numbers
     def num(self, s, what):
@@ -469,6 +400,14 @@ class GDMLDocument:
             return self.ev.eval(s)
         except GDMLError as e:
             raise GDMLError(f"{what}: {e}") from None
+
+    def integer(self, s, what):
+        """Return an integer expression's value, refusing one with a fractional part, as Geant4 does
+        (G4GDMLEvaluator::EvaluateInteger, a FatalException: matrix coldim, composite n, isotope Z and N)."""  # noqa: D205, D209
+        v = self.num(s, what)
+        if v != int(v):
+            raise GDMLError(f"{what}: {s!r} is expected to have an integer value (G4GDMLEvaluator::EvaluateInteger)")
+        return int(v)
 
     def length(self, text, unit, what):
         """Return a length in m: exact for a plain literal in a decimal unit, else Geant4's value / 1000 once."""
@@ -490,15 +429,10 @@ class GDMLDocument:
             return tuple(self.angle(el.get(a, "0"), el.get("unit"), what) for a in ("x", "y", "z"))
         return tuple(self.length(el.get(a, "0"), el.get("unit"), what) for a in ("x", "y", "z"))
 
-    @staticmethod
-    def vec_text(el):
-        """Return a position element as written: (unit or None, (x, y, z) texts)."""
-        return el.get("unit"), tuple(el.get(a, "0") for a in ("x", "y", "z"))
-
     def transform(self, parent, pos=("position", "positionref"), rot=("rotation", "rotationref"),
                   scale=("scale", "scaleref")):  # fmt: skip
         """Return the Transform of an element's position, rotation and scale children (inline or by reference)."""
-        t, r, sc, text = (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), None, None
+        t, r, sc = (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), None
         where = f"{tag(parent)} {parent.get('name')!r}"
         tables = {pos[1]: (self.positions, "positionref"), rot[1]: (self.rotations, "rotationref")}
         if scale:
@@ -506,7 +440,7 @@ class GDMLDocument:
         for c in parent:
             tg = tag(c)
             if tg == pos[0]:
-                t, text = self.vec(c, "position"), self.vec_text(c)
+                t = self.vec(c, "position")
             elif tg == rot[0]:
                 r = self.vec(c, "rotation")
             elif scale and tg == scale[0]:
@@ -518,12 +452,12 @@ class GDMLDocument:
                     raise GDMLError(f"{where}: {label} {ref!r} is not defined")
                 v = table[ref]
                 if tg == pos[1]:
-                    t, text = v, self.position_text.get(ref)
+                    t = v
                 elif tg == rot[1]:
                     r = v
                 else:
                     sc = v
-        return Transform(t, r, sc, text)
+        return Transform(t, r, sc)
 
     def matrix(self, name):
         """Return a matrix as (rows, coldim) float64 in Geant4's internal units; raise if undefined."""
@@ -554,8 +488,6 @@ class GDMLDocument:
             self.read_solids(sec)
         for sec in sections["structure"]:
             self.read_structure(sec)
-        for sec in sections["userinfo"]:
-            self.userinfo += [self._aux(c) for c in sec if tag(c) == "auxiliary"]
         self.world = self._world(sections["setup"])
         if self.world not in self.volumes:
             raise GDMLError(f"gdml {self.path}: world volume {self.world!r} is not defined")
@@ -563,49 +495,29 @@ class GDMLDocument:
         return self
 
     def _property_refs(self):
-        """Refuse (or, repaired, drop) a property whose ref names a define not a matrix, or nothing."""
+        """Refuse a property whose ref names a define that is not a matrix, or nothing (G4GDMLReadDefine::GetMatrix)."""
         owners = [(f"material {n!r}", m.props) for n, m in self.materials.items()]
         for owner, props in owners + [(f"opticalsurface {n!r}", s.props) for n, s in self.surfaces.items()]:
-            for name, ref in list(props):
+            for name, ref in props:
                 if ref not in self._defs:
-                    self.defect("undefined_matrix_property", f"{owner}: property {name} names {ref!r}, not defined",
-                                "dropped")  # fmt: skip
-                elif self._defs[ref][0] != "matrix":
-                    what = f"{owner}: property {name} names {self._defs[ref][0]} {ref!r}"
-                    self.defect("constant_property", what, "dropped")
-                elif (owner.startswith("opticalsurface") and g4_strip(name) in TABLE_ONLY_SURFACE_KEYS
-                      and self.ev.matrices.get(ref, (2,))[0] == 1):  # fmt: skip
-                    what = f"{owner}: property {name} names the constant (coldim 1) matrix {ref!r}"
-                    self.defect("constant_surface_table", what, "dropped: Geant4's default applies")
-                else:
-                    continue
-                props.remove((name, ref))
+                    self.refuse("undefined_matrix_property", f"{owner}: property {name} names {ref!r}, not defined")
+                if self._defs[ref][0] != "matrix":
+                    self.refuse("constant_property", f"{owner}: property {name} names {self._defs[ref][0]} {ref!r}")
 
     def _literals(self, root):
-        """Write 0 for each out-of-range (denormal) literal Geant4 evaluates (the ``denormal`` repair)."""
-        where, n = [""], [0]
-
-        def zero(m):
-            bad = _out_of_range(m.group(0))
-            if bad == "overflow":
-                raise GDMLError(f"gdml {self.path}: {where[0]}: {m.group(0)} overflows a double (Geant4 refuses it)")
-            n[0] += bad is not None
-            return "0" if bad else m.group(0)
-
-        outside = 0
+        """Refuse an out-of-range (denormal or overflowing) number literal Geant4 evaluates (strtod sets ERANGE)."""
         for el in root.iter():
-            where[0], n[0] = f"{tag(el)} {el.get('name')!r}", 0
-            for k, v in el.attrib.items():
-                if k not in SKIP_LITERALS and "}" not in k and (len(v) > 300 or _BIG_EXPONENT.search(v)):
-                    el.set(k, LITERAL_NUMBER.sub(zero, v))
+            texts = [(k, v) for k, v in el.attrib.items() if k not in SKIP_LITERALS and "}" not in k]
             if tag(el) == "expression" and el.text:
-                el.text = LITERAL_NUMBER.sub(zero, el.text)
-            if n[0] and tag(el) == "matrix":
-                self.defect("denormal", where[0], f"{n[0]} denormal value(s) read as 0")
-            elif n[0]:
-                outside += n[0]
-        if outside:
-            self.defect("denormal", "the document", f"{outside} denormal literal(s) outside matrices read as 0")
+                texts.append(("text", el.text))
+            for k, v in texts:
+                if not (len(v) > LONG_LITERAL or BIG_EXPONENT.search(v)):
+                    continue
+                for m in NUMBER.finditer(v):
+                    bad = _out_of_range(m.group(0))
+                    if bad:
+                        self.refuse("denormal" if bad == "denormal" else "overflow",
+                                    f"{tag(el)} {el.get('name')!r} {k}: {m.group(0)} is {bad} as a double")  # fmt: skip
 
     def _world(self, setups):
         named = [s for s in setups if s.get("name") == "Default"]
@@ -616,10 +528,11 @@ class GDMLDocument:
         return None
 
     def _redefined(self, el):
-        """Whether a define was seen before (identical: the first is kept); a conflicting one is a GDMLError.
+        """Whether a define was seen before; a conflicting one, or an evaluator define given twice, is a GDMLError.
 
-        Geant4 refuses an evaluator define's re-definition (``identical_redefinition``); a position, rotation or scale
-        it re-defines (its map keeps the last), so an identical one is read once and reported.
+        Geant4 refuses an evaluator define's re-definition (G4GDMLEvaluator::DefineConstant / DefineVariable); a
+        position, rotation or scale it re-defines (its map keeps the last), so an identical one is read once and
+        reported.
         """
         nm = el.get("name")
         key = (tag(el), tuple(sorted(el.attrib.items())), (el.text or "").strip())
@@ -628,10 +541,9 @@ class GDMLDocument:
             return False
         if self._defs[nm] != key:
             raise GDMLError(f"gdml {self.path}: conflicting re-definition of {tag(el)} {nm!r}")
-        if tag(el) in ("position", "rotation", "scale"):
-            self.report.append(f"identical re-definition of {tag(el)} {nm!r} read once (Geant4 keeps the last)")
-        else:
-            self.defect("identical_redefinition", f"{tag(el)} {nm!r} defined again, identically", "the first kept")
+        if tag(el) not in ("position", "rotation", "scale"):
+            self.refuse("identical_redefinition", f"{tag(el)} {nm!r} defined again, identically")
+        self.report.append(f"identical re-definition of {tag(el)} {nm!r} read once (Geant4 keeps the last)")
         return True
 
     def read_define(self, sec):
@@ -655,38 +567,34 @@ class GDMLDocument:
         for el in vecs:  # after every constant is known
             table = {"position": self.positions, "rotation": self.rotations, "scale": self.scales}[tag(el)]
             table[el.get("name")] = self.vec(el, tag(el))
-            if tag(el) == "position":
-                self.position_text[el.get("name")] = self.vec_text(el)
 
     def read_matrix(self, el):
         """Read a <matrix>: values evaluated in internal units, the source tokens kept (see the module docstring)."""
         nm, raw = el.get("name"), el.get("values") or ""
         toks = raw.split() + (["0"] if not raw or raw[-1].isspace() else [])  # Geant4's count: a trailing 0
-        if el.get("unit") is not None:
-            self.matrix_unit[nm] = el.get("unit")
         try:
-            cd = int(round(self.ev.eval(el.get("coldim", "1"))))
+            cd = self.integer(el.get("coldim", "1"), "coldim")
             if cd < 1:
                 raise GDMLError(f"coldim {cd}")
-            if len(toks) % cd:
-                self.defect(
-                    "matrix_tail",
-                    f"matrix {nm!r}: {len(toks)} values (as Geant4 counts them) for coldim {cd}",
-                    f"the unpaired tail ({len(toks) % cd}) dropped",
-                )
-                toks = toks[: len(toks) - len(toks) % cd]
-            elif not raw or raw[-1].isspace():
-                self.report.append(f"matrix {nm!r}: its values end in whitespace; read as Geant4 reads them, with one "
-                                   "more value, 0")  # fmt: skip
-            inf = [k for k, t in enumerate(toks) if t.lower().lstrip("+-") in ("inf", "infinity")]
-            if inf:
-                self.defect("non_finite", f"matrix {nm!r}: {len(inf)} non-finite value(s)", "read as +-1e30")
-                toks = [("-1e30" if t[0] == "-" else "1e30") if k in inf else t for k, t in enumerate(toks)]
-            vals = [self.ev.eval(t) for t in toks]
-            self.ev.matrices[nm] = (cd, vals)
-            self.matrix_text[nm] = toks
-        except GDMLError as e:  # Geant4 evaluates each value as it reads the define (used or not) and refuses it
+        except GDMLError as e:
             raise GDMLError(f"gdml {self.path}: matrix {nm!r}: {e}") from None
+        if len(toks) % cd:
+            self.refuse("matrix_tail", f"matrix {nm!r}: {len(toks)} values (as Geant4 counts them) for coldim {cd}")
+        if not raw or raw[-1].isspace():
+            self.report.append(f"matrix {nm!r}: its values end in whitespace; read as Geant4 reads them, with one "
+                               "more value, 0")  # fmt: skip
+        if any(t.lower().lstrip("+-") in ("inf", "infinity") for t in toks):
+            self.refuse("non_finite", f"matrix {nm!r}: an inf value")
+        try:  # Geant4 evaluates each value as it reads the define (used or not) and refuses a bad one
+            vals = [self.ev.eval(t) for t in toks]
+        except GDMLError as e:
+            raise GDMLError(f"gdml {self.path}: matrix {nm!r}: {e}") from None
+        if not all(math.isfinite(v) for v in vals):
+            self.refuse(
+                "not_finite", f"matrix {nm!r}: a value evaluates to {next(v for v in vals if not math.isfinite(v))}"
+            )
+        self.ev.matrices[nm] = (cd, vals)
+        self.matrix_text[nm] = toks
 
     def read_materials(self, sec):
         """Read a <materials> section: isotopes, elements, materials with their compositions and properties."""
@@ -694,7 +602,8 @@ class GDMLDocument:
             tg, nm = tag(el), el.get("name")
             if tg == "isotope":
                 atom = el.find("atom")
-                self.isotopes[nm] = Isotope(nm, int(float(el.get("Z"))), int(float(el.get("N"))), self._atom(atom))
+                z, n = (self.integer(el.get(k), f"isotope {nm!r} {k}") for k in ("Z", "N"))
+                self.isotopes[nm] = Isotope(nm, z, n, self._atom(atom))
             elif tg == "element":
                 atom = el.find("atom")
                 fr = [(c.get("ref"), self.num(c.get("n"), f"element {nm!r}")) for c in el if tag(c) == "fraction"]
@@ -735,7 +644,7 @@ class GDMLDocument:
             elif ct == "fraction":
                 m.fractions.append((c.get("ref"), self.num(c.get("n"), what)))
             elif ct == "composite":
-                m.composites.append((c.get("ref"), int(round(self.num(c.get("n"), what)))))
+                m.composites.append((c.get("ref"), self.integer(c.get("n"), what)))
         if el.get("Z") is not None:
             m.z = self.num(el.get("Z"), what)
         return m
@@ -784,19 +693,8 @@ class GDMLDocument:
         tg, nm = tag(el), el.get("name")
         what = f"{tg} {nm!r}"
         s = Solid(nm, tg)
-        lu, au = el.get("lunit"), el.get("aunit")
-        s.texts = dict(unit=lu, params={})
-        for a, v in el.attrib.items():
-            al = a.lower()
-            if al in SKIP_ATTRS or al.startswith("vertex"):
-                continue
-            if al in ANGLE_ATTRS:
-                s.params[al] = self.angle(v, au, f"{what} attribute {a}")
-            elif al in UNITLESS_ATTRS or (tg == "elcone" and al in ("dx", "dy")):
-                s.params[al] = self.num(v, f"{what} attribute {a}")
-            else:
-                s.params[al] = self.length(v, lu, f"{what} attribute {a}")
-                s.texts["params"][al] = v
+        lu = el.get("lunit")
+        self._attributes(el, s, what)
         if tg in BOOLEAN:
             self._boolean(el, s)
         elif tg == "multiUnion":
@@ -811,6 +709,27 @@ class GDMLDocument:
         else:
             self._solid_children(el, s, lu, what)
         return s
+
+    def _attributes(self, el, s, what):
+        """Read a solid's own attributes, each by Geant4's exact name (``lumen.format.solids.ATTRIBUTES``)."""
+        tg, lu, au = s.type, el.get("lunit"), el.get("aunit")
+        if tg not in catalogue.ATTRIBUTES:  # the lowering refuses it where it is used (or keeps an assembly)
+            self.report.append(f"{what}: solid type {tg!r} is not one lumen supports: its attributes are not read")
+            return
+        dims = dict(catalogue.ATTRIBUTES[tg])
+        extra = {f"vertex{i}" for i in range(1, 5)} if tg == "tet" else set()
+        for a, v in el.attrib.items():
+            if a in UNIT_ATTRS or a in extra or "}" in a:
+                continue
+            if a not in dims:
+                raise GDMLError(f"gdml {self.path}: {what}: attribute {a!r} is not one Geant4 reads for {tg} (names "
+                                f"are case-sensitive; {tg} has {sorted(dims)}): Geant4 ignores it")  # fmt: skip
+            if dims[a] == catalogue.A:
+                s.params[a] = self.angle(v, au, f"{what} attribute {a}")
+            elif dims[a] == catalogue.U:
+                s.params[a] = self.num(v, f"{what} attribute {a}")
+            else:
+                s.params[a] = self.length(v, lu, f"{what} attribute {a}")
 
     def _boolean(self, el, s):
         first = next((c.get("ref") for c in el if tag(c) == "first"), None)
@@ -843,7 +762,6 @@ class GDMLDocument:
                 raise GDMLError(f"{what}: vertex {r!r} is not defined")
         if s.type == "tet":
             s.tet = (refs, self.num(el.get("lunit", "mm"), f"{what} lunit"))
-            s.texts["lunit"] = el.get("lunit")
             return
         for c in el:
             ct = tag(c)
@@ -852,7 +770,7 @@ class GDMLDocument:
                 for r in frefs:
                     if r not in self.positions:
                         raise GDMLError(f"{what}: facet vertex {r!r} is not defined")
-                s.facets.append((frefs, (c.get("type") or "ABSOLUTE").upper()))
+                s.facets.append((frefs, "RELATIVE" if c.get("type") == "RELATIVE" else "ABSOLUTE"))  # exact, as Geant4
 
     def _solid_children(self, el, s, lu, what):
         tg = s.type
@@ -862,23 +780,15 @@ class GDMLDocument:
             )
             rows = [[c.get(k, "0") for k in keys] for c in el if tag(c) == kind]
             s.planes = [tuple(self.length(t, lu, f"{what} {kind}") for t in row) for row in rows]
-            s.texts["planes"] = rows
         elif tg == "xtru":
-            s.texts.update(vertices=[], sections=[])
             for c in el:
                 if tag(c) == "twoDimVertex":
                     s.vertices.append((self.length(c.get("x"), lu, what), self.length(c.get("y"), lu, what)))
-                    s.texts["vertices"].append([c.get("x"), c.get("y")])
                 elif tag(c) == "section":
-                    s.texts["sections"].append([c.get("zPosition"), c.get("xOffset"), c.get("yOffset")])
                     s.sections.append((self.length(c.get("zPosition"), lu, what),
                                        self.length(c.get("xOffset"), lu, what),
                                        self.length(c.get("yOffset"), lu, what),
                                        self.num(c.get("scalingFactor", "1"), what)))  # fmt: skip
-
-    def _aux(self, c):
-        return Aux(c.get("auxtype", ""), c.get("auxvalue", ""), c.get("auxunit", ""),
-                   [self._aux(cc) for cc in c if tag(cc) == "auxiliary"])  # fmt: skip
 
     def read_structure(self, sec):
         """Read a <structure> section: volumes, assemblies, border and skin surfaces."""
@@ -907,8 +817,6 @@ class GDMLDocument:
             v.solid = c.get("ref")
             if v.solid not in self.solids:
                 raise GDMLError(f"volume {v.name!r}: solid {v.solid!r} is not defined")
-        elif ct == "auxiliary":
-            v.aux.append(self._aux(c))
         elif ct == "physvol":
             child = None
             for cc in c:
@@ -924,13 +832,6 @@ class GDMLDocument:
                                         self.transform(c)))  # fmt: skip
 
 
-def read(path, warn=True) -> GDMLDocument:
-    """Read a GDML file, repairing its exporter defects (REPAIRS) with warnings; see the module docstring.
-
-    With ``warn``, one ``GDMLRepairWarning`` per repair and object (the first occurrence's text and the count);
-    every occurrence is in the report.
-    """
-    doc = GDMLDocument(path).parse()
-    if warn:
-        doc.warn_repairs()
-    return doc
+def read(path) -> GDMLDocument:
+    """Read a GDML file as Geant4 reads it (see the module docstring); what Geant4 refuses is a GDMLError."""
+    return GDMLDocument(path).parse()

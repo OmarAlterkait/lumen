@@ -1,15 +1,18 @@
 """Helpers the unit tests share that the package itself does not use: reports, checks and literal forms of lumen's
 own pieces, kept out of src so that the package carries only what it runs."""
 
+import jax.numpy as jnp
 import numpy as np
 
-from lumen.build import scene, solids
+from lumen.geometry import solids
+from lumen.media import laws
 from lumen.rules import optics as rules
-from lumen.rules.optics import CONST_KEYS, G4_10_KEYS, TABLE_KEYS, OpticsRefused, SensorEntry
+from lumen.rules.keys import CONST_KEYS, G4_10_KEYS, TABLE_KEYS
+from lumen.rules.optics import OpticsRefused, SensorEntry
+from lumen.rules.tolerances import CONVEX_TOL
 from lumen.surfaces import polar
 from lumen.surfaces import types as stypes
 
-PARTITION_SAMPLES = 20000  # check_partition: points sampled per definition
 T_FAR = 1e3  # m: oracle_first_visible's ray length
 DN_FLOOR = 1e-3  # mismatch: |d.n| below this is taken as this (grazing crossings)
 
@@ -31,20 +34,20 @@ def key_report(materials: dict) -> list[str]:
 
 
 def rt_sensor(s, eff=None) -> SensorEntry:
-    """Return the sensor form of a polished dielectric_dielectric surface (DIELECTRIC_RT_SENSOR).
+    """Return the sensor form of a polished dielectric_dielectric surface (DIELECTRIC_RT, detecting).
 
     Its absorbed share is detected with ``eff``: by default the surface's EFFICIENCY (Geant4's Detection status); a
     sensitive detector that counts every absorption (WCSim's) passes 1.
     """
     e = rules.sensor(s, eff=eff)
-    if e.surface_type is not stypes.DIELECTRIC_RT_SENSOR:
+    if e.surface_type is not stypes.DIELECTRIC_RT:
         raise OpticsRefused(f"opticalsurface {s.name!r}: {e.surface_type.name}, not a polished dielectric_dielectric")
     return e
 
 
 def jones(er, ei, wi, n, k, amplitudes):
     """Return the state after an outcome with amplitudes (a_s, a_p) into direction k (n the facing normal)."""
-    s = polar.s_axis(wi, n, er)
+    s = polar.s_axis(wi, n)
     e_s, e_p = polar.components(er, ei, wi, s)
     return polar.recombine(e_s, e_p, amplitudes[0], amplitudes[1], s, k)
 
@@ -63,41 +66,7 @@ def is_single_convex(c: solids.Compiled) -> bool:
     """Return whether a compiled solid is one convex leaf (a convex quadric, or planes only)."""
     lf = c.leaves[0]
     return isinstance(c.expr, int) and lf.kind == "q" and (
-        not lf.has_q or bool(np.all(np.linalg.eigvalsh(lf.A) >= -solids.CONVEX_TOL)))  # fmt: skip
-
-
-def check_partition(sc, n=PARTITION_SAMPLES, seed=0):
-    """Count, per definition, sampled points covered by two or more members.
-
-    Returns
-    -------
-    dict
-        definition name -> (ambiguous, ranked): points in two or more members of equal rank and different media
-        (must be 0), and points resolved by rank (reported).
-    """
-    rng = np.random.default_rng(seed)
-    out = {}
-    for name, d in sc.definitions.items():
-        mem = [m for m in d.members if not isinstance(m.solid, scene.Mesh)]
-        out[name] = (0, 0) if len(mem) < 2 else _overlaps(mem, rng, n)
-    return out
-
-
-def _overlaps(mem, rng, n):
-    compiled = [solids.Compiled(m.solid) for m in mem]
-    bbs = [solids.node_bbox(m.solid) for m in mem]
-    lo = np.min([b[0] for b in bbs], 0)
-    hi = np.max([b[1] for b in bbs], 0)
-    x = rng.uniform(lo, hi, (n, 3))
-    ins = np.stack([c.inside_np(x) for c in compiled], 1)
-    ranks = np.array([m.rank for m in mem])
-    amb = ranked = 0
-    for i in np.flatnonzero(ins.sum(1) >= 2):
-        k = np.nonzero(ins[i])[0]
-        top = ranks[k].max()
-        amb += int(np.sum(ranks[k] == top) >= 2 and len({mem[j].label.medium for j in k if ranks[j] == top}) > 1)
-        ranked += 1
-    return amb, ranked
+        not lf.has_q or bool(np.all(np.linalg.eigvalsh(lf.A) >= -CONVEX_TOL)))  # fmt: skip
 
 
 def oracle_first_visible(orc, origins, dirs, push, t_min=1e-7, medium=None):
@@ -132,3 +101,36 @@ def mismatch(e, o, t_tol=2e-5, push=0.0, early=None, ulps=8):
     if early is not None:
         early["mask"] = both & same & early_ok
     return bad
+
+
+# laws that no detector file reads: the Law machinery's test cases (index and length laws in closed form)
+def sellmeier(out="index", terms=3):
+    """Return the Sellmeier index: n^2 = 1 + sum_i B_i lam^2 / (lam^2 - C_i), with lam in um and C_i in um^2."""
+    names = tuple(f"B{i}" for i in range(1, terms + 1)) + tuple(f"C{i}" for i in range(1, terms + 1))
+
+    def fn(p, lam):
+        l2 = (lam * 1e-3) ** 2
+        n2 = 1.0 + sum(p[f"B{i}"] * l2 / (l2 - p[f"C{i}"]) for i in range(1, terms + 1))
+        return jnp.sqrt(n2)
+
+    return laws.Law("sellmeier", out, names, fn)
+
+
+def VISIBLE(p):  # noqa: N802
+    """Return a closed-form law's points (nm): where a test checks it."""
+    return np.linspace(300.0, 600.0, 301)
+
+
+def cauchy(out="index", points=None):
+    """Return the Cauchy index: n = A + B / lam^2 + C / lam^4, with lam in um (checked at ``points``)."""
+
+    def fn(p, lam):
+        l2 = (lam * 1e-3) ** 2
+        return p["A"] + p["B"] / l2 + p["C"] / (l2 * l2)
+
+    return laws.Law("cauchy", out, ("A", "B", "C"), fn, points)
+
+
+def power(out, points=None):
+    """Return the power law v0 (lam / lam0)^k; a Rayleigh scattering length has k = 4 (checked at ``points``)."""
+    return laws.Law("power", out, ("v0", "lam0", "k"), lambda p, lam: p["v0"] * (lam / p["lam0"]) ** p["k"], points)

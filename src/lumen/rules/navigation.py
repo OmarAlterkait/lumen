@@ -4,21 +4,41 @@ The photon carries the placed volume it is in and the surface it sits on (its fa
 G4Navigator decides a point's side of a surface within kCarTolerance by the direction of travel; lumen's tolerance is
 the float32 resolution of the coordinates, the **band**. The rules, each with the Geant4 code it follows:
 
-- **Tolerance.** Three sites, two forms (one form is on docs/dev/roadmap.md): ``band`` (the query and the CSG
-  evaluator: ``8 eps (|x| + |t|) + 1e-9 m``), ``check_step_in`` (the overlap check's step in: ``K_ON`` bands at a
-  point) and ``step_band`` (the step's push: ``8 eps max|x| + 1e-9 m``).
+- **Tolerance.** One form, ``band(scale) = 8 eps scale + 1e-9 m`` at a coordinate scale (m), and named multiples:
+  the query and the CSG evaluator at ``|x| + |t|`` of a crossing, the step's push unit at a point's ``max |x|``
+  (``step_band``), the placement check's step in ``K_ON`` bands (``check_step_in``), a zero-length step below
+  ``ZERO_STEP_BANDS``, a WLS box thinner than one band (refused: ``lumen.build.import_rules``).
 - **Surface identity.** A face within ``K_ON`` bands of the start (perpendicular to it) is the face the photon sits
   on: the direction decides which side it is on (G4Navigator's fEntering / fExiting). A face that close along the ray
-  but farther perpendicularly is looked for up to ``GRAZE`` times farther (1 / sin(0.25 deg) ~ 229).
-- **Entry tie.** Coincident daughter faces: the lowest-index daughter is entered (G4VoxelNavigation::ComputeStep).
-- **Exit.** Leaving a volume, the photon is located in the highest-index sibling holding the point, then down into
-  its daughters (G4Navigator::LocateGlobalPointAndSetup, LevelLocate). Coincident siblings (one solid, one pose):
-  the lowest index fills the region; leaving it the photon is located in the highest-index other one.
-- **StepTooSmall.** The zero-length step out of a coincident partner just located in runs no boundary process: a
-  straight continue event (G4OpBoundaryProcess's StepTooSmall status).
-- **Facet rule.** A mesh facet is met only by a ray entering it (G4TriangularFacet::Intersect, DistanceToIn): a start
-  behind its plane by at most ``FACET_BEHIND_BANDS`` bands is on it; the crossing's t comes from the facet's plane,
-  ``FACET_SHORT_ULPS`` ulps short; a back facet met first means the photon is inside the opaque solid.
+  but farther perpendicularly is looked for up to ``GRAZE`` times farther: a ray leaving its face at an angle theta
+  is K_ON bands from it after K_ON / sin(theta) bands, so ``GRAZE`` sets the shallowest angle the start's face is
+  still recognised at, asin(1 / GRAZE) = 0.22 deg; below it the face is a new crossing (a zero-length step).
+- **Provenance of the multiples.** The band and its multiples (``BAND_ULPS``, ``K_ON``, ``GRAZE``,
+  ``ZERO_STEP_BANDS``, ``FACET_*``, the push) are stated, with every other geometry tolerance, in
+  ``lumen.rules.tolerances``: the band is a few float32 ulps of the coordinates (a root and its point each carry about
+  one ulp per operation), and the multiples are margins over it. Geant4 has one length for all of them
+  (kCarTolerance, 1e-9 mm, and 100 of it for the push); float32 coordinates cannot resolve that. Their effect on
+  light is what the validation measures (docs/explanation/validation.md); none is measured alone.
+- **Overlaps and protrusions.** A point has one owner, level by level (``lumen.geometry.ownership``: a solid proved
+  inside its sibling, else the one placed first): a sibling that may own part of a volume (or of an ancestor) is a
+  candidate whose face the photon enters as a daughter's, ranked by the rule's order (``prio``: lower first) ahead of
+  the siblings it owns;
+  an ancestor a volume is not proved inside is a candidate whose face is an exit, the earliest exit winning
+  (G4Navigator::LocateGlobalPointAndSetup goes up while the mother does not hold the point). Two solids within the
+  contact tolerance (``contact``) touch.
+- **Ties.** One order decides every tie, the rule's (``prio``): at coincident daughter faces the first in it is
+  entered (G4VoxelNavigation::ComputeStep: the first daughter found); leaving a volume, the photon is located in the
+  first sibling in it holding the point, then down into its daughters (G4Navigator::LocateGlobalPointAndSetup,
+  LevelLocate).
+- **StepTooSmall.** G4OpBoundaryProcess returns StepTooSmall at a step <= kCarTolerance (1e-12 m), before any
+  material or surface is read. lumen's zero-length step (closer than ``ZERO_STEP_BANDS`` bands) is far longer than
+  that, so it is StepTooSmall only where no surface type applies (``lumen.transport.step``). Elsewhere Geant4 takes
+  a real step there and applies the surface.
+- **Facet rule.** A mesh is an opaque part: it holds no point, and its surface is met from either side as an entry
+  into it. A facet is met by a ray entering it (G4TriangularFacet::Intersect, DistanceToIn): a start behind its plane
+  by at most ``FACET_BEHIND_BANDS`` bands is on it; the crossing's t comes from the facet's plane, ``FACET_SHORT_ULPS``
+  ulps short. A facet met from clearly behind first (a start inside the closed surface) is an entry into the part
+  alike.
 - **Stuck rule.** After ``ZERO_STEPS_BEFORE_PUSH`` zero-length steps in a row the photon is pushed
   ``PUSH_DISTANCE_TOLERANCES`` bands along its direction and located afresh; at ``ZERO_STEPS_BEFORE_KILL`` it is
   abandoned (G4Navigator's fActionThreshold_NoZeroSteps = 10, fAbandonThreshold_NoZeroSteps = 25; Geant4 pushes
@@ -27,7 +47,7 @@ the float32 resolution of the coordinates, the **band**. The rules, each with th
 Notes
 -----
 Geant4 sources: G4Navigator (LocateGlobalPointAndSetup, LevelLocate, the zero-step thresholds), G4VoxelNavigation
-(ComputeStep), G4NormalNavigation, G4TriangularFacet, G4OpBoundaryProcess (StepTooSmall).
+(ComputeStep), G4NormalNavigation, G4TriangularFacet.
 """
 
 from __future__ import annotations
@@ -35,48 +55,58 @@ from __future__ import annotations
 import jax.numpy as jnp
 import numpy as np
 
+from lumen.rules import tolerances as tol
+
+# the band and its multiples, stated once in lumen.rules.tolerances; read as rules.<name> here and in the loop
+BAND_ULPS, BAND_FLOOR, K_ON, GRAZE = tol.BAND_ULPS, tol.BAND_FLOOR, tol.K_ON, tol.GRAZE
+FACET_BEHIND_BANDS, FACET_SHORT_ULPS, ZERO_STEP_BANDS = (
+    tol.FACET_BEHIND_BANDS,
+    tol.FACET_SHORT_ULPS,
+    tol.ZERO_STEP_BANDS,
+)
+ZERO_STEPS_BEFORE_PUSH, ZERO_STEPS_BEFORE_KILL = tol.ZERO_STEPS_BEFORE_PUSH, tol.ZERO_STEPS_BEFORE_KILL
+PUSH_DISTANCE_TOLERANCES = tol.PUSH_DISTANCE_TOLERANCES
+
 FLOAT32_EPS = float(np.finfo(np.float32).eps)
-BAND_ULPS = 8.0  # the band: this many float32 ulps of the coordinates
-BAND_FLOOR = 1e-9  # m: the band's floor (a point at the origin)
-K_ON = 4  # a face within this many bands of the start (perpendicular) is AT it
-GRAZE = 256  # ... looked for up to this many times farther along the ray (1 / sin(0.25 deg) ~ 229)
-FACET_BEHIND_BANDS = 0.25  # a start behind a facet's plane by at most this many bands is on it
-FACET_SHORT_ULPS = 2.0  # a mesh hit's t from its plane, this many ulps short of it
-ZERO_STEPS_BEFORE_PUSH = 10  # G4Navigator fActionThreshold_NoZeroSteps
-ZERO_STEPS_BEFORE_KILL = 25  # G4Navigator fAbandonThreshold_NoZeroSteps
-PUSH_DISTANCE_TOLERANCES = 8  # the push, in bands (Geant4: 100 kCarTolerance)
+BAND = BAND_ULPS * FLOAT32_EPS  # the band per metre of coordinate scale
 
 
-def band(xa, t):
-    """Return the float32 band of a crossing at ``t`` on a ray whose largest start coordinate is ``xa`` (m).
+def band(scale):
+    """Return the float32 band (m) at a coordinate scale (m): for a crossing at ``t`` on a ray whose largest start
+    coordinate is ``xa``, ``band(xa + |t|)``. Endpoints closer than this are one crossing; the photon's own surface is
+    within it of the start. Takes the scale's precision (float32 in the loop, float64 on the host)."""  # noqa: D205, D209
+    return BAND * scale + BAND_FLOOR
 
-    Endpoints closer than this are one crossing; the photon's own surface is within it of the start.
-    """
-    return jnp.float32(BAND_ULPS * FLOAT32_EPS) * (xa + jnp.abs(t)) + jnp.float32(BAND_FLOOR)
+
+def contact(scale):
+    """Return the contact tolerance (m) at a coordinate scale (m): ``K_ON`` bands. Two solids closer than this touch;
+    they overlap, and a solid reaches out of another, only deeper (``lumen.geometry.ownership``)."""  # noqa: D205, D209
+    return K_ON * band(scale)
 
 
 def check_step_in(xe):
-    """Return the overlap check's step in from an entry point ``xe`` (3,): ``K_ON`` bands of its coordinates (m)."""
-    return jnp.float32(K_ON * BAND_ULPS * FLOAT32_EPS) * jnp.max(jnp.abs(xe)) + jnp.float32(K_ON * BAND_FLOOR)
+    """Return the placement check's step in from an entry point ``xe`` (3,): the contact tolerance there (m)."""
+    return contact(jnp.max(jnp.abs(xe)))
 
 
 def step_band(x):
     """Return the step's band at a point ``x`` (3,), the stuck rule's push unit (m)."""
-    return jnp.float32(BAND_ULPS * FLOAT32_EPS) * jnp.max(jnp.abs(x)) + jnp.float32(BAND_FLOOR)
+    return band(jnp.max(jnp.abs(x)))
 
 
-def entry_wins(t, item, best):
+def entry_wins(t, rank, best, best_rank):
     """Return whether a daughter's event at ``t`` beats the best so far, by Geant4's entry-tie rule.
 
     The volume's own exit is visited first and sets the best; a daughter beats it on a tie, and between daughters at
-    one t the lowest index wins. ``best`` is ``(t, item, leaf, face, zero, is_own)``.
+    one t the first in the rule's order (the higher rank) wins. ``best`` is ``(t, item, leaf, face, zero, is_own)``.
     """
-    return (t < best[0]) | ((t == best[0]) & (best[5] | (item < best[1])))
+    return (t < best[0]) | ((t == best[0]) & (best[5] | (rank > best_rank)))
 
 
-def level_locate_wins(item, found, excl, n):
-    """Return whether daughter ``item`` replaces ``found`` as the volume holding a point: the highest index first.
+def level_locate_wins(item, found, excl, n, rank, found_rank):
+    """Return whether daughter ``item`` replaces ``found`` as the volume holding a point: the first in the rule's order
+    (the higher rank: an owner first).
 
     ``excl`` is the volume just left (never re-entered here), ``n`` the number of volumes (an item above is no unit).
-    """
-    return (item > found) & (item != excl) & (item < n)
+    """  # noqa: D205
+    return ((found < 0) | (rank > found_rank)) & (item != excl) & (item < n)

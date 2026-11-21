@@ -86,15 +86,19 @@ TOY = """<?xml version="1.0" encoding="UTF-8" ?>
 
 
 def read_toy(tmp_path_factory, text=TOY, name="toy.gdml"):
-    """Return the detector file of a toy GDML written to a temporary file."""
+    """Return the detector file of a toy GDML written to a temporary file, its Geant4-10 keys translated (the import
+    rule ``geant4_10``, as a conversion does)."""
+    from lumen.build import import_rules
+
     p = tmp_path_factory.mktemp("gdml") / name
     p.write_text(text)
-    return importer.read_gdml(str(p))
+    return import_rules.geant4_10(importer.read_gdml(str(p)))
 
 
 def tree(*specs):
-    """Return a Tree of (name, lv, material, mother, copy) specs."""
-    return Tree(tuple(PV(*s) for s in specs))
+    """Return a Tree of (name, lv, material, mother, copy) specs; a PV named as a scene's '<...>/<physvol>/<volume>'
+    is an instance of that physvol (``PV.physvol``), as ``tree_from_geometry`` records it."""
+    return Tree(tuple(PV(*s, physvol=s[0].split("/")[-2] if s[0].count("/") else None) for s in specs))
 
 
 def flat(value, energies=(1.0, 20.0)):

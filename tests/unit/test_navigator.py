@@ -1,7 +1,7 @@
 """The navigator (volume tracking) against the float64 oracle on small scenes: point location, the first visible change
 from random points, walks continued from each hit by surface identity (no push), the live t's derivatives against
-float64 finite differences, frame groups (rotated wires), split unions, meshes and the zero-length rules (the overlap
-check's tests are in test_overlap_check.py)."""
+float64 finite differences, frame groups (rotated wires), split unions, meshes and the zero-length rules (the placement
+check's tests are in test_placement_check.py)."""
 
 import jax
 import jax.numpy as jnp
@@ -23,12 +23,14 @@ from nav_toys import (
     rays,
     scene_mesh,
     scene_split,
+    tet_tris,
     walk_check,
 )
 
-from lumen.build import lowering, solids
-from lumen.geometry import navigate, tracked
-from lumen.validate import oracle
+from lumen.build import lowering, tracked
+from lumen.compare import oracle
+from lumen.geometry import navigate, solids
+from lumen.rules import navigation
 
 
 @pytest.fixture(autouse=True)
@@ -57,6 +59,20 @@ def test_walks_match_oracle(name, toys):
     assert total > 600 and len(bad) <= 0.002 * total, (name, len(bad), total, bad[:3])
 
 
+@pytest.mark.parametrize("name", ["coincident", "near"])
+def test_the_volume_before_a_crossing_is_the_one_the_ray_leaves(name, toys):
+    """vol_before is the volume holding the ray just before the crossing (locate(x - eps d)), across coincident faces
+    and faces closer than the on-face tolerance (a zero-length stay in a volume between them is no stay: the crossing
+    is from the volume before it), media shared or not, after reflections; vol_after likewise where the faces
+    coincide. The "near" faces (0.3 um apart) are a float32 crossing, not the oracle's float64 one: no oracle there."""
+    sc, nav = toys(name)
+    near = name == "near"
+    agree, total, bad = walk_check(sc, nav=nav, n=800, steps=4, sides=("vol_before",) if near else
+                                   ("vol_before", "vol_after"), use_oracle=not near)  # fmt: skip
+    assert total > 800 and not [b for b in bad if b[0] in ("vol_before", "vol_after")], bad[:4]
+    assert len(bad) <= 0.002 * total, (len(bad), total, bad[:3])
+
+
 def test_wires_frame_group_and_walks(toys):
     sc, nav = toys("wires")
     assert nav.stats["framed"] >= 1, nav.stats
@@ -78,7 +94,7 @@ def test_wires_frame_group_and_walks(toys):
 def test_split_unions_exact():
     sc = scene_split()
     sp = lowering.split_unions(sc, min_leaves=8)
-    assert len(sp.definitions["frame"].members) == 0 and len(sp.definitions["frame"].placements) == 20
+    assert sp.definitions["frame"].member is None and len(sp.definitions["frame"].placements) == 20
     X = np.random.default_rng(4).uniform([-0.35, -0.05, -0.05], [0.35, 0.05, 0.05], (5000, 3))
     np.testing.assert_array_equal(oracle.Oracle(sp).label(X)[0], oracle.Oracle(sc).label(X)[0])
     agree, total, bad = walk_check(sp, n=600, steps=3, orc_scene=sc)
@@ -116,20 +132,19 @@ def test_live_t_derivative_matches_float64_fd(toys):
     t, dt = ty[:, 0], d1[:, 0]
     h = 1e-6
     errs = []
-    for i in range(len(O_)):
+    for i in range(len(O_)):  # every ray: the oracle hits where the navigator does, and no step crosses a surface
         r0 = orc.query(O_[i], Dr[i], T_ORC, 10.0, push=0.0)
-        if not r0["hit"] or abs(r0["t"] - t[i]) > 1e-5:
-            continue
+        assert r0["hit"] and abs(r0["t"] - t[i]) <= 1e-5, (i, r0, float(t[i]))
         dp, dm = Dr[i] + h * tg[i, 3:], Dr[i] - h * tg[i, 3:]
         # the oracle normalises d: differentiate t * |d| (the navigator's d is used as given)
         rp = orc.query(O_[i] + h * tg[i, :3], dp, T_ORC, 10.0, push=0.0)
         rm = orc.query(O_[i] - h * tg[i, :3], dm, T_ORC, 10.0, push=0.0)
-        if not (rp["hit"] and rm["hit"]) or rp["after"] != r0["after"] or rm["after"] != r0["after"]:
-            continue
+        assert rp["hit"] and rm["hit"] and rp["after"] == r0["after"] == rm["after"], (i, "the step crosses a surface")
         fd = (rp["t"] / np.linalg.norm(dp) - rm["t"] / np.linalg.norm(dm)) / (2 * h)
         errs.append(abs(fd - dt[i]) / (1 + abs(fd)))
-    errs = np.asarray(errs)
-    assert len(errs) > 150 and np.median(errs) < 1e-4 and np.mean(errs > 1e-2) < 0.01, (len(errs), np.median(errs))
+    # a float32 derivative against float64 differences (h^2 and rounding below 1e-10), every ray tested, none an
+    # outlier (measured on the CPU: median 2.6e-8, largest 2.2e-7 over the 300 rays)
+    assert len(errs) == len(O_) and np.median(errs) < 1e-4 and np.max(errs) < 1e-2, (np.median(errs), np.max(errs))
 
 
 def test_live_t_second_derivative_matches_float64_fd(toys):
@@ -144,24 +159,21 @@ def test_live_t_second_derivative_matches_float64_fd(toys):
     ty, _, d2 = per_ray(t_jets, nav, O_, Dr, vol, np.full(len(vol), -1), tg, shared=(10.0,))
     h = 1e-4
     errs = []
-    for i in range(len(O_)):
+    for i in range(len(O_)):  # every ray: the oracle hits where the navigator does, and no step crosses a surface
         r0 = orc.query(O_[i], Dr[i], T_ORC, 10.0, push=0.0)
-        if not r0["hit"] or abs(r0["t"] - ty[i, 0]) > 1e-5:
-            continue
+        assert r0["hit"] and abs(r0["t"] - ty[i, 0]) <= 1e-5, (i, r0, float(ty[i, 0]))
         vals = []
         for s in (-1, 0, 1):
             oo, dd = O_[i] + s * h * tg[i, :3], Dr[i] + s * h * tg[i, 3:]
             r = orc.query(oo, dd, T_ORC, 10.0, push=0.0)
-            if not r["hit"] or r["after"] != r0["after"]:
-                break
+            assert r["hit"] and r["after"] == r0["after"], (i, "the step crosses a surface")
             t = r["t"] / np.linalg.norm(dd)  # the oracle normalises d; the navigator uses it as given
             vals.append(np.concatenate([[t], oo + t * dd]))
-        if len(vals) < 3:
-            continue
         fd2 = (vals[2] - 2 * vals[1] + vals[0]) / h**2
         errs.append(np.max(np.abs(fd2 - d2[i]) / (1 + np.abs(fd2))))
-    errs = np.asarray(errs)
-    assert len(errs) > 150 and np.median(errs) < 1e-5 and np.max(errs) < 1e-2, (len(errs), np.median(errs))
+    # float32 jets against float64 second differences (h^2 and rounding / h^2 about 1e-8), every ray tested
+    # (measured on the CPU: median 9.0e-8, largest 1.2e-4 over the 300 rays)
+    assert len(errs) == len(O_) and np.median(errs) < 1e-5 and np.max(errs) < 1e-2, (np.median(errs), np.max(errs))
 
 
 def held_and_query(nav, o, d, v, u):
@@ -190,7 +202,7 @@ def test_held_surface_is_the_query_in_value_and_jets(toys):
     """surface_at (the winner held, no second walk) gives the query's own t and normal and their first derivatives
     along a tangent bit for bit, the second to float32 rounding"""
     sc, nav = toys("nest")
-    nav = nav.with_classes(list(range(nav.n)), [], nav.n)
+    nav = navigate.Navigator(nav.arrays.with_classes(list(range(nav.n)), [], nav.n))
     O_, Dr = rays(300, 9, half=0.6)
     vol = locate(nav, O_)
     tg = np.random.default_rng(11).normal(size=(300, 6)).astype(np.float32)
@@ -203,30 +215,21 @@ def test_held_surface_is_the_query_in_value_and_jets(toys):
         assert np.allclose(x, y, rtol=1e-4, atol=1e-6 * np.max(np.abs(x))), np.max(np.abs(x - y))
 
 
-def crossing_and_surface(nav, o, d, v):
-    """next_crossing's Crossing, and surface_at on it"""
-    cx = navigate.next_crossing(nav, o, d, v)
-    return cx, navigate.surface_at(nav, cx, o, d)
+def query_and_surface(nav, o, d, v):
+    """the query's dict, and surface_at on its winner"""
+    r = nav.query(o, d, v, t_max=10.0)
+    win = jnp.stack([r["item"], r["leaf"], r["face"], r["zero"].astype(I32)])
+    return r, navigate.surface_at(nav, dict(t=r["t"], hit=r["hit"], win=win), o, d)
 
 
-def test_next_crossing_is_the_query(toys):
-    """the Crossing record carries the query's values; surface_at on it gives the query's t"""
+def test_surface_at_gives_the_query_s_crossing(toys):
+    """surface_at on the query's winner gives the query's t and normal, without walking again"""
     nav = toys("nest")[1]
     o, d = np.array([[0.1, 0.0, -0.8]]), np.array([[0.0, 0.0, 1.0]])
     v = locate(nav, o)
-    cx, (t, n) = one(per_ray(crossing_and_surface, nav, o, d, v))
+    _, (t, n) = one(per_ray(query_and_surface, nav, o, d, v))
     r = one(query(nav, o, d, v))
-    assert float(cx.t) == float(r["t"]) and int(cx.vol_after) == int(r["vol_after"]) and int(cx.srf) == int(r["srf"])
     assert float(t) == float(r["t"]) and np.array_equal(np.asarray(n), np.asarray(r["normal"]))
-
-
-def test_multi_member_fails_closed():
-    from lumen.build import scene
-
-    defs = {"world": scene.Definition("world", [scene.Member(solids.g4_orb(0.5), scene.Label(1), 0),
-                                                scene.Member(solids.g4_orb(0.1), scene.Label(2), 1)], [])}  # fmt: skip
-    with pytest.raises(NotImplementedError, match="members"):
-        nav_of(make_scene(defs))
 
 
 def _q(nav):
@@ -355,8 +358,8 @@ def test_a_pass_pair_leaves_the_visible_crossing_its_true_class_before():
                      "body": defn("body", solids.g4_orb(0.25), 3, [("inner", np.eye(3), (0.0, 0.0, 0.0))]),
                      "inner": defn("inner", solids.g4_orb(0.2), 4)})  # fmt: skip
     nav = nav_of(sc)
-    P = np.zeros((5, 5), bool)
-    P[2, 3] = P[3, 2] = True
+    V = ~np.eye(5, dtype=bool)
+    V[2, 3] = V[3, 2] = False  # a pass pair: no vertex
     vg, vb, vi = (nav.defs.index(k) for k in ("glass", "body", "inner"))
     rng = np.random.default_rng(3)
     N = 200
@@ -365,45 +368,134 @@ def test_a_pass_pair_leaves_the_visible_crossing_its_true_class_before():
     X = (u * rng.uniform(0.26, 0.295, N)[:, None]).astype(np.float32)
     Dr = -u + 0.05 * rng.normal(size=(N, 3))
     Dr = (Dr / np.linalg.norm(Dr, axis=1, keepdims=True)).astype(np.float32)
-    r = query(nav, X, Dr, vg, -1, pass_tab=P)
+    r = query(nav, X, Dr, vg, -1, vertex_tab=V)
     ok = (r["hit"] & (r["cls_before"] == 3) & (r["vol_before"] == vb) & (r["cls_after"] == 4) & (r["vol_after"] == vi)
           & (r["n_pass"] >= 1))  # fmt: skip
     assert ok.all(), (int((~ok).sum()), r["cls_before"][~ok][:5], r["vol_before"][~ok][:5])
     np.testing.assert_allclose(np.linalg.norm(X + r["t"][:, None] * Dr, axis=1), 0.2, atol=2e-5)
 
 
-def test_mesh_chunks_are_items_of_their_mother_only():
-    """Geant4 does not see a mesh from inside a volume it passes through: its chunks are daughters of its mother only"""
-    sc = scene_mesh()
-    sc.definitions["world"].placements[1].t = np.array([0.25, 0.1, 0.0])  # the box onto the tetrahedron
+def test_a_crossing_into_another_volume_of_the_same_class_is_a_vertex_where_the_diagonal_has_a_surface():
+    """two touching boxes of one class (A | B: x in [-0.5, 0] and [0, 0.5]): the query steps over A -> B as one class,
+    and stops there when that class's own pair has a surface (the vertex table's diagonal): the class on
+    both sides, B the volume after. Leaving B into the world is a crossing either way."""
+    sc = make_scene({"world": defn("world", solids.g4_box(4.0, 4.0, 4.0), 1,
+                                   [("box", np.eye(3), (-0.25, 0.0, 0.0)), ("box", np.eye(3), (0.25, 0.0, 0.0))]),
+                     "box": defn("box", solids.g4_box(0.5, 0.5, 0.5), 2)})  # fmt: skip
     nav = nav_of(sc)
-    box = nav.defs.index("box")
-    assert not any(k >= nav.CH0 for k in nav.kids[box])
-    assert any(k >= nav.CH0 for k in nav.kids[nav.defs.index("world")])  # its mother's list
+    va, vb, vw = (int(v) for v in locate(nav, [[-0.25, 0.1, 0.0], [0.25, 0.1, 0.0], [1.5, 0.0, 0.0]]))
+    assert va != vb and int(nav.host["cls"][va]) == int(nav.host["cls"][vb]) == 2
+    X, D = [[-0.25, 0.1, 0.05]], [[1.0, 0.0, 0.0]]
+    over = one(query(nav, X, D, va))
+    assert over["hit"] and int(over["vol_after"]) == vw and int(over["n_pass"]) == 1
+    assert abs(float(over["t"]) - 0.75) < 1e-5
+    V = ~np.eye(3, dtype=bool)
+    V[2, 2] = True
+    at = one(query(nav, X, D, va, vertex_tab=V))
+    assert at["hit"] and int(at["vol_before"]) == va and int(at["vol_after"]) == vb and int(at["n_pass"]) == 0
+    assert int(at["cls_before"]) == int(at["cls_after"]) == 2 and abs(float(at["t"]) - 0.25) < 1e-5
+    assert abs(float(at["normal"][0]) + 1.0) < 1e-6
+    V[2, 2], V[1, 1] = False, True  # another class's diagonal: A -> B is still stepped over
+    assert int(one(query(nav, X, D, va, vertex_tab=V))["vol_after"]) == vw
 
 
-def test_rounds_run_out_on_a_row_of_same_class_envelopes():
-    """40 water-in-water envelopes along a ray, then an absorber: each query stops after the rounds with a straight
-    continue event; following them reaches the absorber at the oracle's distance, in the same class all along"""
+def test_a_mesh_takes_part_in_ownership_like_any_solid():
+    """A tessellated solid overlapping a volume: the first placed owns the region (nothing is proved inside a mesh).
+    The tetrahedron placed first owns its overlap with a box, whose candidates then hold the mesh's chunks; the box
+    placed first owns it instead and never sees the mesh. A photon leaving that box at a point inside the
+    tetrahedron is in the world there (a mesh holds no point), and meets the mesh at the next facet, from behind."""
+    for box_first in (False, True):
+        sc = scene_mesh()
+        pls = sc.definitions["world"].placements
+        pls[1].t = np.array([0.25, 0.1, 0.0])  # the box onto the tetrahedron
+        if box_first:
+            pls.reverse()
+        sc.definitions["box"].member.solid = solids.g4_box(0.1, 0.1, 0.1)
+        nav = nav_of(sc)
+        box = nav.defs.index("box")
+        assert any(k >= nav.CH0 for k in nav.kids[nav.defs.index("world")])  # its mother's items, always
+        assert any(k >= nav.CH0 for k in nav.kids[box]) == (not box_first)
+        assert [(a, b) for a, b, _ in nav.owned] == ([(nav.n + 1, box)] if box_first else [(box, nav.n + 1)])
+    # leaving the box at x = 0.3 inside the tetrahedron: into the world, then the mesh at its facet ahead
+    o, d = jnp.asarray([0.27, 0.12, 0.0], jnp.float32), jnp.asarray([1.0, 0.0, 0.0], jnp.float32)
+    r = jax.jit(lambda: nav.query(o, d, box, t_max=10.0))()
+    assert bool(r["hit"]) and int(r["vol_after"]) == nav.defs.index("world") and abs(float(r["t"]) - 0.03) < 1e-6, r
+    r2 = jax.jit(lambda: nav.query(o + r["t"] * d, d, r["vol_after"], last=r["srf"], t_max=10.0))()
+    assert bool(r2["hit"]) and int(r2["vol_after"]) == nav.n + 1 and int(r2["cls_after"]) == 6, r2
+
+
+def _box_tris(lo, hi):
+    """The 12 outward triangles of the box [lo, hi]."""
+    lo, hi = np.asarray(lo, float), np.asarray(hi, float)
+    c = np.array([[(hi if (k >> a) & 1 else lo)[a] for a in range(3)] for k in range(8)])
+    quads = ((0, 2, 6, 4), (1, 5, 7, 3), (0, 4, 5, 1), (2, 3, 7, 6), (0, 1, 3, 2), (4, 6, 7, 5))
+    T = np.array([c[[q[0], q[i], q[i + 1]]] for q in quads for i in (1, 2)])
+    out = np.einsum("ij,ij->i", np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0]), T.mean(1) - c.mean(0)) > 0
+    return np.where(out[:, None, None], T, T[:, ::-1])
+
+
+def test_a_mesh_of_interpenetrating_bodies_is_met_at_its_first_facet():
+    """One mesh of two closed bodies, a small box poking through a large box's face (a CAD export's intersecting
+    parts). A box placed first owns its overlap with the mesh; leaving it at a point inside the small body only, the
+    photon is in the world (a mesh holds no point) and meets the mesh at the first facet ahead -- the large body's front
+    facet, inside the small body -- as at any facet."""
+    big, small = _box_tris((0.0, -0.2, -0.2), (0.4, 0.2, 0.2)), _box_tris((-0.1, -0.05, -0.05), (0.05, 0.05, 0.05))
+    tris = np.concatenate([big, small])
+    sc = make_scene({"world": defn("world", solids.g4_box(2.0, 2.0, 2.0), 1, [("box", np.eye(3), (-0.08, 0.0, 0.0)),
+                                                                           ("cad", np.eye(3), (0.0, 0.0, 0.0))]),
+                     "cad": mesh_def("cad", tris, 6),
+                     "box": defn("box", solids.g4_box(0.06, 0.06, 0.06), 2)})  # fmt: skip
+    nav = nav_of(sc)
+    box, world = nav.defs.index("box"), nav.defs.index("world")
+    o, d = jnp.asarray([-0.07, 0.01, 0.005], jnp.float32), jnp.asarray([1.0, 0.0, 0.0], jnp.float32)
+    r = jax.jit(lambda: nav.query(o, d, box, t_max=10.0))()
+    assert bool(r["hit"]) and int(r["vol_after"]) == world and abs(float(r["t"]) - 0.02) < 1e-6, r
+    r2 = jax.jit(lambda: nav.query(o + r["t"] * d, d, world, last=r["srf"], t_max=10.0))()
+    assert bool(r2["hit"]) and int(r2["vol_after"]) == nav.n + 1 and abs(float(r2["t"]) - 0.05) < 1e-6, r2
+    assert int(r2["cls_before"]) == 1 and int(r2["cls_after"]) == 6, r2
+    # leaving it heading -x, outside both bodies: into the world
+    r = jax.jit(lambda: nav.query(o, -d, box, t_max=10.0))()
+    assert bool(r["hit"]) and int(r["vol_after"]) == world and int(r["cls_after"]) == 1, r
+
+
+def test_each_mesh_has_its_own_mother_by_navigator_id():
+    """Two meshes in two mothers (a tetrahedron in the world, a box mesh inside volume B): host["parent"] is indexed by
+    navigator id (the outside at n, mesh k at n + 1 + k), so each mesh's mother is its own; leaving a small box that
+    owns part of the second mesh, the photon is in B, and meets that mesh at its facet ahead (an item of B)."""
+    cad = _box_tris((0.0, -0.2, -0.2), (0.3, 0.2, 0.2))
+    sc = make_scene({"world": defn("world", solids.g4_box(2.0, 2.0, 2.0), 1, [("tet", np.eye(3), (-0.6, 0.1, 0.0)),
+                                                                           ("B", np.eye(3), (0.5, 0.0, 0.0))]),
+                     "tet": mesh_def("tet", tet_tris(), 6),
+                     "B": defn("B", solids.g4_box(0.8, 0.8, 0.8), 3, [("s", np.eye(3), (-0.03, 0.0, 0.0)),
+                                                                     ("cad", np.eye(3), (0.0, 0.0, 0.0))]),
+                     "cad": mesh_def("cad", cad, 7),
+                     "s": defn("s", solids.g4_box(0.1, 0.1, 0.1), 2)})  # fmt: skip
+    nav = nav_of(sc)
+    n, par = nav.n, np.asarray(nav.host["parent"])
+    w, b, s_ = (nav.defs.index(k) for k in ("world", "B", "s"))
+    assert nav.n_mesh == 2 and len(par) == n + 1 + nav.n_mesh and par[n] == n
+    assert par[n + 1] == w and par[n + 2] == b, par[n:]
+    o, d = jnp.asarray([0.45, 0.01, 0.005], jnp.float32), jnp.asarray([1.0, 0.0, 0.0], jnp.float32)
+    r = jax.jit(lambda: nav.query(o, d, s_, t_max=10.0))()
+    assert bool(r["hit"]) and int(r["vol_after"]) == b and abs(float(r["t"]) - 0.07) < 1e-6, r
+    r2 = jax.jit(lambda: nav.query(o + r["t"] * d, d, b, last=r["srf"], t_max=10.0))()
+    assert bool(r2["hit"]) and int(r2["vol_after"]) == n + 2 and abs(float(r2["t"]) - 0.28) < 1e-5, r2
+    assert int(r2["cls_after"]) == 7, r2
+
+
+def test_a_query_follows_every_invisible_crossing():
+    """40 water-in-water envelopes along a ray, then an absorber: one query crosses all 80 faces without a vertex and
+    meets the absorber at the oracle's distance (no round limit, no continue event)"""
     pls = [("env", np.eye(3), (-0.8 + 0.02 * k, 0.0, 0.0)) for k in range(40)] + [("abs", np.eye(3), (0.4, 0.0, 0.0))]
     sc = make_scene({"world": defn("world", solids.g4_box(2.0, 2.0, 2.0), 1, pls),
                      "env": defn("env", solids.g4_box(0.019, 0.1, 0.1), 1),
                      "abs": defn("abs", solids.g4_box(0.1, 0.1, 0.1), 2)})  # fmt: skip
     nav = nav_of(sc)
     o, d = np.array([-0.95, 0.001, 0.002]), np.array([1.0, 0.0, 0.0])
-    vol, last, x, n_cont = int(locate(nav, o)[0]), -1, o.astype(np.float32), 0
-    for _ in range(12):
-        r = one(query(nav, x, d, vol, last, t_max=10.0))
-        assert r["hit"]
-        x = (x + np.float32(r["t"]) * d.astype(np.float32)).astype(np.float32)
-        vol, last = int(r["vol_after"]), int(r["item"])
-        if not r["cont"]:
-            break
-        assert int(r["cls_before"]) == 1 and int(r["cls_after"]) == 1
-        n_cont += 1
-    assert n_cont >= 4 and int(r["cls_after"]) == 2
+    r = one(query(nav, o.astype(np.float32), d, int(locate(nav, o)[0]), -1, t_max=10.0))
+    assert r["hit"] and not r["cont"] and int(r["cls_after"]) == 2 and int(r["n_pass"]) == 80, r
     ro = oracle.Oracle(sc).query(o, d, T_ORC, 10.0, push=0.0)
-    assert abs((x[0] - o[0]) - ro["t"]) < 1e-5, (x, ro)
+    assert abs(float(r["t"]) - ro["t"]) < 1e-5, (r["t"], ro)
 
 
 def test_no_zero_length_entry_from_a_face_heading_out():
@@ -471,8 +563,8 @@ def cube_tris(c, h):
 
 def test_a_mesh_facet_is_met_only_by_a_ray_entering_it():
     """the facet rule: from outside a facet is met only by a ray entering it; a start behind its plane within the
-    tolerance is on it (a zero-length hit); a start inside the closed mesh meets a back facet first, leaving the
-    mesh's opaque class"""
+    tolerance is on it (a zero-length hit); a start inside the closed mesh meets a facet from behind first: an entry
+    into the opaque part alike (a mesh holds no point)"""
     nav = nav_of(_mesh_scene(cube_tris((1.9, 0.0, 0.0), 0.05), 8.0))
     band = 8 * 2.0**-23 * 1.95
 
@@ -487,7 +579,7 @@ def test_a_mesh_facet_is_met_only_by_a_ray_entering_it():
     r = q(jnp.asarray([1.95 + 0.5 * band, 0.01, -0.01], F32), jnp.asarray(-d, F32))  # heading away: the wall next
     assert int(r["item"]) < nav.CH0 and float(r["t"]) > 1.0, (float(r["t"]), int(r["item"]))
     r = q(jnp.asarray([1.9, 0.0, 0.0], F32), jnp.asarray(d, F32))  # inside the cube: the back facet
-    assert bool(r["hit"]) and int(r["cls_before"]) == 6 and int(r["cls_after"]) == 1
+    assert bool(r["hit"]) and int(r["cls_before"]) == 1 and int(r["cls_after"]) == 6
     assert abs(float(r["t"]) - 0.05 / 0.6 * np.linalg.norm([0.6, 0.3, 0.2])) < 1e-5
 
 
@@ -566,3 +658,134 @@ def test_a_grazing_entry_at_a_rim_is_in():
     r2 = query(nav, X, Dr, cv, r1["srf"], sn=r1["normal"])
     back = r2["hit"] & (r2["t"] < 1e-3)  # the chord to the far side is ~ 7 cm
     assert back.sum() == 0, (int(back.sum()), r2["t"][back][:5], r2["vol_after"][back][:5])
+
+
+def _two_crossings(nv, o, d):
+    v = nv.locate(o)
+    r = nv.query(o, d, v, t_max=1e3)
+    r2 = nv.query(o + r["t"] * d, d, r["vol_after"], last=r["srf"], sn=r["normal"], t_max=1e3)
+    return r["t"], r["t"] + r2["t"], r2["normal"], r2["vol_after"]
+
+
+def test_grazing_thin_tube_far_from_the_origin_is_met_where_it_is():
+    """a 75 um tube in a 0.3 mm plane box at 3.6 m (ICARUS-like wires), rays near tangency: the on-face rule measures
+    the start's own distance from the wire, so the wire's far tangent plane is not mistaken for the box face the photon
+    sits on (that gave a zero-length entry with a skewed normal); a lone tube: no zero-length crossing"""
+    r, c, x0 = 75e-6, np.array([-3.5873, -0.236, 0.0]), -3.586
+    b = np.linspace(0.0745e-3, 0.07499e-3, 10)
+    exact = x0 - (c[0] + np.sqrt(r * r - b * b))
+    O_ = np.c_[np.full(len(b), x0), c[1] + b, np.full(len(b), 0.2494)]
+    d = np.tile([-1.0, 0.0, 0.0], (len(b), 1))
+    sc = make_scene({"world": defn("world", solids.g4_box(16.0, 16.0, 16.0), 1, [("plane", np.eye(3), c)]),
+                     "plane": defn("plane", solids.g4_box(0.3e-3, 1.0, 2.0), 2, [("wire", np.eye(3), (0, 0, 0))]),
+                     "wire": defn("wire", solids.g4_tube(0.0, r, 1.0), 3)})  # fmt: skip
+    nav = nav_of(sc)
+    _, t2, n2, v2 = per_ray(_two_crossings, nav, O_, d)
+    assert np.all(np.abs(t2 - exact) < 1e-6), t2 - exact
+    assert np.all(n2[:, 1] > 0.99) and np.all(v2 == nav.names.index("plane_0/wire_0"))
+    lone = make_scene({"world": defn("world", solids.g4_box(16.0, 16.0, 16.0), 1, [("wire", np.eye(3), c)]),
+                       "wire": defn("wire", solids.g4_tube(0.0, r, 1.0), 2)})  # fmt: skip
+    t1, *_ = per_ray(_two_crossings, nav_of(lone), O_, d)
+    assert np.all(np.abs(t1 - exact) < 1e-6), t1 - exact
+
+
+def test_a_start_inside_a_curved_solid_heading_along_it_exits_where_it_does():
+    """a start inside a tube or a sphere (1 mm, at 3.6 m: the on-face band is ~14 um) at a depth h beyond the band,
+    heading tangent to its own iso-surface: the exit is at sqrt(R^2 - (R - h)^2), not a zero-length exit at the start
+    (the face's normal at the start is perpendicular to the ray there, whatever h); within the band it is on the face"""
+    c, R = np.array([-3.5873, -0.236, 0.0]), 1e-3
+    for sol in (solids.g4_tube(0.0, R, 1.0), solids.g4_orb(R)):
+        nav = nav_of(make_scene({"world": defn("world", solids.g4_box(16.0, 16.0, 16.0), 1, [("s", np.eye(3), c)]),
+                                 "s": defn("s", sol, 2)}))  # fmt: skip
+        h = np.array([30e-6, 50e-6, 120e-6, 400e-6])
+        O_ = np.c_[np.full(len(h), c[0]), c[1] + (R - h), np.full(len(h), c[2])]
+        t1, *_ = per_ray(_two_crossings, nav, O_, np.tile([-1.0, 0.0, 0.0], (len(h), 1)))
+        np.testing.assert_allclose(t1, np.sqrt(R * R - (R - h) ** 2), rtol=1e-3)
+        t_on, *_ = per_ray(_two_crossings, nav, [[c[0], c[1] + R - 2e-6, c[2]]], [[-1.0, 0.0, 0.0]])
+        assert t_on[0] == 0.0
+
+
+def test_a_tree_deeper_than_any_fixed_walk_is_located_and_left_at_every_level():
+    """The navigator's walks end by the tree's structure, not a fixed cap truncating them silently: 80 nested boxes
+    (deeper than the 64 levels locate used to stop at) locate their innermost point."""
+    n = 80
+    defs = {f"b{k}": defn(f"b{k}", solids.g4_box(*(2.0 - k * 0.02,) * 3), k % 5 + 1,
+                          [(f"b{k + 1}", np.eye(3), (0.0, 0.0, 0.0))] if k + 1 < n else [])
+            for k in range(n)}  # fmt: skip
+    defs["world"] = defn("world", solids.g4_box(3.0, 3.0, 3.0), 9, [("b0", np.eye(3), (0.0, 0.0, 0.0))])
+    nav = nav_of(make_scene(defs))
+    v = int(np.asarray(locate(nav, [[0.0, 0.0, 0.0]]))[0])
+    assert v == nav.n - 1 and nav.names[v].count("/") >= n - 1  # the innermost box (preorder: the last volume)
+
+
+def test_a_ray_into_a_curved_solid_from_its_face_is_inside_it():
+    """A start on an orb's face (no surface identity: another solid's coincident face, or none) heading into it at a
+    shallow angle is inside: its chord's far end, on the same face but crossed the other way, is a later crossing, not
+    the face the photon sits on (the grazing rule: not a ray crossing its face the other way). At 20 m from the
+    origin (a band of ~20 um: the grazing window, GRAZE K_ON bands, is 2 cm, longer than the chords)."""
+    world = defn("world", solids.g4_box(60.0, 60.0, 60.0), 1, [("ball", np.eye(3), (20.0, 0.0, 0.0))])
+    sc = make_scene({"world": world, "ball": defn("ball", solids.g4_orb(0.27), 2)})
+    nav = nav_of(sc)
+    ball = nav.defs.index("ball")
+    for deg in (0.3, 1.0, 3.0):
+        a = np.radians(deg)
+        for k in range(6):  # around the orb: the float32 start falls inside, on or outside the face
+            phi = 0.3 * k
+            nrm, tan = np.array([np.cos(phi), np.sin(phi), 0.0]), np.array([-np.sin(phi), np.cos(phi), 0.0])
+            o = (np.array([20.0, 0.0, 0.0]) + 0.27 * nrm).astype(np.float32)
+            d = (np.cos(a) * tan - np.sin(a) * nrm).astype(np.float32)  # into the ball at deg from its tangent plane
+            r = one(query(nav, o, d, ball, t_max=10.0))
+            assert bool(r["hit"]) and not bool(r["zero"]) and int(r["vol_after"]) == nav.defs.index("world"), (deg, k)
+            np.testing.assert_allclose(float(r["t"]), 2 * 0.27 * np.sin(a), atol=2e-4, err_msg=str((deg, k)))
+
+
+def _crossing(nv, o, d, v):
+    r = nv.query(o, d, v, last=-1, t_max=1e3)
+    return r["t"], r["vol_after"], r["srf"], r["normal"]
+
+
+def _crossing_from(nv, o, d, v, last, sn):
+    r = nv.query(o, d, v, last=last, sn=sn, t_max=1e3)
+    return r["t"], r["vol_after"]
+
+
+def test_a_slab_of_1p7_contacts_at_4m_is_crossed_face_by_face():
+    """SBND's CPA foil split by its recipe (lumen-tpc): a 25.4 um TPB slab on a 25.4 um vm2000 slab in a 50.823 um
+    LAr box (the film's old 23 nm slot left as LAr), at a 4 m coordinate scale, where the contact tolerance (K_ON
+    bands) is 15 um: the slab is 1.7 contacts thick. Entering from the LAr, every incidence meets the TPB face and then
+    the vm2000 face 25.4 um / cos further; a photon re-emitted at the TPB face (no surface remembered: a bulk event)
+    reaches the vm2000 face going in and the LAr at once going out; one reflected at the vm2000 face reaches the LAr
+    25.4 um / cos back. Each distance within one band (3.8 um at 4 m) of the exact one."""
+    half, c, f0 = 25.4e-6, np.array([1.0005, 1.5525, 3.9]), -1.15e-8  # the foil's centre in its box (SBND's GDML)
+    sc = make_scene({"world": defn("world", solids.g4_box(16.0, 16.0, 16.0), 1, [("cpa", np.eye(3), c)]),
+                     "cpa": defn("cpa", solids.g4_box(50.823e-6, 0.932, 1.172), 1,
+                                 [("tpb", np.eye(3), (f0 + half / 2, 0, 0)),
+                                  ("foil", np.eye(3), (f0 - half / 2, 0, 0))]),
+                     "tpb": defn("tpb", solids.g4_box(half, 0.932, 1.172), 2),
+                     "foil": defn("foil", solids.g4_box(half, 0.932, 1.172), 3)})  # fmt: skip
+    nav = nav_of(sc)
+    tpb, foil = nav.names.index("cpa_0/tpb_0"), nav.names.index("cpa_0/foil_1")
+    lar = {nav.names.index(""), nav.names.index("cpa_0")}  # the world (unnamed) and the CPA box: LAr
+    front = c[0] + f0 + half  # the TPB's face to the LAr
+    tol = navigation.band(4.0)
+    cos = np.cos(np.radians([0.0, 20.0, 45.0, 60.0, 75.0]))
+    sin = np.sqrt(1 - cos * cos)
+    d_in = np.c_[-cos, sin * 0.6, sin * 0.8]  # into the slab from its front
+    O_ = np.array([front, c[1], c[2]]) - 0.05 * d_in  # each meets the TPB's face at (front, c_y, c_z), 5 cm on
+    t1, t2, _, v2 = per_ray(_two_crossings, nav, O_, d_in)
+    assert np.all(np.abs(t2 - t1 - half / cos) < tol), (t2 - t1, half / cos)
+    assert np.all(v2 == foil)
+    face = (O_ + t1[:, None] * d_in).astype(np.float32)  # the entry points, on the TPB's face
+    assert np.all(np.abs(face[:, 0] - front) < tol)
+    # re-emitted there (a bulk event remembers no surface): into the slab, and out
+    for d, want_v, want_t in ((d_in, foil, half / cos), (d_in * [-1, 1, 1], None, 0.0 * cos)):
+        t, v, _, _ = per_ray(_crossing, nav, face, d.astype(np.float32), np.full(len(cos), tpb, np.int32))
+        assert np.all(np.abs(t - want_t) < tol), (t, want_t)
+        assert np.all(v == want_v) if want_v is not None else all(int(x) in lar for x in v), v
+    # reflected at the vm2000 face (that surface remembered), back out through the TPB
+    back = (face + (half / cos)[:, None] * d_in).astype(np.float32)
+    _, _, srf, nrm = per_ray(_crossing, nav, face, d_in.astype(np.float32), np.full(len(cos), tpb, np.int32))
+    d_out = (d_in * [-1, 1, 1]).astype(np.float32)
+    t, v = per_ray(_crossing_from, nav, back, d_out, np.full(len(cos), tpb, np.int32), srf, nrm)
+    assert np.all(np.abs(t - half / cos) < tol), (t, half / cos)
+    assert all(int(x) in lar for x in v), v

@@ -23,14 +23,12 @@ OUT = Path(os.environ.get("LUMEN_EXAMPLES_OUT", "lumen-examples"))
 RECIPE = lumen.Recipe(
     name="example_tank",
     detector_volume="TankLV",                 # the water; light leaving it is absorbed
-    wavelength_range=(300.0, 600.0),          # nm: the optics tables are read over this range
     groups=(
         SensorGroup(
             "pmt",
             rule="border_into",               # counted across the CathodeSurface border into each PMT volume
-            surface="lumen:geant4", model="lumen:pmt",
             lv="PMT",                         # the logical volume of the 8 PMTs; one sensor per placement
-            defaults=str(DATA / "toy_pmt.json"),          # the PMT values: QE, timing, charge, pulse
+            values=str(DATA / "toy_pmt.json"),            # the PMT values: QE, timing, charge, pulse
             readout={"gate": (-10.0, 60.0)},  # ns after emission
         ),
     ),
@@ -49,4 +47,4 @@ def detector(calibration="nominal"):
 
 def sensor_positions(det):
     """Return each sensor's centre (S, 3) in m, in the order of ``Light.arrivals`` (``Detector.sensor_table``)."""
-    return det.sensor_table()["position"]
+    return det.sensor_table().position

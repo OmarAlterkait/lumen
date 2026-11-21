@@ -1,7 +1,4 @@
-"""The Geant4 traps the exporter avoids: one assertion each, on the written GDML, and the refusals.
-
-The traps are checked on the canonical writer (the toys' source tokens dropped); test_gdml_export checks the tokens.
-"""
+"""The Geant4 traps the exporter avoids: one assertion each, on the written GDML, and the refusals."""
 
 import dataclasses
 import xml.etree.ElementTree as ET
@@ -21,8 +18,8 @@ def written(tmp_path):
     out = {}
     for name, text in {**TOYS, "importer": GDML}.items():
         (tmp_path / f"{name}.gdml").write_text(text)
-        df = dataclasses.replace(importer.read_gdml(tmp_path / f"{name}.gdml"), tokens={})
-        exporter.export(df, tmp_path / f"x_{name}.gdml", scope="full")
+        df = importer.read_gdml(tmp_path / f"{name}.gdml")
+        exporter.export(df, tmp_path / f"x_{name}.gdml")
         t = (tmp_path / f"x_{name}.gdml").read_text()
         out[name] = (df, ET.fromstring(t), t)
     return out
@@ -67,7 +64,7 @@ def test_optical_surfaces_carry_all_four_attributes_by_name(written):
             assert not any(s.get(a).isdigit() for a in ("model", "finish", "type"))  # names, never enum positions
     assert seen
     df, root, _ = written["h_borders"]
-    assert df.surfaces["Sensor"].model == "1"  # stored as the GDML gave it, written as "unified"
+    assert df.surfaces["Sensor"].model == "unified"  # the GDML's "1", named at import
     assert {s.get("name"): s.get("model") for s in root.iter("opticalsurface")}["Sensor"] == "unified"
 
 
@@ -83,8 +80,7 @@ def test_cut_tube_spelling_and_tet_lunit(written):
 def test_single_pass_order(written):
     for name, (df, root, _) in written.items():
         sections = [c.tag for c in root]
-        assert sections == ["define", "materials", "solids", "structure", *(["userinfo"] if df.userinfo else []),
-                            "setup"], name  # fmt: skip
+        assert sections == ["define", "materials", "solids", "structure", "setup"], name
         define = [c.tag for c in root.find("define")]
         assert define == sorted(define, key=lambda t: t != "matrix")  # matrices, then positions
         defined = set()
@@ -120,7 +116,7 @@ def test_physvol_transforms_are_inline_and_only_when_not_plus_zero(written):
         assert pv.find("positionref") is None and pv.find("rotationref") is None
     _, root, _ = written["j_names"]
     pvs = list(root.iter("physvol"))
-    assert [pv.get("name") for pv in pvs] == ["lv0x55aa_PV", "lv0x55aa_PV"]  # Geant4's default names, written
+    assert [pv.get("name") for pv in pvs] == ["lv", "lv"]  # the stored names (Geant4's lv0x55aa_PV, stripped)
     assert pvs[1].get("copynumber") == "7" and all(pv.find("rotation") is None for pv in pvs)
 
 
@@ -142,13 +138,13 @@ def _df(tmp_path, text=GDML):
 
 def _refused(tmp_path, df, match, **kw):
     with pytest.raises(exporter.ExportError, match=match):
-        exporter.export(df, tmp_path / "x.gdml", scope="full", **kw)
+        exporter.export(df, tmp_path / "x.gdml", **kw)
 
 
 def test_a_border_on_a_repeated_physvol_name_is_refused(tmp_path):
     df = _df(tmp_path)
     pls = tuple(dataclasses.replace(p, name="pmt0x10") if p.name == "pmt0x20" else p for p in df.placements)
-    _refused(tmp_path, dataclasses.replace(df, placements=pls), "names 2 placements")
+    _refused(tmp_path, dataclasses.replace(df, placements=pls), "names 2 physical volumes")
 
 
 def test_a_repeated_border_pair_is_refused(tmp_path):
@@ -158,10 +154,14 @@ def test_a_repeated_border_pair_is_refused(tmp_path):
 
 def test_two_skins_on_one_volume_are_refused(tmp_path):
     df = _df(tmp_path)
-    _refused(tmp_path, dataclasses.replace(df, skins=df.skins + (schema.Skin("S2", "Liner", "TankLV"),)), "two skins")
+    _refused(
+        tmp_path,
+        dataclasses.replace(df, skins=df.skins + (schema.Skin("S2", surface="Liner", volume="TankLV"),)),
+        "two skin surfaces",
+    )
 
 
-@pytest.mark.parametrize("field,value,match", [("type", "coated", "coated"), ("type", "7", "coated"),
+@pytest.mark.parametrize("field,value,match", [("type", "coated", "coated"), ("type", "7", "not one Geant4 knows"),
                                                ("model", "foo", "not one Geant4 knows"),
                                                ("finish", "99", "not one Geant4 knows")])  # fmt: skip
 def test_a_surface_geant4_cannot_read_is_refused(tmp_path, field, value, match):
@@ -184,18 +184,16 @@ def test_a_lossy_surface_raises_or_is_omitted(tmp_path):
     s = dataclasses.replace(df.surfaces["Liner"], optics=schema.OpticsModel("acme:brdf"))
     df = dataclasses.replace(df, surfaces={**df.surfaces, "Liner": s})
     _refused(tmp_path, df, "no Geant4 form", on_lossy="error")
-    rep = exporter.export(df, tmp_path / "o.gdml", scope="full", on_lossy="omit")
+    rep = exporter.export(df, tmp_path / "o.gdml", on_lossy="omit")
     text = (tmp_path / "o.gdml").read_text()
-    assert not rep.lossless and rep.g4ref_args[-1] == "--refuse-lossy"
+    assert not rep.lossless
     assert "<opticalsurface" not in text and "<skinsurface" not in text and "<bordersurface" not in text
-    assert exporter.read_export(tmp_path / "o.gdml").detector_file.skins == df.skins
 
 
-def test_an_unsupported_solid_and_an_unknown_target_are_refused(tmp_path):
+def test_an_unsupported_solid_is_refused(tmp_path):
     df = _df(tmp_path)
-    tw = schema.Solid("Tank", "twistedbox", {"phitwist": 0.1, "x": 1.0, "y": 1.0, "z": 1.0})
+    tw = schema.Solid("Tank", "twistedbox", params={"phitwist": 0.1, "x": 1.0, "y": 1.0, "z": 1.0})
     _refused(tmp_path, dataclasses.replace(df, solids={**df.solids, "Tank": tw}), "no GDML spelling")
-    _refused(tmp_path, df, "unknown Geant4 target", target=("9.6",))
 
 
 def test_placements_no_gdml_order_can_hold_are_refused(tmp_path):
@@ -207,7 +205,7 @@ def test_placements_no_gdml_order_can_hold_are_refused(tmp_path):
 
 
 def test_a_name_with_0x_is_warned(tmp_path):
-    rep = exporter.export(_df(tmp_path), tmp_path / "x.gdml", scope="full")
+    rep = exporter.export(_df(tmp_path), tmp_path / "x.gdml")
     assert any("'0x'" in w for w in rep.warnings)
 
 

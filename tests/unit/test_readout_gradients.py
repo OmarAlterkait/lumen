@@ -29,7 +29,7 @@ VARIANTS = {
 
 def _setup(name):
     m = toys.model(**VARIANTS[name])
-    h = toys.hist(m, n=300, n_sensors=3, t0=30.0, spread=2.0, replicas=2)
+    h = toys.hist(m, n=300, n_sensors=3, t0=30.0, spread=2.0)
     p0 = toys.params(m)
     ev = rd.sample(h, p0, seed=2)
     data = rd.Hits.from_list(ev.hits["sensor"], ev.hits["t"], ev.hits["q"], 3)

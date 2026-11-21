@@ -1,10 +1,11 @@
-"""Photons given as arrays (an external list), one row per photon: ``FromArrays(x, d, t, lam, w)``.
+"""Photons given as arrays, one row per photon: ``FromArrays(position, direction, time, lam, weight)``.
 
-x, d (N, 3) m and unit, t (N,) ns, lam (N,) nm, w (N,) the expected photons each stands for (used as given),
-``polarisation`` (N, 2, 3) the Jones vector's real and imaginary parts (None: unpolarised). ``drawn``: the list's
-directions were drawn from a density in solid angle (default False: an external list gives no source-position
-derivative); a derivative that moves them then needs ``dlogp`` (N, 3), that density's log gradient in d (zeros for an
-isotropic list).
+A run traces each row once (``simulate(det, FromArrays(...), samples=None)``): the rows are the photons, so there is
+no separate sample count. Every per-row field has the same rows (refused otherwise); a field given once is every row's.
+
+position, direction (N, 3) m and unit, time (N,) ns, lam (N,) nm, weight (N,) the expected photons each stands for (used
+as given), ``polarisation`` (N, 2, 3) the Jones vector's real and imaginary parts (None: unpolarised). A tangent on
+the positions, directions or wavelengths moves where the light starts: refused (no derivative in this version).
 """
 
 from __future__ import annotations
@@ -14,42 +15,36 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from lumen.sources._base import COUNT, DIRECTION, POSITION, TIME, WAVELENGTH, GradientNotAvailable, Source, rows
-from lumen.transport.state import Emission
+from lumen.params import Param
+from lumen.record import Photons
+from lumen.sources._base import COUNT, DIRECTION, INF, POSITION, TIME, Source, rows
 
 
 @dataclasses.dataclass(frozen=True)
 class FromArrays(Source):
     """Photons from arrays (see the module docstring); emits rows first_id .. first_id + n - 1."""
 
-    x: Any
-    d: Any
-    t: Any
+    position: Any
+    direction: Any
+    time: Any
     lam: Any
-    w: Any
+    weight: Any
     polarisation: Any = None
-    drawn: bool = dataclasses.field(default=False, kw_only=True)
-    dlogp: Any = dataclasses.field(default=None, kw_only=True)
-    FIELDS = {"x": POSITION, "d": DIRECTION, "t": TIME, "lam": WAVELENGTH, "w": COUNT, "polarisation": DIRECTION,
-              "dlogp": DIRECTION}  # fmt: skip
-    MOVING = ("x", "d", "lam")
+    # lam moves the photons it is given (a tangent on it moves them, as on position and direction); the polarisation
+    # is carried, never moved, and has no range
+    FIELDS = {"position": POSITION, "direction": DIRECTION, "time": TIME,
+              "lam": Param("nm", (0.0, INF), method="moving_paths"), "weight": COUNT,
+              "polarisation": Param("")}  # fmt: skip
 
-    @property
-    def drawn_direction(self) -> bool:
-        """Return whether the list's directions were drawn from a density (``drawn``)."""
-        return self.drawn
-
-    def draw(self, v, key, n, first_id, samples):
+    def draw(self, v, ref, key, n, first_id, samples):
         """Return the rows (``key`` and ``samples`` are not used)."""
-        pol = v.get("polarisation", jnp.zeros((v["x"].shape[0], 2, 3), jnp.float32))
-        return Emission(*(rows(v[k], n, first_id, r) for k, r in (("x", 1), ("d", 1), ("t", 0), ("lam", 0), ("w", 0))),
-                        rows(pol, n, first_id, 2), jnp.full(n, self.drawn),
-                        rows(v["dlogp"], n, first_id, 1) if "dlogp" in v else None)  # fmt: skip
+        pol = v.get("polarisation", jnp.zeros((v["position"].shape[0], 2, 3), jnp.float32))
+        cols = {"x": ("position", 1), "d": ("direction", 1), "t": ("time", 0), "lam": ("lam", 0), "w": ("weight", 0)}
+        return Photons(**{f: rows(v[k], n, first_id, r) for f, (k, r) in cols.items()}, pol=rows(pol, n, first_id, 2))
 
-    def emit(self, params, key, n: int, first_id=0, samples=None, *, moving=False):
-        """Return the rows; a derivative that moves drawn rows needs their density's gradient (``dlogp``)."""
-        if moving and self.dlogp is None:
-            raise GradientNotAvailable("FromArrays(drawn=True) moved without its direction density's gradient: pass "
-                                       "dlogp=jnp.zeros((N, 3)) when the directions are isotropic, else grad_d log p "
-                                       "of their density (or write a source function, lumen.source)")  # fmt: skip
-        return super().emit(params, key, n, first_id, samples, moving=moving)
+    ROWS = {"position": 1, "direction": 1, "time": 0, "lam": 0, "weight": 0, "polarisation": 2}
+    PHOTON_ROWS = REQUIRES_ROWS = True  # a row is one photon, traced once: the rows are the run (no sample count)
+
+    def _prepared(self, params, reference=None):
+        """Return the prepared rows (drawn at no reference)."""
+        return super()._prepared(params)

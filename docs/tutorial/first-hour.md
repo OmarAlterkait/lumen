@@ -1,9 +1,9 @@
 # The first hour
 
 This tutorial takes you through lumen on the toy detector that ships with it: you simulate a light source, read what
-the numbers mean, draw a hit map, take derivatives, fit a source position and a set of PMT efficiencies, and look at a
-waveform. Every code block comes from `examples/first_hour.py`, which runs as it stands; the outputs shown are from
-lumen 0.1.1 on an NVIDIA A100. Your numbers can differ in the last digits on another GPU model.
+the numbers mean, draw a hit map, take derivatives, fit a set of PMT efficiencies, and look at a
+waveform. The code follows `examples/first_hour.py`, which runs as it stands; the outputs shown are from
+lumen 0.1.1 on an NVIDIA A100, sections 2 and 4's optical value from lumen 0.2 on an NVIDIA RTX 2080 Ti. Your numbers can differ in the last digits on another GPU model.
 
 Before you start, install lumen (see [installing lumen](../howto/install.md)) and choose a directory for your calibrations:
 
@@ -28,26 +28,23 @@ that. It lives in `examples/example_tank.py`:
 RECIPE = lumen.Recipe(
     name="example_tank",
     detector_volume="TankLV",                 # the water; light leaving it is absorbed
-    wavelength_range=(300.0, 600.0),          # nm: the optics tables are read over this range
     groups=(
         SensorGroup(
             "pmt",
             rule="border_into",               # counted across the CathodeSurface border into each PMT volume
-            surface="lumen:geant4", model="lumen:pmt",
             lv="PMT",                         # the logical volume of the 8 PMTs; one sensor per placement
-            defaults=str(DATA / "toy_pmt.json"),          # the PMT values: QE, timing, charge, pulse
+            values=str(DATA / "toy_pmt.json"),            # the PMT values: QE, timing, charge, pulse
             readout={"gate": (-10.0, 60.0)},  # ns after emission
         ),
     ),
 )
 ```
 
-- `surface="lumen:geant4"` says how the PMT's surface behaves while photons are tracked: as stock Geant4 reads the
-  GDML's `CathodeSurface`.
-- `model="lumen:pmt"` is the **sensor model** applied after tracking: quantum efficiency, time spread, charge, pulse
-  shape and front end.
-- `defaults` names its values. `toy_pmt.json` is an illustrative set written for this tutorial, not a real PMT.
-  lumen also ships value sets transcribed from WCSim and sbndcode, such as `lumen:wcte_r14374@2`.
+- While photons are tracked, the PMT's surface behaves as stock Geant4 reads the GDML's `CathodeSurface`.
+- `values` names the PMT's **value set**, read by the sensor model after tracking: quantum efficiency, time spread,
+  charge, pulse shape and front end. `toy_pmt.json` is an illustrative set written for this tutorial, not a real PMT.
+  The experiments' packages ship value sets transcribed from WCSim and sbndcode, such as lumen-wc's
+  `lumen_wc:wcte_r14374`.
 
 `detector()` converts the GDML once into a **detector file** (`lumen-examples/example_tank-<digest>.lumen/`) and
 loads it:
@@ -55,7 +52,7 @@ loads it:
 ```python
 det = detector()
 print(det)
-for i, path in enumerate(det.sensors["ids"]):
+for i, path in enumerate(det.sensor_table().name):
     print(f"  sensor {i}: {path}")
 ```
 ```
@@ -85,7 +82,7 @@ for key in ("materials/Water/ABSLENGTH", "materials/Water/RINDEX", "sensors/pmt/
   materials/Water/ABSLENGTH      unit m    range (0.0, inf)  method reweight  from: detector file
   materials/Water/RINDEX         unit -    range (1.0, inf)  method moving_paths+reweight  from: detector file
   sensors/pmt/efficiency         unit -    range (0.0, 1.0)  method after_tracking  from: sensor model defaults
-  sensors/pmt/tts/sigma          unit ns   range (0.5, 3.0)  method after_tracking  from: sensor model defaults
+  sensors/pmt/tts/sigma          unit ns   range (0.65, 2.6)  method after_tracking  from: sensor model defaults
 ```
 
 `info` gives each key's unit, allowed range and **gradient method**: how lumen differentiates it. `explain` says where
@@ -103,21 +100,21 @@ pe = lumen.readout.pe(light, p0)
 ```
 ```
  id  arrivals   error    mean time (ns)   expected PE
-  0    364.38   17.72        2.617           89.3
-  1    903.11   31.21        1.699          221.3
-  2    502.45   17.90        2.204          123.1
-  3    550.74   18.07        2.202          134.9
-  4    526.59   15.65        2.205          129.0
-  5    526.60   13.17        2.201          129.0
-  6    306.04   22.27        2.850           75.0
-  7    325.60   13.16        2.844           79.8
-health (photons): {'lost': 0.0, 'abandoned': 0.0, 'escaped': 0.0, 'retired': 0.0, 'truncated': 0.0, 'n_truncated': 0.0, 'stuck': 0.0, 'overflow': 0.0}
+  0    394.54   17.22        2.613           96.7
+  1    913.75   26.23        1.699          223.9
+  2    547.76   20.30        2.204          134.2
+  3    501.74   19.43        2.202          122.9
+  4    515.31   19.69        2.208          126.3
+  5    528.14   19.94        2.204          129.4
+  6    320.36   15.51        2.851           78.5
+  7    340.68   16.03        2.844           83.5
+health (photons): {'lost': 0.0, 'abandoned': 0.0, 'escaped': 0.0, 'truncated': 0.0, 'records': 5921.0, 'records_dropped': 0.0, 'records_mismatch': 0.0, 'nonfinite': 0.0, 'invalid': 0.0}
 ```
 
 | Output | Meaning | Unit |
 |---|---|---|
 | `light.arrivals` (8,) | expected photons the counting rule counts at each PMT, before quantum efficiency | photons |
-| `light.arrivals_error` (8,) | the Monte Carlo standard error, from the spread of 16 independent replicas | photons |
+| `light.arrivals_error` (8,) | the Monte Carlo standard error, from the spread of the photons themselves (each PMT's per-photon second moment) | photons |
 | `light.mean_arrival_time` (8,) | the arrivals-weighted mean time of arrival after emission, before the PMT's time spread | ns |
 | `lumen.readout.pe(light, p0)` (8,) | expected photoelectrons: arrivals × QE × efficiency (× collection efficiency, if the value set has one) | photoelectrons |
 | `light.health` | photons that ended for a reason other than absorption or detection | photons |
@@ -134,7 +131,7 @@ Read the table as physics:
   shrinks the errors by √2.
 - One call simulates one event. For several sources, call `simulate` in a loop: the photon loop compiles once per
   detector, and later calls reuse it.
-- Health: nothing was lost, abandoned, truncated or retired here. Photons absorbed in the water or on the black
+- Health: nothing was lost, abandoned or truncated here. Photons absorbed in the water or on the black
   walls are not part of health; that is ordinary physics. Non-zero health on your own detector points at the
   geometry; see the [errors](../reference/errors.md) page.
 
@@ -148,17 +145,25 @@ target = 0.002
 print(f"PMT 1: relative error {r0:.4f} at 2**16 samples; for {target} use about {int(2**16 * (r0 / target) ** 2):,}")
 ```
 ```
-PMT 1: relative error 0.0729 at 2**16 samples; for 0.002 use about 86,969,726
+PMT 1: relative error 0.0607 at 2**16 samples; for 0.002 use about 60,432,402
 ```
 
-The error itself comes from 16 replicas, so it is known to about 18 %; use `replicas=64` for about 9 %. Keep `seed`
-fixed inside anything you differentiate or fit, so that every call uses the same random numbers.
+The error comes from the photons' own spread: for each PMT, the sum over photons of the square of what each photon
+added to it (`lumen.readout.grid.moment_error`), which estimates the variance of independent photons without bias.
+Keep `seed` fixed inside anything you differentiate or fit, so that every call uses the same random numbers.
+
+**Fast and exact runs.** `simulate` runs `speed="fast"` by default: in a medium that only scatters (Rayleigh), a
+photon walks its own scatterings inside a ball the geometry proves empty, without asking the geometry at each one. It
+is the same estimator in law with other random numbers, not an approximation. `speed="exact"` turns it off, bit for
+bit the plain loop. A run the fast walk cannot serve (a derivative on the source position, a probe diagnostic) runs exact by
+itself; `light.provenance` records which level ran (`("speed", "fast")`, or `"exact (<why>)"`).
 
 ## 3. A hit map
 
-lumen has no plotting module. `det.sensor_table()` gives each sensor's centre, in the order of `light.arrivals`
-(`examples/example_tank.py` wraps it as `sensor_positions(det)`), and the script draws the expected PE on the unfolded
-tank with matplotlib:
+`lumen.tools.plot` draws sensor maps of a whole detector (`display`, `event`; the `plot` extra installs matplotlib).
+For this cube the script draws its own: `det.sensor_table()` gives each sensor's centre, in the order of
+`light.arrivals` (`examples/example_tank.py` wraps it as `sensor_positions(det)`), and the expected PE goes on the
+unfolded tank:
 
 ```python
 xyz = sensor_positions(det)          # (8, 3) m, in sensor order
@@ -170,76 +175,49 @@ plt.scatter(uv[:, 0], uv[:, 1], c=np.asarray(pe), s=250)
 
 ## 4. Derivatives and a fit
 
-### The source position
+### An optical value
 
-lumen differentiates with respect to where the light starts by moving the light paths with the source while their
-random numbers stay fixed (the **moving-source method**). It costs more than a plain run, so you ask for it: `wrt=`
-lists what a call differentiates.
-
-```python
-def expected_pe_at(z, seed=0):
-    s = lumen.sources.Point(position=jnp.stack([0.0, 0.0, z]), lam=400.0, n_photons=2e5)
-    light = lumen.simulate(det, s, samples=2**18, seed=seed, wrt=["source/position"])
-    return lumen.readout.pe(light, p0)
-
-mu, dmu = jax.jvp(expected_pe_at, (jnp.float32(0.1),), (jnp.float32(1.0),))     # value and d/dz
-```
-```
- id   PE     dPE/dz (1/m)
-  0     89.3       -313.4
-  1    221.3       1186.5
-  2    123.1       -112.4
-  3    134.9        -56.0
-  4    129.0       -117.8
-  5    129.0       -120.4
-  6     75.0       -225.0
-  7     79.8       -223.5
-```
-
-Moving the source up (towards PMT 1) brightens PMT 1 and dims the others. Without `wrt=["source/position"]` the
-derivative is not taken; with a beam (`Point(direction=...)`) it raises `GradientNotAvailable`, because the photons'
-directions are not drawn from a density.
-
-Check a derivative against a finite difference before you rely on it. The script compares them on the same random
-numbers, for 8 seeds (the errors are the spread over the seeds):
-
-```
-PMT 0: derivative   -324.6 +-   4.7   finite difference   -342.8 +-  11.4   (1/m, 8 seeds)
-PMT 1: derivative   1199.4 +-  12.2   finite difference   1141.4 +-  28.0   (1/m, 8 seeds)
-```
-
-Here the derivative and the finite difference agree within two standard errors (1.5 for PMT 0, 1.9 for PMT 1): this
-comparison does not resolve a difference below about 5 %. The moving-source method has known limits, listed in
-[known limits](../explanation/known-limits.md#the-moving-source-method-derivatives-in-the-source-position).
-
-### A fit: the source height
-
-Simulate one event with the source at z = 0.1 m, then find z from the PE alone, by Fisher scoring on the Poisson
-likelihood. Each step uses the value and the derivative from one `jax.jvp` call:
+Every value in the detector file is a parameter, and `jax.jvp` / `jax.grad` over it give its derivative. Absorption
+lengths, scattering lengths and reflectivities have the gradient method `reweight`: photons are drawn at reference
+values and weighted by live / reference probabilities. Take them through `simulate` like any other: trace the value
+(here a factor on it): whatever carries a tangent is differentiated, with no declaration:
 
 ```python
-truth = lumen.sources.Point(position=(0.0, 0.0, 0.1), lam=400.0, n_photons=2e5)
-event = lumen.readout.sample(lumen.simulate(det, truth, samples=2**20, seed=7), p0, seed=1)
-n_obs = jnp.asarray(event.pe, jnp.float32)
-
-z = jnp.float32(0.0)
-for it in range(5):
-    mu, dmu = jax.jvp(expected_pe_at, (z,), (jnp.float32(1.0),))
-    z = z + jnp.sum((n_obs - mu) * dmu / mu) / jnp.sum(dmu**2 / mu)
-sigma = 1.0 / jnp.sqrt(jnp.sum(dmu**2 / mu))
+KEY_A = "materials/Water/ABSLENGTH"
+def total_pe(s, seed=0, reference=None):
+    p = p0.scale(KEY_A, s)                                 # every knot of the table times s
+    light = lumen.simulate(det, src, p, samples=2**18, seed=seed, reference=reference)
+    return lumen.readout.pe(light, p).sum()
+value, slope = jax.jvp(total_pe, (1.0,), (1.0,))           # d(total PE) / d(scale), one run
 ```
 ```
-observed PE: [98, 234, 124, 123, 132, 135, 70, 74]
-  iteration 0: z = +0.11595 m
-  iteration 1: z = +0.11032 m
-  iteration 2: z = +0.10970 m
-  iteration 3: z = +0.10929 m
-  iteration 4: z = +0.10888 m
-fitted z = +0.1089 +- 0.0102 m (truth +0.1000)
+total PE 981.24; d/d(ABSLENGTH scale): 8.8562
 ```
 
-`lumen.readout.sample` draws one random event (PE counts, hits and waveforms) from the expected light. It is not
-differentiable; the expectation is. The fit uses its own seed (0), not the one that made the data (7).
+Check a derivative against a finite difference before you rely on it. `reference=p0` makes every random choice at
+the nominal values while the light is computed at the values given, so at a fixed seed the light is a smooth function
+of the value and a central difference converges to the derivative of that seed:
+
+```python
+fd = (total_pe(1 + h, seed, reference=p0) - total_pe(1 - h, seed, reference=p0)) / (2 * h)
+```
+```
+seed 0: derivative 8.8562; finite difference at h = 1/16 8.8911 (+3.9e-03), at h = 1/64 8.8574 (+1.4e-04)
+seed 1: derivative 8.9260; finite difference at h = 1/16 8.9609 (+3.9e-03), at h = 1/64 8.9297 (+4.1e-04)
+seed 2: derivative 8.7609; finite difference at h = 1/16 8.7949 (+3.9e-03), at h = 1/64 8.7637 (+3.2e-04)
+seed 3: derivative 8.8797; finite difference at h = 1/16 8.9141 (+3.9e-03), at h = 1/64 8.8809 (+1.3e-04)
+```
+
+At h = 1/16 every seed's difference is 3.9e-3 above its derivative: the curvature of the light in the absorption
+length (a central difference is off by h²/6 times the third derivative). At h = 1/64 the gap shrinks about tenfold,
+to the float32 resolution of the totals (about 3e-4 of the slope here); a smaller step measures rounding, not the
+derivative. The derivative differs from seed to seed by about 1 %: that is the Monte Carlo error of the slope.
+
+A key at an edge of its range (a reflectivity of exactly 0 or 1) gets its one-sided derivative. The refractive index
+is calibrated by value only: its derivative raises `GradientNotAvailable`.
+
+The source position has no derivative in this version: a tangent on `source/position` is refused ([known
+limits](../explanation/known-limits.md#derivatives-in-the-source-position)). The script shows the refusal.
 
 ### PMT values: derivatives after tracking, and a calibration
 
@@ -275,7 +253,7 @@ mu1 = n_events * np.asarray(lumen.readout.pe(light, p0), np.float64)        # at
 eff = np.clip(np.asarray(data) / mu1, 0.0, 1.0)
 ```
 ```
-dNLL/d efficiency at 1: [7.5, 394.2, -45.0, 296.6, 110.3, 244.3, 194.6, 28.5]
+dNLL/d efficiency at 1: [8.0, 394.6, -44.8, 296.9, 110.5, 244.5, 194.8, 28.6]
 fitted efficiency: [0.996, 0.911, 1.0, 0.89, 0.957, 0.905, 0.87, 0.982]
 its error:         [0.024, 0.014, 0.02, 0.018, 0.019, 0.019, 0.024, 0.025]
 true efficiency:   [0.97, 0.92, 1.0, 0.88, 0.95, 0.9, 0.85, 0.99]
@@ -296,30 +274,6 @@ It is written to the first directory on `LUMEN_DETECTORS` (or the `directory` yo
 differ from the detector's and the detector file's digest: loading it on another detector file raises
 `CalibrationMismatch`.
 
-### Optical values
-
-Absorption lengths, scattering lengths and reflectivities have the gradient method `reweight`: photons are drawn at
-reference values and weighted by live / reference probabilities, and the
-[validation report](../validation/report.md) checks these derivatives against finite differences on the five public
-detectors. Take them through `simulate` like any other: trace the value (here a factor on it) and name the key in
-`wrt`:
-
-```python
-KEY_A = "materials/Water/ABSLENGTH"
-def total_pe(s):
-    p = p0.scale(KEY_A, s)                                 # every knot of the table times s
-    return lumen.readout.pe(lumen.simulate(det, src, p, samples=2**18, seed=0, wrt=[KEY_A]), p).sum()
-value, slope = jax.jvp(total_pe, (1.0,), (1.0,))           # d(total PE) / d(scale), one run
-```
-```
-total PE 981.35; d/d(ABSLENGTH scale): 8.8590 (finite difference 8.8931)
-```
-
-The finite difference (scale 1 ± 1/16, the same photons on both sides) agrees with the derivative to 0.4 %.
-
-A key at an edge of its range (a reflectivity of exactly 0 or 1) gets its one-sided derivative. The refractive index
-is calibrated by value only: its derivative raises `GradientNotAvailable` in 0.1.
-
 ## 5. A waveform
 
 `toy_pmt` has a waveform readout: a pulse shape, a gain and a front end sampling every 2 ns.
@@ -331,20 +285,20 @@ ev = lumen.readout.sample(light, p0, seed=1)        # one event: ev.pe, ev.hits,
 ```
 ```
 mean (8, 35) unit ADC t0 -10.0 ns, dt 2.0 ns
-PMT 1: baseline 100.00, peak 2151.6 ADC at 12.0 ns, standard deviation there 145.25
-one event: PE [98, 235, 118, 129, 126, 133, 72, 75] ; waveforms (8, 35) ; hits 986
+PMT 1: baseline 100.00, peak 2151.7 ADC at 12.0 ns, standard deviation there 145.26
+one event: PE [98, 237, 117, 130, 121, 133, 70, 76] ; waveforms (8, 35) ; hits 982
 ```
 
 `wf.mean` is the expected baseline plus pulses, per PMT and sample; `wf.variance` is the shot noise of the
 photoelectrons plus the electronic noise. The number of samples follows from the gate (−10 to 60 ns) and the
-sampling step. `lumen.readout.expected_hits(light, p0)` gives the per-PMT hit probability, charge distribution and
-first-hit time terms, and `lumen.readout.hits_nll` the likelihood of measured hits.
+sampling step. `lumen.readout.expected_hits(light, p0)` gives the per-PMT hit probability and what the hit
+likelihood needs, and `lumen.readout.hits_nll` the likelihood of every measured hit.
 
 ![The expected waveform of PMT 1 with one simulated event](first-hour-waveform.png)
 
 ## What next
 
-- [Your own detector](../howto/your-own-detector.md): convert your GDML, read lumen's repair warnings, calibrate,
+- [Your own detector](../howto/your-own-detector.md): convert your GDML, read what lumen refuses and repair it, calibrate,
   export and compare with Geant4.
 - [Errors](../reference/errors.md): what each error means and how to fix it.
 - [Known limits](../explanation/known-limits.md) and the [validation report](../validation/report.md): what lumen

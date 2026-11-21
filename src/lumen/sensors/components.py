@@ -1,4 +1,4 @@
-"""The PMT's after-tracking components: time spread, delay, time walk, charge, threshold, pulse.
+"""A sensor's after-tracking components: time spread, delay, time walk, charge, threshold, pulse.
 
 Each component is a frozen dataclass holding only structure (its form, knot positions, table lengths); every number
 it uses is a value passed in at call time, a dict ``p`` of the component's fields (``fields()``: name -> unit, shape),
@@ -7,11 +7,10 @@ so a value never recompiles and always carries its derivative. Times are in ns, 
 Time spread (TTS), per photoelectron:
   ``gaussian(sigma)``; ``emg(sigma, tau, shift)``: a Gaussian convolved with an exponential tail, shifted;
   ``table(pdf)``: a measured histogram on fixed bins, uniform within each bin.
-  ``cdf(p, x, profile)`` / ``sf(p, x, profile)``: the distribution of the arrival-to-photoelectron delay, convolved
-  with a scintillation emission profile ``(fractions, decay times, rise times)`` (``None``: prompt light); only the
-  Gaussian form combines with a profile in closed form, the others refuse one. ``support(ranges)`` is the static
-  time range the kernel can reach for any value inside its declared ranges.
-Delay (``delay``): a fixed-position delay table (a wavelength shifter's emission time), probabilities as values.
+  ``cdf(p, x)`` / ``sf(p, x)``: the distribution of the arrival-to-photoelectron delay. ``support(ranges)`` is the
+  static time range the kernel can reach for any value inside its declared ranges.
+Delay (``delay``): a fixed-position delay table (a wavelength shifter's emission time), probabilities as values, one
+  per cell of its own axes (a delay that depends on features of the deposit: wavelength bands, re-emission count).
 Time walk (``time_walk``): a per-hit shift and extra Gaussian spread against the hit's charge, linear in fixed
   charge knots and constant beyond them.
 Charge (SPE): ``gauss_exp(sigma, fraction, tau)``: a Gaussian main peak plus an exponential under-amplified part,
@@ -22,11 +21,15 @@ Threshold: ``table(accept)`` acceptance against charge knots; ``poly(coefficient
 Pulse (the single-photoelectron waveform, unit peak): ``bigauss(t_peak, sigma_rise, sigma_fall)``,
   ``exp2(t_start, tau_rise, tau_fall)``, ``table(shape)`` samples on a fixed time step, linear between them.
 
+A value set's record of a component names its ``form`` and gives its structure and its values; ``Form.from_spec``
+builds the component from the record's structure keys (``STATIC``), the rest are its values (``fields()``).
+
 Notation: x a time lag (ns), q a charge (pe), F a CDF, S a survival function.
 """
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
 from typing import ClassVar
 
@@ -34,10 +37,27 @@ import jax.numpy as jnp
 import numpy as np
 from jax.scipy.special import log_ndtr, ndtr
 
+from lumen._core.domains import FRACTION, POSITIVE
+from lumen._core.safe import clip01
+
+
+class Form:
+    """A component form: built from a value-set record by ``from_spec``, its structure the record's ``STATIC`` keys
+    (each a list of numbers, the form's fields in order); every other key of the record is a value."""  # noqa: D205, D209
+
+    STATIC: ClassVar[tuple] = ()
+    RANGES: ClassVar[dict] = {}  # {field: its admissible range} where a field has one (others: any finite value)
+
+    @classmethod
+    def from_spec(cls, spec: dict):
+        """Return the component of a value-set record (its ``STATIC`` keys as tuples of floats)."""
+        return cls(*(tuple(float(x) for x in spec[k]) for k in cls.STATIC))
+
+
 SPREAD = 8.0  # Gaussian widths a time kernel reaches: below 1e-15 of its mass lies beyond
 
 
-# ------------------------------------------------------------------------------- scintillation profile (exact)
+# ------------------------------------------------------------------------- emission components (exact)
 def _tail(x, s, tau):
     """Return tau exp(-x/tau + s^2/2tau^2) Phi(x/s - s/tau), 0 for tau = 0 (formed with log_ndtr, no overflow)."""
     on = tau > 0.0
@@ -64,51 +84,32 @@ def component_sf(x, tau_d, tau_r, sigma):
     return jnp.where(tau_d > 0.0, phic + (_tail(x, s, tau_d) - _tail(x, s, tau_r)) / den, phic)
 
 
-PROMPT = ((1.0,), (0.0,), (0.0,))  # an emission profile of prompt light
-
-
-def profile_cdf(x, profile, sigma):
-    """Return the CDF of a profile mixture ``(fractions, tau_d, tau_r)`` convolved with a Gaussian of width sigma."""
-    f, td, tr = (jnp.asarray(a, jnp.float32) for a in profile)
-    return jnp.sum(f * component_cdf(x[..., None], td, tr, jnp.asarray(sigma)[..., None]), -1)
-
-
-def profile_sf(x, profile, sigma):
-    """Return 1 - profile_cdf, stable in the right tail."""
-    f, td, tr = (jnp.asarray(a, jnp.float32) for a in profile)
-    return jnp.sum(f * component_sf(x[..., None], td, tr, jnp.asarray(sigma)[..., None]), -1)
-
-
 def _interp_cdf(x, edges, pdf):
     """Return the CDF at x of a histogram (masses ``pdf`` on fixed ``edges``, uniform within bins), normalised."""
     c = jnp.concatenate([jnp.zeros(1, pdf.dtype), jnp.cumsum(pdf)])
     return jnp.interp(x, jnp.asarray(edges, jnp.float32), c / c[-1])
 
 
-def _refuse_profile(name, profile):
-    if profile is not None:
-        raise ValueError(f"time spread {name!r}: a scintillation emission profile combines in closed form only with "
-                         "the 'gaussian' time spread; use form 'gaussian' for scintillation light")  # fmt: skip
-
-
 # ------------------------------------------------------------------------------------------------ time spread
 @dataclass(frozen=True)
-class GaussianTTS:
+class GaussianTTS(Form):
     """A Gaussian transit-time spread of width ``sigma`` (ns)."""
 
     form: ClassVar[str] = "gaussian"
+
+    RANGES: ClassVar[dict] = {"sigma": POSITIVE}
 
     def fields(self):
         """Return the field units and shapes."""
         return {"sigma": ("ns", ())}
 
-    def cdf(self, p, x, profile=None):
-        """Return the delay CDF at x (with the emission profile, when given)."""
-        return profile_cdf(x, profile or PROMPT, p["sigma"])
+    def cdf(self, p, x):
+        """Return the delay CDF at x."""
+        return component_cdf(x, 0.0, 0.0, p["sigma"])
 
-    def sf(self, p, x, profile=None):
+    def sf(self, p, x):
         """Return the delay survival function at x."""
-        return profile_sf(x, profile or PROMPT, p["sigma"])
+        return component_sf(x, 0.0, 0.0, p["sigma"])
 
     def widened(self, p, extra):
         """Return the values with an extra Gaussian spread ``extra`` (ns) added in quadrature."""
@@ -138,18 +139,18 @@ class EMGTTS(GaussianTTS):
 
     form: ClassVar[str] = "emg"
 
+    RANGES: ClassVar[dict] = {"sigma": POSITIVE, "tau": POSITIVE}
+
     def fields(self):
         """Return the field units and shapes."""
         return {"sigma": ("ns", ()), "tau": ("ns", ()), "shift": ("ns", ())}
 
-    def cdf(self, p, x, profile=None):
+    def cdf(self, p, x):
         """Return the delay CDF at x."""
-        _refuse_profile(self.form, profile)
         return component_cdf(x - p["shift"], p["tau"], 0.0, p["sigma"])
 
-    def sf(self, p, x, profile=None):
+    def sf(self, p, x):
         """Return the delay survival function at x."""
-        _refuse_profile(self.form, profile)
         return component_sf(x - p["shift"], p["tau"], 0.0, p["sigma"])
 
     def moments(self, p):
@@ -167,24 +168,26 @@ class EMGTTS(GaussianTTS):
 
 
 @dataclass(frozen=True)
-class TableTTS:
+class TableTTS(Form):
     """A measured time spread: masses ``pdf`` on the fixed bin edges ``edges`` (ns), uniform within bins."""
 
     edges: tuple
     form: ClassVar[str] = "table"
+    STATIC: ClassVar[tuple] = ("edges_ns",)
+
+    RANGES: ClassVar[dict] = {"pdf": POSITIVE}
 
     def fields(self):
         """Return the field units and shapes."""
         return {"pdf": ("", (len(self.edges) - 1,))}
 
-    def cdf(self, p, x, profile=None):
+    def cdf(self, p, x):
         """Return the delay CDF at x."""
-        _refuse_profile(self.form, profile)
         return _interp_cdf(x, self.edges, p["pdf"])
 
-    def sf(self, p, x, profile=None):
+    def sf(self, p, x):
         """Return the delay survival function at x."""
-        return 1.0 - self.cdf(p, x, profile)
+        return 1.0 - self.cdf(p, x)
 
     def widened(self, p, extra):
         """Return the values unchanged: a table's shape is not widened (the time walk's spread is not applied)."""
@@ -211,57 +214,114 @@ class TableTTS:
 
 
 def _table_sample(rng, edges, pdf, n):
-    pdf = np.clip(np.asarray(pdf, np.float64), 0.0, None)
+    pdf = np.asarray(pdf, np.float64)  # never negative (refused at load: value_sets.DEFAULT_RANGES)
     i = rng.choice(len(pdf), size=n, p=pdf / pdf.sum())
     e = np.asarray(edges, np.float64)
     return e[i] + rng.random(n) * (e[i + 1] - e[i])
 
 
+# the histogram's cubic (four-node Lagrange) split weights w_o(g), o = -1 .. 2, as polynomials in g (highest first),
+# and their antiderivatives: a uniform bin is integrated against them exactly
+_CUBIC = {-1: np.poly1d([-1.0, 3.0, -2.0, 0.0]) / 6.0, 0: np.poly1d([1.0, -2.0, -1.0, 2.0]) / 2.0,
+          1: np.poly1d([-1.0, 1.0, 2.0, 0.0]) / 2.0, 2: np.poly1d([1.0, 0.0, -1.0, 0.0]) / 6.0}  # fmt: skip
+_CUBIC_INT = {o: w.integ() for o, w in _CUBIC.items()}
+
+
+@functools.lru_cache(maxsize=64)
+def delay_taps(edges: tuple, dt: float) -> tuple:
+    """Return the static taps of a delay table on nodes of spacing dt (ns): (first tap offset, number of taps, rows,
+    columns, weights) with taps[k] = sum over (rows == k) of weights * pdf[columns] (numpy, sparse).
+
+    The weight of bin b on tap k is the mass a delay uniform on bin b puts on node off0 + k: (1 / width) times the
+    integral over the bin of the histogram's cubic split weight of that node; a zero-width bin is a point mass (the
+    split weights at its point). Built once per (edges, dt), with the grid (``SensorValuesModel.grid``).
+    """  # noqa: D205
+    e = np.asarray(edges, np.float64) / dt
+    lo, hi = int(np.floor(e.min())) - 1, int(np.floor(e.max())) + 2
+    acc: dict = {}
+    for b in range(len(e) - 1):
+        xa, xb = e[b], e[b + 1]
+        if xb == xa:  # a point mass at xa
+            j = int(np.floor(xa))
+            for o, wi in _CUBIC.items():
+                acc[(j + o - lo, b)] = acc.get((j + o - lo, b), 0.0) + wi(xa - j)
+            continue
+        for j in range(int(np.floor(xa)), int(np.ceil(xb))):
+            g0, g1 = max(xa, j) - j, min(xb, j + 1) - j
+            if g1 <= g0:
+                continue
+            for o, wi in _CUBIC_INT.items():
+                acc[(j + o - lo, b)] = acc.get((j + o - lo, b), 0.0) + (wi(g1) - wi(g0)) / (xb - xa)
+    keys = sorted(acc)
+    rows = np.array([k[0] for k in keys], np.int32)
+    cols = np.array([k[1] for k in keys], np.int32)
+    return lo, hi - lo + 1, rows, cols, np.array([acc[k] for k in keys], np.float64)
+
+
+@functools.lru_cache(maxsize=64)
+def _device_taps(edges: tuple, dt: float) -> tuple:
+    """Return (first tap offset, M) with taps = M @ pdf, M the dense (taps, bins) matrix of ``delay_taps`` on the
+    device in float32 (moved once; a constant under a trace)."""  # noqa: D205, D209
+    import jax
+
+    off0, ntap, rows, cols, wts = delay_taps(edges, dt)
+    m = np.zeros((ntap, len(edges) - 1))
+    m[rows, cols] = wts
+    with jax.ensure_compile_time_eval():
+        return off0, jnp.asarray(m, jnp.float32)
+
+
 @dataclass(frozen=True)
 class DelayTable:
-    """A fixed delay table: probabilities ``pdf`` (values) over bins of fixed ``edges`` (ns, >= 0).
+    """A delay table: probabilities ``pdf`` (values) over bins of fixed ``edges`` (ns, >= 0, non-decreasing; a
+    zero-width bin is a point mass), uniform within bins; one table per cell of its ``axes`` (features of the deposit,
+    ``lumen.readout.grid.Axis``: e.g. wavelength bands or the re-emission count), ``pdf`` of shape (*axes, bins).
 
-    Applied to the time histogram's node masses by re-splitting each bin's sub-points over the nodes with the
-    histogram's own cubic weights (exact to the node grid's accuracy).
-    """
+    Applied to the time histogram's node masses, each delay cell's slice through its own table: each bin's density
+    is integrated exactly against the histogram's own cubic split weights (no sub-sampling of the bin), so the delay
+    is as exact as the node grid. Its taps matrix is static (``delay_taps``, built once with the grid and moved to the
+    device once); at run time one matrix product and one FFT per cell.
+    """  # noqa: D205
 
     edges: tuple
-    sub: int = 8  # sub-points per bin
+    axes: tuple = ()
     form: ClassVar[str] = "table"
+
+    RANGES: ClassVar[dict] = {"pdf": POSITIVE}
 
     def fields(self):
         """Return the field units and shapes."""
-        return {"pdf": ("", (len(self.edges) - 1,))}
+        return {"pdf": ("", (*(a.size for a in self.axes), len(self.edges) - 1))}
 
-    def taps_matrix(self, dt):
-        """Return (first tap offset, M) with taps = M @ pdf (numpy, static) for a node spacing dt (ns)."""
-        e = np.asarray(self.edges, np.float64)
-        u = e[:-1, None] + (np.arange(self.sub) + 0.5)[None, :] / self.sub * np.diff(e)[:, None]
-        x = u / dt
-        j = np.floor(x).astype(int)
-        g = x - j
-        w = [(-1, -g * (g - 1) * (g - 2) / 6), (0, (g + 1) * (g - 1) * (g - 2) / 2),
-             (1, -(g + 1) * g * (g - 2) / 2), (2, (g + 1) * g * (g - 1) / 6)]  # fmt: skip
-        off0 = int(j.min()) - 1
-        m = np.zeros((int(j.max()) + 2 - off0 + 1, len(e) - 1))
-        for o, wo in w:
-            for b in range(len(e) - 1):
-                np.add.at(m[:, b], j[b] + o - off0, wo[b] / self.sub)
-        return off0, m
+    def taps(self, dt):
+        """Return the static taps on nodes of spacing dt (``delay_taps``)."""
+        return delay_taps(tuple(float(x) for x in self.edges), float(dt))
+
+    def _weights(self, p):
+        return p["pdf"] / jnp.sum(p["pdf"], -1, keepdims=True)
 
     def apply(self, p, nodes, dt):
-        """Return the node masses (..., nt) after the delay; mass moved past the last node is dropped."""
-        off0, m = self.taps_matrix(dt)
-        taps = jnp.asarray(m, jnp.float32) @ (p["pdf"] / jnp.sum(p["pdf"]))
+        """Return the node masses (S, nt) after the delay of nodes (S, *axes, nt), summed over the delay's cells; mass
+        moved past the last node is dropped."""  # noqa: D205, D209
+        off0, m = _device_taps(tuple(float(x) for x in self.edges), float(dt))
+        w = self._weights(p)  # (*axes, bins)
+        taps = m @ w if w.ndim == 1 else jnp.moveaxis(m @ jnp.moveaxis(w, -1, -2), -1, -2)  # (*axes, taps)
         nt = nodes.shape[-1]
-        n = 1 << int(np.ceil(np.log2(nt + len(taps) + abs(off0))))
+        n = 1 << int(np.ceil(np.log2(nt + m.shape[0] + abs(off0))))
         full = jnp.fft.irfft(jnp.fft.rfft(nodes, n) * jnp.fft.rfft(taps, n), n)
+        if full.ndim > 2:  # the delay's cells summed
+            full = jnp.reshape(full, (nodes.shape[0], -1, n)).sum(1)
         if off0 >= 0:
-            return jnp.concatenate([jnp.zeros(nodes.shape[:-1] + (off0,), nodes.dtype), full[..., : nt - off0]], -1)
-        return full[..., -off0 : -off0 + nt]
+            return jnp.concatenate([jnp.zeros((full.shape[0], off0), nodes.dtype), full[:, : nt - off0]], -1)
+        return full[:, -off0 : -off0 + nt]
+
+    def mean(self, p):
+        """Return the mean delay (ns) per cell (*axes)."""
+        e = jnp.asarray(self.edges, jnp.float32)
+        return jnp.sum(self._weights(p) * 0.5 * (e[1:] + e[:-1]), -1)
 
     def sample(self, rng, p, n):
-        """Return n draws (numpy)."""
+        """Return n draws (numpy) of a delay without axes."""
         return _table_sample(rng, self.edges, p["pdf"], n)
 
     def support(self, ranges):
@@ -270,11 +330,14 @@ class DelayTable:
 
 
 @dataclass(frozen=True)
-class TimeWalk:
+class TimeWalk(Form):
     """A per-hit time shift ``shift`` and extra Gaussian spread ``sigma`` (ns) at fixed charge knots ``knots`` (pe)."""
 
     knots: tuple
     form: ClassVar[str] = "table"
+    STATIC: ClassVar[tuple] = ("charge_pe",)
+
+    RANGES: ClassVar[dict] = {"sigma": POSITIVE}
 
     def fields(self):
         """Return the field units and shapes."""
@@ -289,10 +352,12 @@ class TimeWalk:
 
 # ------------------------------------------------------------------------------------------------ charge (SPE)
 @dataclass(frozen=True)
-class GaussExpCharge:
+class GaussExpCharge(Form):
     """A Gaussian main peak (width ``sigma``, pe) plus an exponential part (``fraction``, mean ``tau``), mean 1 pe."""
 
     form: ClassVar[str] = "gauss_exp"
+
+    RANGES: ClassVar[dict] = {"sigma": POSITIVE, "fraction": FRACTION, "tau": POSITIVE}
 
     def fields(self):
         """Return the field units and shapes."""
@@ -325,11 +390,14 @@ class GaussExpCharge:
 
 
 @dataclass(frozen=True)
-class TableCharge:
+class TableCharge(Form):
     """A measured single-photoelectron spectrum: masses ``pdf`` on fixed bin ``edges`` (pe), uniform within bins."""
 
     edges: tuple
     form: ClassVar[str] = "table"
+    STATIC: ClassVar[tuple] = ("edges_pe",)
+
+    RANGES: ClassVar[dict] = {"pdf": POSITIVE}
 
     def fields(self):
         """Return the field units and shapes."""
@@ -358,11 +426,14 @@ class TableCharge:
 
 # ------------------------------------------------------------------------------------------------ threshold
 @dataclass(frozen=True)
-class TableThreshold:
+class TableThreshold(Form):
     """Acceptance ``accept`` against fixed charge knots ``knots`` (pe), linear, constant beyond the end knots."""
 
     knots: tuple
     form: ClassVar[str] = "table"
+    STATIC: ClassVar[tuple] = ("charge_pe",)
+
+    RANGES: ClassVar[dict] = {"accept": FRACTION}
 
     def fields(self):
         """Return the field units and shapes."""
@@ -370,15 +441,22 @@ class TableThreshold:
 
     def accept(self, p, q):
         """Return the acceptance at integrated charges q (pe)."""
-        return jnp.clip(jnp.interp(q, jnp.asarray(self.knots, jnp.float32), p["accept"]), 0.0, 1.0)
+        # the knots' values lie in [0, 1] (refused otherwise at load, value_sets.DEFAULT_RANGES), so the interpolant
+        # does too; clip01 keeps the derivative of a value on a bound (a plateau at 1) whole
+        return clip01(jnp.interp(q, jnp.asarray(self.knots, jnp.float32), p["accept"]))
 
 
 @dataclass(frozen=True)
-class PolyThreshold:
+class PolyThreshold(Form):
     """Acceptance min(1, sum_k c_k x^k), x = Q + ``offset``, for x below ``limit``; 1 above; clipped to [0, 1]."""
 
     order: int
     form: ClassVar[str] = "poly"
+
+    @classmethod
+    def from_spec(cls, spec: dict):
+        """Return the threshold of a record: its order from its coefficients' count."""
+        return cls(len(spec["coefficients"]) - 1)
 
     def fields(self):
         """Return the field units and shapes."""
@@ -396,10 +474,12 @@ class PolyThreshold:
 
 # ------------------------------------------------------------------------------------------------ pulse
 @dataclass(frozen=True)
-class BiGaussPulse:
+class BiGaussPulse(Form):
     """Two half-Gaussians about ``t_peak`` (ns): ``sigma_rise`` before, ``sigma_fall`` after; unit peak."""
 
     form: ClassVar[str] = "bigauss"
+
+    RANGES: ClassVar[dict] = {"sigma_rise": POSITIVE, "sigma_fall": POSITIVE}
 
     def fields(self):
         """Return the field units and shapes."""
@@ -418,10 +498,12 @@ class BiGaussPulse:
 
 
 @dataclass(frozen=True)
-class Exp2Pulse:
+class Exp2Pulse(Form):
     """A rising and falling exponential from ``t_start`` (ns): e^{-s/tau_fall} - e^{-s/tau_rise}; unit peak."""
 
     form: ClassVar[str] = "exp2"
+
+    RANGES: ClassVar[dict] = {"tau_rise": POSITIVE, "tau_fall": POSITIVE}
 
     def fields(self):
         """Return the field units and shapes."""
@@ -441,13 +523,19 @@ class Exp2Pulse:
 
 
 @dataclass(frozen=True)
-class TablePulse:
+class TablePulse(Form):
     """A measured pulse ``shape`` sampled at ``t_first + k step`` (ns, fixed), linear between samples, 0 outside."""
 
     t_first: float
     step: float
     n: int
     form: ClassVar[str] = "table"
+    STATIC: ClassVar[tuple] = ("t_first_ns", "step_ns")
+
+    @classmethod
+    def from_spec(cls, spec: dict):
+        """Return the pulse of a record: its first sample time, step (ns) and its shape's length."""
+        return cls(float(spec["t_first_ns"]), float(spec["step_ns"]), len(spec["shape"]))
 
     def fields(self):
         """Return the field units and shapes."""

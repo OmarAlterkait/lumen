@@ -6,8 +6,7 @@ of its own logpdf.
   3  the sampler follows the density: chi2 in (angle from axis, azimuth sector) bins whose edges are grid edges, so the
      expected counts are exact sums of grid cells
   4  score identity E[d log p / d theta] = 0 for every parameter (the premise of reweighting)
-  5  finite gradients of logpdf and weight with respect to params, wi and n on sampled directions
-  6  weight in [0, 1]
+  5  finite gradients of logpdf with respect to params, wi and n on sampled directions
 Densities must be BOUNDED in direction space for check 2-3 (true for every lobe here; a lobe whose density is
 singular in direction space must be checked in its own latent space instead)."""
 
@@ -18,9 +17,9 @@ import jax.numpy as jnp
 import numpy as np
 
 from lumen._core import rng
+from lumen.tools.stats import z_limit
 
 F32 = jnp.float32
-Z_MAX = 4.5
 
 
 def z_of(x, truth=0.0):
@@ -63,12 +62,12 @@ def draw(lobe, p, wi, n, N, seed=0):
     return np.asarray(f(u), np.float64)
 
 
-def check_lobe(lobe, p, wi, n, N=400_000, seed=0, label="", grid=(3000, 720)):
-    """run the contract; returns a dict of measured numbers (printed by the caller)."""
+def check_lobe(lobe, p, wi, n, N=400_000, seed=0, label="", grid=(3000, 720), axis=None):
+    """run the contract (``axis``: the direction grid's centre, default wi); returns a dict of measured numbers."""
     p = {k: jnp.asarray(v, F32) for k, v in p.items()}
+    axis = np.asarray(wi if axis is None else axis, np.float64)
     wi = jnp.asarray(wi, F32)
     n = jnp.asarray(n, F32)
-    axis = np.asarray(lobe.axis(p, wi, n), np.float64)
     axis /= np.linalg.norm(axis)
     G = direction_grid(axis, *grid)
     logp = eval_grid(lambda w: lobe.logpdf(p, wi, n, w), G["W"])
@@ -93,10 +92,6 @@ def check_lobe(lobe, p, wi, n, N=400_000, seed=0, label="", grid=(3000, 720)):
     c2 = float(np.sum((obs.ravel()[ok] - exp.ravel()[ok]) ** 2 / exp.ravel()[ok]))
     ndf = int(ok.sum()) - 1
     assert c2 / ndf < 1.6, (label, "sampler vs density chi2/ndf", c2 / ndf, ndf)
-    # weights
-    woj = jnp.asarray(wo[:50_000], F32)
-    w = np.asarray(jax.vmap(lambda x: lobe.weight(p, wi, n, x))(woj), np.float64)
-    assert np.all(w >= 0.0) and np.all(w <= 1.0 + 1e-6), (label, "weight range", w.min(), w.max())
     # score identity, per parameter
     zs = {}
     for name in lobe.params:
@@ -106,13 +101,11 @@ def check_lobe(lobe, p, wi, n, N=400_000, seed=0, label="", grid=(3000, 720)):
         g = np.asarray(g, np.float64)
         zs[name], _ = z_of(g)
         zs[name + "_extreme"] = (float(np.min(g)), float(np.max(g)), int(np.argmin(g)), int(np.argmax(g)))
-        assert abs(zs[name]) < Z_MAX, (label, "score identity", name, zs[name])
+        assert abs(zs[name]) < z_limit(len(lobe.params)), (label, "score identity", name, zs[name])
 
-    # finite gradients (params, wi, n) of logpdf and weight on samples
-    def tot(pp, a, b, x):
-        return lobe.logpdf(pp, a, b, x) + lobe.weight(pp, a, b, x)
-
-    gr = jax.jit(jax.vmap(lambda x: jax.grad(tot, argnums=(0, 1, 2))(p, wi, n, x)))(woj)
+    # finite gradients (params, wi, n) of logpdf on samples
+    woj = jnp.asarray(wo[:50_000], F32)
+    gr = jax.jit(jax.vmap(lambda x: jax.grad(lobe.logpdf, argnums=(0, 1, 2))(p, wi, n, x)))(woj)
     for leaf in jax.tree_util.tree_leaves(gr):
         assert np.all(np.isfinite(np.asarray(leaf))), (label, "non-finite gradient")
-    return dict(wo=wo, total=total, chi2=c2 / ndf, ndf=ndf, score=zs, mean_weight=float(w.mean()))
+    return dict(wo=wo, total=total, chi2=c2 / ndf, ndf=ndf, score=zs)

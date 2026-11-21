@@ -1,5 +1,6 @@
 """The reference pages stay true to the code: the API page is what tools/docs/api_reference.py writes from the
-docstrings, and the value-set page's code runs."""
+docstrings, the errors page lists every raise site's message (tools/docs/errors_reference.py), the format page is
+what tools/docs/format_reference.py writes from the records and the layout, and the value-set page's code runs."""
 
 import subprocess
 import sys
@@ -17,7 +18,20 @@ def test_api_page_is_generated_from_the_docstrings():
     assert r.returncode == 0, r.stdout + r.stderr
 
 
+def test_errors_page_lists_every_message_the_code_raises():
+    r = subprocess.run([sys.executable, str(ROOT / "tools/docs/errors_reference.py"), "--check"], capture_output=True,
+                       text=True, cwd=ROOT)  # fmt: skip
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_format_page_is_generated_from_the_records():
+    r = subprocess.run([sys.executable, str(ROOT / "tools/docs/format_reference.py"), "--check"], capture_output=True,
+                       text=True, cwd=ROOT)  # fmt: skip
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
 def test_value_sets_page_runs(tmp_path, monkeypatch):
+    (tmp_path / "examples").symlink_to(ROOT / "examples")  # the page names examples/data/toy_pmt.json
     monkeypatch.chdir(tmp_path)
     for i, code in enumerate(doc_pages.blocks("docs/reference/value-sets.md")):
         exec(compile(code, f"value-sets.md[{i}]", "exec"), {})

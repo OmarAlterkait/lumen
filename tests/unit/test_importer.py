@@ -81,8 +81,7 @@ def test_units_are_exact_and_the_world_is_kept(tmp_path):
     assert water.composition.density_g_cm3 == 1.0 and [c.atoms for c in water.composition.components] == [2, 1]
     liner = df.surfaces["Liner"]
     assert (liner.type, liner.model, liner.finish, liner.value) == ("dielectric_metal", "unified", "ground", 0.1)
-    assert liner.inert == ("GROUPVEL",) and "GROUPVEL" not in liner.properties
-    assert df.volumes["WorldLV"].aux[0].children[0].unit == "mm"
+    assert "GROUPVEL" not in liner.properties  # Geant4's own table, read on no surface: not kept
     assert any("0x suffix" in r for r in df.report)
 
 
@@ -135,15 +134,12 @@ def test_ambiguous_geant4_readings_are_refused(tmp_path, old, new, match):
 
 
 def test_non_optical_keys_are_kept_inert_and_unbound_borders_round_trip(tmp_path):
-    import dataclasses
-
     df = importer.read_gdml(write(tmp_path, GDML), material_keys=frozenset({"RINDEX"}))
     water = df.materials["Water"]
-    assert set(water.properties) == {"RINDEX"} and set(water.inert) == {"ABSLENGTH"}
+    assert set(water.properties) == {"RINDEX"} and set(water.inert) == {"ABSLENGTH"}  # Water's Rayleigh: at load
     np.testing.assert_array_equal(water.inert["ABSLENGTH"][:, 1], [1000.0, 20000.0])  # as read: Geant4's mm
-    df = dataclasses.replace(df, borders=tuple(dataclasses.replace(b, bound=False, note="outside") for b in df.borders))
     back = io.read(io.save(df, tmp_path / "inert.lumen"))
-    assert io.equal(df, back) and not back.borders[0].bound and back.borders[0].note == "outside"
+    assert io.equal(df, back) and back.borders == df.borders
 
 
 def test_a_user_material_key_is_kept_inert_with_one_warning(tmp_path):
@@ -167,3 +163,74 @@ def test_a_user_material_key_is_kept_inert_with_one_warning(tmp_path):
     assert "MYCONSTANT" in df.materials["Water"].inert and "MYCONSTANT" not in df.materials["Water"].properties
     with pytest.raises(ImportRefused, match="MYCONSTANT"):
         read_gdml(path, material_keys=frozenset({"RINDEX", "ABSLENGTH", "MYCONSTANT"}))
+
+
+def test_every_property_key_is_stored_in_its_unit_by_every_reader(tmp_path):
+    """One unit table (schema.PROPERTY_UNITS): the GDML's Geant4 units (GROUPVEL mm / ns, ISOTHERMAL_COMPRESSIBILITY
+    mm3 / MeV, COATEDTHICKNESS mm) and a YAML value with its unit are stored alike (m / ns, m3 / MeV, m); the export
+    writes Geant4's units back, exactly."""
+    from lumen.format import schema
+    from lumen.format.yaml import _Reader
+    from lumen.gdml import importer, reader
+
+    assert schema.PROPERTY_UNITS["GROUPVEL"] == ("velocity", "m/ns", -3)
+    for key, tok, want in (("GROUPVEL", "220.5", 0.2205), ("GROUPVEL", "0.2205*m/ns", 0.2205),
+                           ("ISOTHERMAL_COMPRESSIBILITY", "76.58", 7.658e-8),
+                           ("COATEDTHICKNESS", "2.6e-5", 2.6e-8), ("ABSLENGTH", "1.5*cm", 0.015),
+                           ("WLSTIMECONSTANT", "2.5", None)):  # fmt: skip
+        if want is None:
+            assert importer._power(key) == 0
+            continue
+        internal = reader.Evaluator().eval(tok)  # the reader's value, in Geant4's units
+        assert importer._stored(key, tok, internal) == pytest.approx(want, rel=1e-15), (key, tok)
+    r = _Reader.__new__(_Reader)
+    assert r.prop_value("GROUPVEL", "220.5*mm/ns", "w") == pytest.approx(0.2205, rel=1e-15)
+    assert r.prop_value("GROUPVEL", 0.2205, "w") == 0.2205  # a bare number is in the key's unit
+    assert r.prop_value("ISOTHERMAL_COMPRESSIBILITY", "7.658e-23*m3/MeV", "w") == 7.658e-23
+    assert r.prop_value("ABSLENGTH", "30*cm", "w") == pytest.approx(0.3)
+    with pytest.raises(Exception, match="plain number"):
+        r.prop_value("RINDEX", "1.33*mm", "w")
+
+
+def test_the_declared_parameter_units_are_the_stored_units():
+    """keys.PARAMS declares a property's unit; it is the unit the property is stored in (schema.PROPERTY_UNITS)."""
+    from lumen.format import schema
+    from lumen.rules.keys import PARAMS
+
+    for key, (_, unit, _) in schema.PROPERTY_UNITS.items():
+        if key in PARAMS:
+            assert PARAMS[key].unit == unit, key
+    for key, p in PARAMS.items():
+        if p.unit and key.isupper():
+            assert key in schema.PROPERTY_UNITS, key
+
+
+# the schema's string fields that name another record: each renamed by importer.canonical_names
+NAME_REFERENCES = {("DetectorFile", "world"), ("DetectorFile", "detector_volume"), ("Volume", "solid"),
+                   ("Volume", "material"), ("Placement", "volume"), ("Placement", "mother"), ("Skin", "surface"),
+                   ("Skin", "volume"), ("Border", "surface"), ("Border", "pv1"), ("Border", "pv2"),
+                   ("Component", "ref"), ("Solid", "refs"), ("Solid", "mesh")}  # fmt: skip
+# and those that do not (a record's own name, renamed with it, or a value)
+NOT_REFERENCES = {("DetectorFile", "name"), ("DetectorFile", "report"), ("Element", "formula"), ("Material", "state"),
+                  ("Component", "kind"), ("Solid", "type"), ("Surface", "type"), ("Surface", "model"),
+                  ("Surface", "finish"), ("OpticsModel", "name"), ("OpticsModel", "origin"), ("OpticsModel", "note"),
+                  ("Property", "key"), ("Property", "origin"), ("Property", "note"), ("Skin", "origin"),
+                  ("Skin", "note")} | {(c, "name") for c in ("Border", "Element", "Isotope", "Material", "Placement",
+                                                              "Skin", "Solid", "Surface", "Volume")}  # fmt: skip
+
+
+def test_every_name_reference_of_the_schema_is_renamed():
+    """Every string field of the detector-file schema is classified, so a reference field added to the schema fails
+    here until importer.canonical_names renames it (a suffixed reference to a stripped name dangles)."""
+    import dataclasses
+    import inspect
+
+    from lumen.format import schema
+
+    fields = {(c.__name__, f.name) for c in vars(schema).values() if isinstance(c, type) and
+              dataclasses.is_dataclass(c) and c.__module__ == schema.__name__ for f in dataclasses.fields(c)
+              if str(f.type).startswith(("str", "tuple[str"))}  # fmt: skip
+    assert fields == NAME_REFERENCES | NOT_REFERENCES, "classify the schema's new string field (and rename it)"
+    src = inspect.getsource(importer.canonical_names)
+    assert all(f"{f}=n(" in src or f"{f}=tuple(n(" in src or f"{f}=comps(" in src or (f == "ref" and "ref=n(" in src)
+               for _, f in NAME_REFERENCES), "canonical_names renames every reference field"  # fmt: skip

@@ -1,0 +1,29 @@
+# yaml_toy's materials: a file of its own, so other detectors can share it.
+schema: lumen-detector-yaml/3      # every file starts with the format it is written in
+elements:
+  Hydrogen: {formula: H, z: 1.0, molar_mass_g_mol: 1.008}
+  Oxygen: {formula: O, z: 8.0, molar_mass_g_mol: 15.999}
+  Nitrogen: {formula: N, z: 7.0, molar_mass_g_mol: 14.007}
+  Silicon: {formula: Si, z: 14.0, molar_mass_g_mol: 28.085}
+
+materials:
+  Water:
+    state: liquid
+    composition:
+      density_g_cm3: 1.0
+      components: [{ref: Hydrogen, atoms: 2}, {ref: Oxygen, atoms: 1}]
+    properties:
+      RINDEX:                    # a table on wavelengths (nm): stored on ascending photon energies (eV)
+        wavelength_nm: [250, 350, 450, 550, 650]
+        value: [1.366, 1.349, 1.338, 1.335, 1.331]
+      ABSLENGTH:                 # a table on photon energies (eV); lengths with their unit
+        energy: [1.5, 2.5, 3.0, 3.5, 5.0]
+        value: [5*m, 40*m, 60*m, 30*m, 2*m]
+  Air:
+    state: gas
+    composition: {density_g_cm3: 0.0012, components: [{ref: Nitrogen, fraction: 1.0}]}
+  Glass:
+    state: solid
+    composition:
+      density_g_cm3: 2.2
+      components: [{ref: Silicon, atoms: 1}, {ref: Oxygen, atoms: 2}]

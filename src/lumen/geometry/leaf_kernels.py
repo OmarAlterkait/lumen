@@ -1,7 +1,7 @@
 """The device kernels of one leaf along a line: a quadric's pieces (``quad_line``) and a torus's intervals.
 
-Membership along a ray is half-open, [lo, hi) per interval; an empty slot is (INF, INF); an unbounded end is
--INF / +INF and never a crossing (|t| >= BIG). Gradients: the order of endpoints is detached, their values live; the
+Membership along a ray is half-open, [lo, hi) per interval; an empty slot is (HUGE, HUGE); an unbounded end is
+-HUGE / +HUGE and never a crossing (|t| >= BIG). Gradients: the order of endpoints is detached, their values live; the
 torus roots are found by detached bracketing and bisection and made live by one attached Newton step (the implicit
 function theorem): exact first derivatives in every parameter.
 """
@@ -11,15 +11,18 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
-from lumen.geometry.csg_build import INF
+from lumen.rules.tolerances import (
+    BIG,
+    BISECT_F32,
+    BISECT_F64,
+    DIVISOR_FLOOR,
+    LINEAR_REL,
+    TANGENT_ULPS,
+    TORUS_AXIAL,
+    TORUS_BRACKET_ULPS,
+)
+from lumen.units import HUGE
 
-BIG = 1e29  # |t| at or beyond this is an unbounded end, not a crossing
-LINEAR_REL = 1e-12  # a quadric with |alpha| below this times max |A_ij| is linear along the line
-TINY = 1e-30  # a divisor below this is zero
-TANGENT_ULPS = 16.0  # a discriminant within this many ulps of its terms is a tangency, not a chord
-TORUS_BRACKET_ULPS = 64.0  # the torus bracket sphere is padded by this many ulps
-TORUS_AXIAL = 1e-12  # a direction with a squared xy part below this is along the torus axis
-BISECT_F64, BISECT_F32 = 64, 40  # bisection steps per dtype
 sg = jax.lax.stop_gradient
 
 
@@ -32,9 +35,7 @@ def _laxpy(y, t, d):
 
 
 def _linear_test(alpha, sa):
-    if isinstance(sa, float):
-        return jnp.abs(alpha) < max(LINEAR_REL * sa, TINY)
-    return jnp.abs(alpha) < jnp.maximum(LINEAR_REL * sa, TINY)
+    return jnp.abs(alpha) < jnp.maximum(LINEAR_REL * sa, DIVISOR_FLOOR)
 
 
 def _roots(alpha, beta, gam, t_c, lin, eps, inf):  # noqa: PLR0913 -- the quadratic's terms
@@ -46,12 +47,12 @@ def _roots(alpha, beta, gam, t_c, lin, eps, inf):  # noqa: PLR0913 -- the quadra
     sD = jnp.sqrt(jnp.where(Dpos, D, 1.0))
     sgn = jnp.where(beta >= 0.0, 1.0, -1.0)
     s_ = -(beta + sgn * jnp.where(Dpos, sD, 0.0))
-    s_ok = jnp.abs(s_) > TINY
+    s_ok = jnp.abs(s_) > DIVISOR_FLOOR
     r1 = jnp.where(lin, inf, s_ / jnp.where(lin, 1.0, alpha))
     r2 = jnp.where(s_ok, gam / jnp.where(s_ok, s_, 1.0), 0.0)
     rmin = jnp.minimum(r1, r2) + t_c
     rmax = jnp.maximum(r1, r2) + t_c
-    b_small = jnp.abs(beta) < TINY
+    b_small = jnp.abs(beta) < DIVISOR_FLOOR
     tl = t_c - gam / jnp.where(b_small, 1.0, 2.0 * beta)
     return rmin, rmax, tl, Dpos, b_small
 
@@ -77,33 +78,33 @@ def _pieces(alpha, beta, gam, lin, roots, inf):
     return L0, R0, L0q, R0q, L1, R1
 
 
-def quad_line(Av, bd, c, y, d, sa, eps, inf, dot=_ldot, axpy=_laxpy):  # noqa: PLR0913, N803 -- the quadric's terms; Av = A v, the docstring's Notation
+def quad_line(Av, bd, c, y, d, sa, eps, inf):  # noqa: PLR0913, N803 -- the quadric's terms; Av = A v, the docstring's Notation
     """Return the quadric part of a leaf along the line y + t d: (L0, R0, L0q, R0q, L1, R1).
 
     The pieces [L0, R0] and [L1, +inf) of {q <= 0} before the planes clip them (L0q / R0q: the end is a quadric
     root). ``Av(v)`` gives A v (a list of 3), ``bd(v)`` b . v, ``c`` the constant; y is the line's origin in the
     quadric's own frame (``quad_frame``), |d| = 1, ``sa`` = max |A_ij| (the linear test's scale), ``eps`` the dtype's
-    machine epsilon, ``inf`` its INF. Notation: Av, Ad, Ay the matrix products; D the discriminant.
+    machine epsilon, ``inf`` its HUGE. Notation: Av, Ad, Ay the matrix products; D the discriminant.
 
     Re-origination: from the closest approach t_o to the frame's origin, rho = alpha gamma_o / beta_o^2; at rho <= 1/2
     the roots are taken at t_o (no cancellation), else at the vertex, which then lies no farther from t_o than ~3.4x
     the roots themselves. Both bound D's relative rounding by a few eps for every A, b, c. The origin is detached.
     """
-    t_o = -dot(y, d)
-    y0 = axpy(y, t_o, d)
+    t_o = -_ldot(y, d)
+    y0 = _laxpy(y, t_o, d)
     Ad = Av(d)
-    alpha = dot(Ad, d)
+    alpha = _ldot(Ad, d)
     lin = _linear_test(alpha, sa)
     bdd = bd(d)
     Ay0 = Av(y0)
-    beta0 = dot(Ay0, d) + bdd
-    gam0 = dot(y0, Ay0) + 2.0 * bd(y0) + c
+    beta0 = _ldot(Ay0, d) + bdd
+    gam0 = _ldot(y0, Ay0) + 2.0 * bd(y0) + c
     near = (~lin) & (alpha * gam0 > 0.5 * beta0 * beta0)
     t_c = sg(t_o + jnp.where(near, -beta0 / jnp.where(near, alpha, 1.0), 0.0))
-    yc = axpy(y, t_c, d)
+    yc = _laxpy(y, t_c, d)
     Ayc = Av(yc)
-    beta = dot(Ayc, d) + bdd
-    gam = dot(yc, Ayc) + 2.0 * bd(yc) + c
+    beta = _ldot(Ayc, d) + bdd
+    gam = _ldot(yc, Ayc) + 2.0 * bd(yc) + c
     roots = _roots(alpha, beta, gam, t_c, lin, eps, inf)
     return _pieces(alpha, beta, gam, lin, roots, inf)
 
@@ -201,14 +202,14 @@ def _polished(R, r, o, d, s_star):  # noqa: N803 -- R, r the torus radii
     def polish(s0):
         gv = _torus_g(R, r, oc_l, d, s0)
         gp = _torus_dg(R, r, oc_l, d, s0)
-        ok = jnp.abs(gp) > TINY * (1.0 + jnp.abs(gv))
+        ok = jnp.abs(gp) > DIVISOR_FLOOR * (1.0 + jnp.abs(gv))
         return s0 - jnp.where(ok, gv / jnp.where(ok, gp, 1.0), 0.0)
 
     s_live = jax.vmap(polish)(s_star)
     return s_star + (s_live - sg(s_live)), t_c_l
 
 
-def torus_set(R, r, o, d, n_bisect=None):  # noqa: N803 -- R, r the torus radii
+def torus_set(R, r, o, d):  # noqa: N803 -- R, r the torus radii
     """Return the interval set (two slots) of a solid torus about z; o relative to its centre (torus frame), |d| = 1.
 
     Root isolation is exact up to rounding: g(s) = |p|^2 - 2 R rho + R^2 - r^2 has at most two inflection points, in
@@ -217,9 +218,8 @@ def torus_set(R, r, o, d, n_bisect=None):  # noqa: N803 -- R, r the torus radii
     Detached; one attached Newton step on g makes each root live. Notation: R, r the swept and tube radii.
     """
     dt = o.dtype
-    inf = jnp.asarray(INF, dt)
-    if n_bisect is None:
-        n_bisect = BISECT_F64 if dt == jnp.float64 else BISECT_F32
+    inf = jnp.asarray(HUGE, dt)
+    n_bisect = BISECT_F64 if dt == jnp.float64 else BISECT_F32
     Rd, rd, od, dd = sg(R), sg(r), sg(o), sg(d)
     oc, s_lo, s_hi, hit_b, p1, p2 = _torus_bracket(Rd, rd, od, dd, dt)
 

@@ -12,7 +12,7 @@ from jax.experimental import enable_x64
 
 from lumen.surfaces import facets
 
-SIGMA, N = 0.3, 512
+SIGMA, N, K_HELD = 0.3, 512, 64  # K_HELD: the test's buffer of held facets (the lobe's path is uncapped)
 
 
 def chains():
@@ -22,15 +22,35 @@ def chains():
     wi /= np.linalg.norm(wi, axis=1, keepdims=True)
     n = np.tile([0.0, 0.0, 1.0], (N, 1))
     rand = (rng.integers(0, 2**23, size=(N, 3)) + 0.5) * 2.0**-23
-    path = jax.vmap(lambda w_, n_, r_: facets.UNIFIED.path({"sigma_alpha": jnp.float32(SIGMA)}, w_, n_, r_))
-    W, k = path(jnp.asarray(wi, jnp.float32), jnp.asarray(n, jnp.float32), jnp.asarray(rand, jnp.float32))
+
+    def hold(c, w0, w1):
+        W, j = c
+        return W.at[j].set(w1), j + 1
+
+    def one(w_, n_, r_):
+        (W, _), _, _, k = facets.UNIFIED.path({"sigma_alpha": jnp.float32(SIGMA)}, w_, n_, r_, hold,
+                                              (jnp.zeros((K_HELD, 3), jnp.float32), jnp.int32(0)))  # fmt: skip
+        return W, k
+
+    W, k = jax.vmap(one)(jnp.asarray(wi, jnp.float32), jnp.asarray(n, jnp.float32), jnp.asarray(rand, jnp.float32))
+    assert int(np.max(k)) <= K_HELD
     return wi, n, np.asarray(W), np.asarray(k)
 
 
 def logp(dtype):
     def f(th, wi, n, W, k):
-        s = jnp.asarray(SIGMA, dtype) * (1 + th)
-        return facets.UNIFIED.path_logpdf({"sigma_alpha": s}, wi.astype(dtype), n.astype(dtype), W.astype(dtype), k)
+        p = {"sigma_alpha": jnp.asarray(SIGMA, dtype) * (1 + th)}
+        wi, n, W = wi.astype(dtype), n.astype(dtype), W.astype(dtype)
+        mirror = wi - 2.0 * jnp.sum(wi * n) * n  # an unused row is evaluated at (wi, its mirror) and masked
+
+        def body(c, w):
+            acc, prev, j = c
+            use = j < k
+            lp = facets.UNIFIED.facet_logpdf(p, jnp.where(use, prev, wi), n, jnp.where(use, w, mirror))
+            return (acc + jnp.where(use, lp, 0.0), w, j + 1), None
+
+        (acc, _, _), _ = jax.lax.scan(body, (jnp.zeros((), dtype), wi, jnp.int32(0)), W)
+        return acc
 
     return f
 

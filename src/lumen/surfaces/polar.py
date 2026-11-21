@@ -15,19 +15,16 @@ Conventions, against Geant4 10.7.4 (G4Cerenkov, G4Scintillation, G4OpWLS, G4OpRa
 - Lambertian transmission and re-emission are unpolarised.
 """
 
-import math
-
 import jax
 import jax.numpy as jnp
 
 from lumen._core import frames
 from lumen._core.safe import sanitize, unit
+from lumen.rules.choices import FLOOR32, NORMAL_INCIDENCE  # |E|^2 below FLOOR32 normalises to 0
+from lumen.units import TWO_PI
 
-TWO_PI = 2.0 * math.pi
 MIRROR = (-1.0 + 0.0j, 1.0 + 0.0j)  # (r_s, r_p) of a perfect mirror in this module's convention
 ZERO_STATE = 0.5  # |E|^2 below this is the unpolarised state E = 0
-NORMAL_INCIDENCE = 1e-14  # |wi x n|^2 below this: no plane of incidence
-TINY_NORM = 1e-30  # |E|^2 below this normalises to 0
 
 
 def dot(a, b):
@@ -61,7 +58,7 @@ def fill(d, er, ei, rand):
 def normalise(er, ei):
     """Return E / |E|; 0 stays 0 (unpolarised)."""
     s = norm2(er, ei)
-    ok = s > TINY_NORM
+    ok = s > FLOOR32
     r = 1.0 / jnp.sqrt(sanitize(ok, s, 1.0))
     return jnp.where(ok, er * r, 0.0), jnp.where(ok, ei * r, 0.0)
 
@@ -86,7 +83,7 @@ def cherenkov(d, axis):
     return unit(dot(axis, d)[..., None] * d - axis)
 
 
-def s_axis(wi, n, er):
+def s_axis(wi, n):
     """Return the s axis unit(wi x n); at normal incidence a fixed perpendicular of wi, detached from wi."""
     c = jnp.cross(wi, n)
     ok = dot(c, c) > NORMAL_INCIDENCE
@@ -111,6 +108,6 @@ def recombine(e_s, e_p, a_s, a_p, s, k):
 
 def fractions(er, ei, wi, n):
     """Return (|E_s|^2, |E_p|^2), which sum to |E|^2."""
-    s = s_axis(wi, n, er)
+    s = s_axis(wi, n)
     e_s, e_p = components(er, ei, wi, s)
     return jnp.abs(e_s) ** 2, jnp.abs(e_p) ** 2

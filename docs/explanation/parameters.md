@@ -20,13 +20,16 @@ add a process.
 
 Other values Geant4 never reads:
 
-- the surface value (sigma_alpha or polish) on a polished or painted finish, where no facet is sampled;
-- a WLS film's yield when the material has no WLSMEANNUMBERPHOTONS: G4OpWLS then emits exactly one photon;
-- the film's thickness and side, which are geometry.
+- the surface value (sigma_alpha or polish) on a polished or painted finish, where no facet is sampled, and at the
+  values where Geant4 samples none: sigma_alpha exactly 0, polish exactly 1 (G4OpBoundaryProcess::GetFacetNormal).
+  There the file's value, not its presence, decides: a surface at sigma_alpha 0.01 has the key, one at 0 has not,
+  and a fit of sigma_alpha stays within the facet sampler's range, above 0;
+- a WLS yield when the material has no WLSMEANNUMBERPHOTONS: G4OpWLS then emits exactly one photon.
 
-A worked case: MicroBooNE's steel follows LArSoft's reflector (`lumen:larsoft_reflector`), which reflects specularly
-about the global normal or Lambertian and never samples a facet. Its sigma_alpha (0.1) and lobe fraction (0) are
-therefore not parameters, even though the GDML export writes the surface as a unified, ground dielectric_metal with
-sigma_alpha 0 so that Geant4 reproduces LArSoft. On a real unified ground dielectric_metal surface Geant4 reads
-sigma_alpha at every lobe reflection, so there it stays a parameter even where every lobe fraction is 0; its zero
+A worked case: MicroBooNE's steel follows LArSoft's reflector, which reflects specularly about the global normal or
+Lambertian and never samples a facet. lumen-tpc's recipe writes it in its Geant4 form: a unified, ground
+dielectric_metal surface of sigma_alpha 0 with REFLECTIVITY, SPECULARSPIKECONSTANT (1 - LArSoft's diffuse fraction)
+and zero lobe and backscatter. Geant4, and lumen, take the lobe at sigma_alpha 0 as the spike: no facet is sampled, so
+sigma_alpha is not a parameter there. On a unified ground dielectric_metal surface with sigma_alpha above 0 Geant4
+reads it at every lobe reflection, so there it stays a parameter even where every lobe fraction is 0; its zero
 derivative is then a measured fact.

@@ -1,8 +1,9 @@
-"""A one-sided WLS film through the step (the physics tier): the film toy with its holder turned 90 degrees about z.
+"""A one-sided WLS slab through the step (the physics tier): the film toy (a 25.4 um slab of a WLS material on a
+painted foil, as SBND's split TPB) with its holder turned 90 degrees about z.
 
-VUV light (128 nm, absorbed within 1e-11 mm by the film) from 5 cm in front of the film face is re-emitted into the
-visible band; from 5 cm behind the foil's back face no light can reach the film (the tank's walls absorb), so no
-visible light is detected at all, and the bare back face reflects VUV light (paint, R = 0.5) the film face absorbs.
+VUV light (128 nm, absorbed within 1e-11 mm by the slab: bulk WLS) from 5 cm in front of the slab face is re-emitted
+into the visible band; from 5 cm behind the foil's back face no light can reach the film (the tank's walls absorb), so
+no visible light is detected at all, and the bare back face reflects VUV light (paint, R = 0.5) the film face absorbs.
 """
 
 import sys
@@ -12,16 +13,17 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+import toys
 from toys import simulate
 
 import lumen
-from lumen.validate import photons
+from lumen.compare import photons
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "unit"))  # the unit tier's film toy
 from film_toy import RECIPE, film_gdml
 
 N = 1 << 16
-CENTRE_MM = (0, 0, 500)  # off the origin: the film (20 nm) is thinner than the band there (0.5 um), so lowered
+CENTRE_MM = (0, 0, 500)  # off the origin
 VUV, SPLIT = 128.0, 300.0  # nm
 
 
@@ -30,16 +32,15 @@ def film(tmp_path_factory):
     tmp = tmp_path_factory.mktemp("film")
     (tmp / "film.gdml").write_text(film_gdml(((CENTRE_MM, (0, 0, 90)),)))
     det = lumen.load(lumen.convert(tmp / "film.gdml", RECIPE, tmp / "film.lumen"))
-    return photons.setup(det, (RECIPE.wavelength_range[0], SPLIT, RECIPE.wavelength_range[1]))
+    return toys.setup(det, (-np.inf, SPLIT, np.inf))
 
 
 def charge(s, side):
     """Return (VUV, visible) detected per photon from 5 cm off the film's face (side +1) or the back face (-1)."""
-    (axis,) = s.det.tree.film_axes.values()
-    assert np.allclose(axis, [0.0, -1.0, 0.0])  # the local +x face, turned 90 degrees about z
+    axis = np.array([0.0, -1.0, 0.0])  # the slab's face: the local +x face, turned 90 degrees about z (GDML, passive)
     x = jnp.tile(jnp.asarray(np.asarray(CENTRE_MM) * 1e-3 + 0.05 * side * np.asarray(axis), jnp.float32), (N, 1))
     rows = photons.isotropic(x, jnp.full(N, VUV, jnp.float32), jax.random.PRNGKey(3))
-    q = np.asarray(simulate(s, photons.packed(s.det), rows)["Q"]).reshape(-1, 2).sum(0) / N
+    q = np.asarray(simulate(s, photons.packed(s.det), rows)["charge:0"]).reshape(-1, 2).sum(0) / N
     return float(q[0]), float(q[1])
 
 

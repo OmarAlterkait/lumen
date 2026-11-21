@@ -76,6 +76,56 @@ def test_uniforms_are_open_unit_interval_deterministic_and_block_stable():
 
 
 def test_units():
-    assert abs(units.energy_of(1239.841984) - 1.0) < 1e-12
+    assert units.energy_of(units.HC) == 1.0 and units.HC == units.HC_EV_M * 1e9
     assert abs(units.wavelength_of(units.energy_of(400.0)) - 400.0) < 1e-9
     assert units.MM * 1000 == 1.0 and units.US == 1000.0
+
+
+def test_safe_norm_has_a_finite_reverse_derivative_at_zero():
+    """g / max(|g|, floor) is NaN in reverse mode at g = 0 (the no-hit lane of a planes-only leaf); g / safe_norm(g)
+    is 0 there both ways and |g| elsewhere."""
+    import jax
+    import jax.numpy as jnp
+
+    from lumen._core.safe import safe_norm
+
+    def unit_sum(g):
+        return jnp.sum(g / safe_norm(g))
+
+    assert bool(jnp.all(jnp.isfinite(jax.grad(unit_sum)(jnp.zeros(3)))))
+    assert not bool(
+        jnp.all(jnp.isfinite(jax.grad(lambda g: jnp.sum(g / jnp.maximum(jnp.linalg.norm(g), 1e-30)))(jnp.zeros(3))))
+    )  # fmt: skip -- the form it replaced
+    v = jnp.asarray([3.0, 4.0, 0.0])
+    assert float(safe_norm(v)) == 5.0
+
+
+def test_each_tolerance_covers_the_error_it_is_stated_against():
+    """lumen.rules.tolerances: a pad covers the float32 band per metre; a float64 tolerance at metre scale covers
+    POSE_ULPS eps64; the CSG scan's cap is above what it needs (4 endpoints per leaf, plus 2)."""
+    import numpy as np
+
+    from lumen.rules import navigation
+    from lumen.rules import tolerances as tol
+
+    assert navigation.BAND == tol.BAND_ULPS * float(np.finfo(np.float32).eps)
+    assert min(tol.WORLD_BOX_PAD_REL, tol.KIND_BOX_PAD_REL, tol.TORUS_PAD_REL) >= navigation.BAND
+    assert tol.WORLD_BOX_PAD_ABS >= tol.BAND_FLOOR
+    eps64 = tol.POSE_ULPS * float(np.finfo(np.float64).eps)
+    assert min(tol.SAME_POSE, tol.HOLE_POSE_TOL, tol.BOX_PAD, tol.LINEAR_REL, tol.TORUS_AXIAL, tol.PARALLEL,
+               tol.SLOPE_REL) >= eps64  # fmt: skip
+    assert tol.MAX_SCAN_PER_LEAF >= 4 and tol.MAX_SCAN_EXTRA >= 2
+
+
+def test_a_longer_draw_keeps_the_earlier_uniforms_whatever_the_global_threefry_mode():
+    """Uniform i depends on the key and i alone (threefry's partitionable mode, pinned in rng.uniforms): adding a draw
+    to a layout never shifts another block's, also with ``jax_threefry_partitionable`` turned off globally."""
+    import jax
+
+    from lumen._core import rng
+
+    key = jax.random.PRNGKey(3)
+    for mode in (True, False):
+        with jax.threefry_partitionable(mode):
+            a, b = rng.uniforms(key, 4), rng.uniforms(key, 7)
+            assert bool((a == b[:4]).all()), mode

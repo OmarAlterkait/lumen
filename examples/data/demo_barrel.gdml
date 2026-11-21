@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- demo_barrel: the example detector of lumen's "your own detector" guide. A water cylinder (radius 0.6 m, height
      1.2 m) lined with a black sheet, inside a 1 cm plastic barrel, with 12 disc PMTs (4 on the top, 4 on the bottom,
-     4 on the side). It is written with two deliberate exporter defects, so the guide can show how lumen repairs and
-     reports them:
-       1. WATER_ABSLENGTH has one value too many (an unpaired tail: Geant4 refuses the file);
+     4 on the side). It is written with two deliberate exporter defects, so the guide can show what lumen refuses and
+     how a file is repaired (python -m lumen.gdml.repair):
+       1. WATER_ABSLENGTH has one value too many (an unpaired tail: Geant4 refuses the file, and so does lumen);
        2. the liner's REFLECTIVITY is a one-column constant (Geant4 loads it, but its boundary process reads only
           tables, so the sheet reflects at Geant4's default of 1).
      Written for the lumen documentation; Apache-2.0 like the rest of the repository. -->

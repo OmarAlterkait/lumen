@@ -6,39 +6,44 @@ weight carries every upstream score and a deposit's derivative is the sum of pat
 and distances are kept fixed in the world frame; their densities are re-evaluated live. A surface outcome is drawn from
 the reference probabilities of the continuing outcomes alone, normalised.
 
-**The edge floor** (the edge rule, OUT or WITHIN): a ``wrt`` parameter whose value sits at an edge of its domain (the
-surface type's ``domain``: a fraction at 0 or 1, a film's yield or thickness at 0) turns its rows on (``edge_rows``:
-derived from ``wrt`` and the domains, never an option). At those
-rows every continuing outcome of the surface type whose reference probability is 0 is proposed at eps: drawn, the
-photon carries eps / q and ``Photon.z`` carries p / eps, exactly 0 in value and dp / eps in derivative. eps gives the
-floored outcomes the fixed share e = EDGE_BUDGET of the draws at that row, whatever the continuing reference mass S
-(a share that shrinks with 1 - S leaves the derivative's positive part to rare heavy-tailed draws on a reflector).
-The value pays e of the draws at an edge row (photons with z = 0); the estimand is unchanged (docs/dev/architecture.md,
-"Photon state, step and estimator"). A bulk lobe's parameter at an edge of its domain (the lobe's ``domains``: Mie's
-forward ratio at 0 or 1) in ``wrt`` has its reference moved inside by the same share (``lobe_reference``); its live
-weight is the direction density's ratio.
+**The one defensive mixture.** A draw at the reference covers the live density only where the reference density is
+positive. A sampled part declares the parameters that can make it fail to (a share in [0, 1] that can zero a
+probability: role "zero"; a parameter that moves the edge of a support: role "support") and a covering density c,
+positive wherever such a live density can be positive and the reference is not: a surface outcome
+(``lumen.surfaces.types.Interaction.defensive``; c uniform over its outcomes of reference probability 0), GLISUR's
+facet (``lumen.surfaces.facets.covered``; c the shell), a bulk lobe's choice (``lumen.lobes.Lobe.defensive``: Mie's two
+lobes), a scintillation component and a spectrum interval (``lumen.sources``, ``lumen.media.spectra.covered``). When
+such a parameter is keyed (decided by structure, never by a value or a tangent: ``edge_rows``; a source's and a
+spectrum's shares are always parameters) the part is drawn from (1 - e) p_ref + e c, e = ``DEFENSIVE_SHARE``, and
+from p_ref where nothing is covered at the reference (e is not paid). The live weight multiplies p_live / q; the
+reference weight carries q / q (the density drawn from over itself): the roulette keeps a photon with probability wr /
+eps and divides its derivative by it, so a reference weight carrying p_ref / q (0 at a covered draw) would end the
+photons that carry the derivative (measured: x51 the variance, gradfam_p3.md section 7).
+
+**No photon is ended for carrying weight 0.** After a covered draw of live probability 0 the photon goes on with
+weight 0 in value and its derivative's weight; a second such draw on the same path carries the second derivative (a
+path through two reflections at R = 0 goes as R^2), so ending it would drop that term (measured: 44 % of d2Q/dR2 at
+a reflectivity of 0 on the YAML toy, tests/physics/test_ghost_hessian.py). Such a photon ends as any other: absorbed,
+by the roulette, or at the step guard (``health.truncated``).
 """
 
 from __future__ import annotations
+
+from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 from lumen._core.safe import safe_div
-from lumen.surfaces.outcomes import N_OUTCOMES, TERMINAL
+from lumen.rules.choices import DEFENSIVE_SHARE  # stated there (no expectation depends on it)
+from lumen.surfaces.outcomes import N_OUTCOMES
 
 sg = jax.lax.stop_gradient
-EDGE_BUDGET = 0.01  # the fixed share of an edge row's draws given to its floored outcomes
-
-
-def reweight(live, ref):
-    """Return live / sg(ref): value live / ref (1 when equal), derivative d live / ref; 0 where ref = 0."""
-    return safe_div(live, sg(ref))
 
 
 def reweight_log(lp_live, lp_ref):
-    """Return exp(lp_live - sg(lp_ref)) for log densities."""
+    """Return exp(lp_live - sg(lp_ref)) for log densities (``lumen._core.safe.score`` where both are one finite lp)."""
     return jnp.exp(lp_live - sg(lp_ref))
 
 
@@ -56,94 +61,85 @@ def choose(q, rand):
     return jnp.where(c[-1] > 0.0, k, -1)
 
 
-def domain(tables, stype, name):
-    """Return the (lo, hi) domain of surface type ``stype``'s parameter ``name`` (its ``domain``), or None."""
-    kd = next((k for k in tables.surface_types if k.name == stype), None)
-    return None if kd is None else kd.domain(name)
+def role(tables, row, name):
+    """Return the defensive role of the surface row ``row``'s parameter ``name`` (its type's ``role``), or None."""
+    return tables.rows[row].surface_type.role(name)
 
 
-def _at_edge(a, dom=(0.0, 1.0)):
-    return np.any((a <= dom[0]) | (a >= dom[1]))
-
-
-def _lobe_domain(tables, medium, channel, name):
-    """Return the (lo, hi) domain of a bulk lobe's parameter (the lobe's ``domains``), or None."""
+def lobe_role(tables, medium, channel, name):
+    """Return the defensive role of a bulk lobe's parameter (the lobe's ``defensive``), or None."""
     for m in tables.media:
         for ch in m.channels if m.name == medium else ():
             if ch.name == channel:
-                return ch.lobe.domains.get(name)
+                return ch.lobe.defensive.get(name)
     return None
 
 
-def edge_rows(tables, params, wrt):
-    """Return the edge rows: where a ``wrt`` parameter sits at an edge of its domain.
+def defensive(p, cover, e=DEFENSIVE_SHARE):
+    """Return the weights a categorical part is drawn from: the one defensive mixture.
 
-    ``wrt`` holds packed-parameter paths: ("surface_types", type, name) (every row) or ("surface_types", type, name,
-    row) for a surface parameter with a domain (the type's ``domain``), giving (type name, row); and ("media", medium,
-    channel, "lobe", name) for a bulk lobe's parameter with a domain (the lobe's ``domains``), giving (medium, channel,
-    name). Anything else has no edge here.
+    ``p``: the reference weights (unnormalised, total S); ``cover`` (bool): the outcomes the part may propose. Every
+    covered outcome of reference weight 0 gets S e / (1 - e) / n (n of them), so that normalised they take the share e
+    of the draws whatever S (1 / n each when S is 0: nothing else can be drawn); ``p`` itself where none is covered.
     """
-    out = set()
-    for path in wrt:
+    p = sg(p)
+    fl = cover & (p <= 0.0)
+    S = jnp.sum(p)
+    n = jnp.maximum(jnp.sum(fl), 1)
+    eps = jnp.where(S > 0.0, S * e / (1.0 - e), 1.0) / n
+    return jnp.where(fl, eps.astype(p.dtype), p)
+
+
+def defensive_q(p, cover, e=DEFENSIVE_SHARE):
+    """Return the normalised probabilities of ``defensive`` (``p`` itself, normalised as given, where none is
+    covered)."""  # noqa: D205, D209
+    q = defensive(p, cover, e)
+    return jnp.where(jnp.any(cover & (sg(p) <= 0.0)), q / jnp.sum(q), sg(p))
+
+
+class EdgeRows(NamedTuple):
+    """The defensive rows (``edge_rows``): ``surfaces`` the surface table's rows, ``lobes`` the bulk lobes' parameters
+    (medium, channel, name). Hashable (a static part of ``StepConfig``); false when there are none."""  # noqa: D205, D209
+
+    surfaces: tuple[int, ...] = ()
+    lobes: tuple[tuple[str, str, str], ...] = ()
+
+    def __bool__(self):
+        """Return whether there is any edge row."""
+        return bool(self.surfaces or self.lobes)
+
+
+def edge_rows(tables, paths) -> EdgeRows:
+    """Return the defensive rows of the packed-parameter ``paths`` (the detector's parameters): every row of a
+    parameter with a defensive role, whatever its value (decided by structure, so the estimator never depends on a
+    value).
+
+    ``paths``: ("surfaces", row, name) for a surface parameter (its row type's ``role``), giving the surface row; and
+    ("media", medium, channel, "lobe", name) for a bulk lobe's parameter (the lobe's ``defensive``), giving (medium,
+    channel, name). Anything else has none. Where nothing is covered at the reference the rows draw from it as is.
+    """  # noqa: D205
+    surfaces, lobes = set(), set()
+    for path in paths:
         if len(path) >= 5 and path[0] == "media" and path[3] == "lobe":
-            dom = _lobe_domain(tables, path[1], path[2], path[4])
-            if dom is not None and _at_edge(np.asarray(params["media"][path[1]][path[2]]["lobe"][path[4]]), dom):
-                out.add((path[1], path[2], path[4]))
-            continue
-        dom = domain(tables, path[1], path[2]) if len(path) >= 3 and path[0] == "surface_types" else None
-        if dom is None:
-            continue
-        v = params["surface_types"][path[1]][path[2]]
-        a = np.asarray(v["value"] if isinstance(v, dict) else v, np.float64)
-        a = a.reshape(a.shape[0], -1) if a.ndim else a.reshape(1, 1)
-        rows = range(a.shape[0]) if len(path) < 4 or path[3] is None else (int(path[3]),)
-        out |= {(path[1], r) for r in rows if _at_edge(a[r], dom)}
-    return tuple(sorted(out, key=str))
+            if lobe_role(tables, path[1], path[2], path[4]) is not None:
+                lobes.add((path[1], path[2], path[4]))
+        elif len(path) == 3 and path[0] == "surfaces" and role(tables, path[1], path[2]) is not None:
+            surfaces.add(int(path[1]))
+    return EdgeRows(surfaces=tuple(sorted(surfaces)), lobes=tuple(sorted(lobes)))
 
 
 def _row_table(tables, rows):
-    """Return the static (n_types, n_rows) bool table of the surface edge rows."""
-    names = [k.name for k in tables.surface_types]
-    rows = [row for row in rows if len(row) == 2]  # the surface rows (a lobe's are (medium, channel, name))
-    a = np.zeros((max(len(names), 1), max([r for _, r in rows] + [0]) + 1), bool)
-    for kn, r in rows:
-        if kn not in names:
-            raise ValueError(f"edge rows: no surface type {kn!r} (types {names})")
-        a[names.index(kn), int(r)] = True
+    """Return the static (n_rows,) bool table of the surface edge rows."""
+    a = np.zeros(max(len(tables.rows), 1), bool)
+    a[list(rows.surfaces)] = True
     return a
 
 
-def edge_floor(pr_r, stype, row, tables, rows):
-    """Return (the reference probabilities the outcome is drawn from, which outcomes were floored (K,) bool).
-
-    At an edge row every continuing outcome of the type's support with reference probability 0 is proposed at eps
-    (module docstring); elsewhere the reference is unchanged.
-    """
+def edge_floor(pr_r, row, tables, rows):
+    """Return the reference probabilities a surface outcome is drawn from: at an edge row the one defensive mixture
+    (``defensive``) over its continuing outcomes, its support's outcomes covered; elsewhere the reference."""  # noqa: D205, D209
     E = jnp.asarray(_row_table(tables, rows))
-    sup = np.zeros((max(len(tables.surface_types), 1), N_OUTCOMES), bool)
-    for i, kd in enumerate(tables.surface_types):
-        for o in kd.outcomes:
-            sup[i, o] = not TERMINAL[o]
-    k = jnp.maximum(stype, 0)
-    at = (stype >= 0) & (row >= 0) & (row < E.shape[1]) & E[k, jnp.clip(row, 0, E.shape[1] - 1)]
-    p = sg(pr_r)
-    cont = ~jnp.asarray(TERMINAL)
-    fl = at & jnp.asarray(sup)[k] & (p <= 0.0)
-    S = jnp.sum(jnp.where(cont, p, 0.0))
-    n = jnp.maximum(jnp.sum(fl), 1)
-    e = EDGE_BUDGET  # a fixed share (module docstring)
-    eps = jnp.where(S > 0.0, S * e / (1.0 - e), 1.0) / n
-    return jnp.where(fl, eps.astype(pr_r.dtype), p), fl
-
-
-def lobe_reference(lobe_params, lobe, key, rows):
-    """Return a bulk lobe's reference parameters with each one at an edge row moved inside its domain by EDGE_BUDGET.
-
-    ``key`` = (medium, channel); the edge rows (``edge_rows``) name (medium, channel, parameter).
-    """
-    moved = {}
-    for name, (lo, hi) in lobe.domains.items():
-        if (*key, name) in rows:
-            m = EDGE_BUDGET * (hi - lo)
-            moved[name] = jnp.clip(lobe_params[name], lo + m, hi - m)
-    return dict(lobe_params, **moved) if moved else lobe_params
+    sup = np.zeros((max(len(tables.rows), 1), N_OUTCOMES), bool)
+    sup[: len(tables.rows)] = tables.table.support
+    k = jnp.maximum(row, 0)
+    return defensive(pr_r, ((row >= 0) & E[k]) & jnp.asarray(sup)[k])

@@ -1,7 +1,7 @@
 """The transport's host-free pieces: the estimator (proposal, choice, edge rows and floor), the photon's parts, the
 default item's cells and the trace's integer halves. The step itself is checked by the physics tier (tests/physics)."""
 
-import types
+from types import SimpleNamespace
 
 import jax
 import jax.numpy as jnp
@@ -9,11 +9,18 @@ import numpy as np
 import pytest
 
 from lumen import diagnostics
+from lumen import run as runner
 from lumen._core.safe import safe_div
+from lumen._core.static import Static
+from lumen.build import lookup
+from lumen.compare import photons
 from lumen.media import bulk, laws, phase
-from lumen.surfaces import types as legacy
-from lumen.surfaces.outcomes import ABSORB, DETECT, SPECULAR, TERMINAL
-from lumen.transport import estimator, item, state
+from lumen.readout import fill
+from lumen.readout.grid import Grid
+from lumen.record import Photons
+from lumen.surfaces import types
+from lumen.surfaces.outcomes import DIFFUSE, N_OUTCOMES, SPECULAR
+from lumen.transport import estimator, state
 
 F32 = jnp.float32
 
@@ -40,93 +47,119 @@ def test_the_proposal_is_the_baselines_defensive_mix_at_zero_bit_for_bit():
     assert int(k[0]) == -1 and bool(jnp.all(jnp.asarray(p)[jnp.arange(1, 500), k[1:]] > 0))
 
 
+P = types.PAINTED.name  # the frontpainted type without TRANSMITTANCE (PAINTED_T with T fixed at 0)
+
+
 def _tables():
-    """Two rows of one painted type (R 0 and 0.5) and a water with Mie: the estimator reads the types and media."""
+    """Two rows of one painted type and a water with Mie: the estimator reads the rows' types and the media."""
     water = bulk.Medium("w", laws.constant("index"), None, (bulk.mie(laws.constant("length")),))
-    kp = {"painted": {"R": np.array([0.0, 0.5], np.float32), "f_spec": np.array([1.0, 1.0], np.float32)}}
-    return types.SimpleNamespace(surface_types=(legacy.PAINTED,), media=(water,)), kp
+    rows = (lookup.Row(types.PAINTED, "a"), lookup.Row(types.PAINTED, "b"))
+    support = np.zeros((2, N_OUTCOMES), bool)
+    support[:, list(types.PAINTED.outcomes)] = True
+    return SimpleNamespace(rows=rows, media=(water,), table=SimpleNamespace(support=support)), None
 
 
-def test_edge_rows_come_from_wrt_and_the_domains():
-    tables, kp = _tables()
-    lobe = {"g_forward": 0.6, "g_backward": 0.3, "forward_ratio": 1.0}
-    params = {"surface_types": kp, "media": {"w": {"mie": {"lobe": lobe}}}}
-    assert estimator.edge_rows(tables, params, [("surface_types", "painted", "R")]) == (("painted", 0),)
-    assert estimator.edge_rows(tables, params, [("surface_types", "painted", "R", 1)]) == ()
-    assert estimator.edge_rows(tables, params, [("surface_types", "painted", "f_spec", 0)]) == (("painted", 0),)
+def test_edge_rows_come_from_the_parameters_and_their_defensive_roles():
+    """Every row of a parameter with a defensive role is an edge row, whatever its value: no value is read."""
+    tables, _ = _tables()
+    E = estimator.EdgeRows
+    assert estimator.edge_rows(tables, [("surfaces", 0, "R"), ("surfaces", 1, "R")]) == E(surfaces=(0, 1))
+    assert estimator.edge_rows(tables, [("surfaces", 1, "R")]) == E(surfaces=(1,))
+    assert estimator.edge_rows(tables, [("surfaces", 0, "f_spec")]) == E(surfaces=(0,))
+    assert not estimator.edge_rows(tables, [("surfaces", 0, "T")])  # PAINTED's T is fixed: no parameter
     mie = ("media", "w", "mie", "lobe", "forward_ratio")
-    assert estimator.edge_rows(tables, params, [mie]) == (("w", "mie", "forward_ratio"),)
-    lobe["forward_ratio"] = 0.7
-    assert estimator.edge_rows(tables, params, [mie]) == ()
-    assert estimator.edge_rows(tables, params, []) == ()
+    assert estimator.edge_rows(tables, [mie]) == E(lobes=(("w", "mie", "forward_ratio"),))
+    assert not estimator.edge_rows(tables, [("media", "w", "mie", "lobe", "nope")])  # no role: no edge
+    assert estimator.edge_rows(tables, []) == E() and not E()
 
 
 def test_the_edge_floor_proposes_the_zero_outcomes_at_their_share():
     tables, _ = _tables()
-    pr = jnp.zeros(10, F32).at[ABSORB].set(1.0)  # R = 0: every continuing outcome has probability 0
-    q, fl = estimator.edge_floor(pr, jnp.int32(0), jnp.int32(0), tables, (("painted", 0),))
-    support = [o for o in legacy.PAINTED.outcomes if not TERMINAL[o]]
+    pr = jnp.zeros(N_OUTCOMES, F32)  # R = 0: every continuing outcome has probability 0 (the rest absorbed)
+    q = estimator.edge_floor(pr, jnp.int32(0), tables, estimator.EdgeRows(surfaces=(0,)))
+    fl = (q > 0) & (pr <= 0)
+    support = list(types.PAINTED.outcomes)
     assert sorted(np.flatnonzero(np.asarray(fl)).tolist()) == sorted(support)
     assert float(jnp.sum(jnp.where(fl, q, 0.0))) == pytest.approx(1.0)  # S = 0: n eps = 1
-    pr = jnp.zeros(10, F32).at[ABSORB].set(0.5).at[SPECULAR].set(0.5)
-    q, fl = estimator.edge_floor(pr, jnp.int32(0), jnp.int32(0), tables, (("painted", 0),))
-    s, e = 0.5, estimator.EDGE_BUDGET  # a fixed share of the draws, whatever S
+    pr = jnp.zeros(N_OUTCOMES, F32).at[SPECULAR].set(0.5)  # half absorbed
+    q = estimator.edge_floor(pr, jnp.int32(0), tables, estimator.EdgeRows(surfaces=(0,)))
+    fl = (q > 0) & (pr <= 0)
+    s, e = 0.5, estimator.DEFENSIVE_SHARE  # a fixed share of the draws, whatever S
     assert float(jnp.sum(jnp.where(fl, q, 0.0))) == pytest.approx(s * e / (1 - e), rel=1e-6)
-    q2, fl2 = estimator.edge_floor(pr, jnp.int32(0), jnp.int32(1), tables, (("painted", 0),))  # not an edge row
-    assert not bool(jnp.any(fl2)) and np.array_equal(np.asarray(q2), np.asarray(pr))
-    lobe = {"forward_ratio": jnp.asarray(1.0, F32), "g_forward": 0.6}
-    rows = (("w", "mie", "forward_ratio"),)
-    assert float(estimator.lobe_reference(lobe, phase.MIE_HG, ("w", "mie"), rows)["forward_ratio"]) == pytest.approx(
-        0.99
-    )
-    assert estimator.lobe_reference(lobe, phase.MIE_HG, ("w", "mie"), ()) is lobe
+    q2 = estimator.edge_floor(pr, jnp.int32(1), tables, estimator.EdgeRows(surfaces=(0,)))  # not an edge row
+    assert np.array_equal(np.asarray(q2), np.asarray(pr))
+    e = estimator.DEFENSIVE_SHARE  # Mie's lobe choice: the same rule over (r, 1 - r)
+    for r, want in ((1.0, 1.0 - e), (0.0, e), (0.5, 0.5), (0.995, 0.995)):
+        lobe = {"forward_ratio": jnp.asarray(r, F32), "g_forward": 0.6}
+        assert float(phase.MIE_HG.cover(lobe, e)["forward_ratio"]) == pytest.approx(want, rel=1e-6)
+
+
+def test_a_covered_spectrum_draws_its_massless_intervals_at_the_share():
+    """A spectrum interval with both knots 0 (a live table can put light there) gets the share e of the draws,
+    uniform in energy; a table without one is drawn as is, bitwise."""
+    from lumen.media import spectra
+
+    e = estimator.DEFENSIVE_SHARE
+    en, s = jnp.asarray([2.0, 2.5, 3.0, 3.5], F32), jnp.asarray([1.0, 1.0, 0.0, 0.0], F32)
+    e0, h, d, c = spectra.covered(en, s, e)
+    np.testing.assert_allclose(np.asarray(d * h), [(1 - e) * 2 / 3, (1 - e) / 3, e], rtol=1e-6)
+    at = jnp.asarray([2.2, 2.7, 3.2], F32)
+    np.testing.assert_allclose(np.asarray(spectra.covered_density(en, s, at, e)), np.asarray(d), rtol=1e-6)
+    full = jnp.asarray([1.0, 2.0, 1.0, 0.5], F32)
+    for a, b in zip(spectra.covered(en, full, e), spectra.g4_arrays(en, full), strict=True):
+        assert np.array_equal(np.asarray(a), np.asarray(b))
 
 
 def _row(n=3):
     z = jnp.zeros(n, F32)
-    return state.Emission(jnp.zeros((n, 3), F32), jnp.tile(jnp.asarray([0.0, 0.0, 1.0]), (n, 1)), z, z + 400.0,
-                          z + 1.0, jnp.zeros((n, 2, 3), F32), jnp.ones(n, bool))  # fmt: skip
+    return Photons(jnp.zeros((n, 3), F32), jnp.tile(jnp.asarray([0.0, 0.0, 1.0]), (n, 1)), z, z + 400.0, z + 1.0,
+                   jnp.zeros((n, 2, 3), F32))  # fmt: skip
 
 
 def test_the_photon_has_only_the_parts_asked_for():
     row = jax.tree_util.tree_map(lambda a: a[0], _row())
     ph = state.start(row, 5, 2)
-    assert (ph.stack, ph.moving, ph.z) == (None, None, None)
-    assert int(ph.vol) == 5 and int(ph.cls) == 2 and int(ph.sensor) == -1 and bool(ph.alive)
-    full = state.start(row, -1, 0, stacked=True, moving=True, edge=True)
-    assert int(full.stack.layer) == 0 and float(full.z) == 1.0 and bool(full.moving.drawn)
-    assert np.asarray(full.moving.chain.B).shape == (3, 2)
+    assert ph.analog is None and ph.gen is None
+    assert int(ph.vol) == 5 and int(ph.cls) == 2 and bool(ph.alive) and ph.moving is None
+    assert float(ph.wr) == float(ph.w) == 1.0  # the reference weight starts at the weight
+    assert int(state.start(row, -1, 0, gen=True).gen) == 0
 
 
-def test_the_default_item_tallies_by_sensor_and_band():
-    spec = item.photons(item.HistogramShape(3, (300.0, 400.0, 500.0)))
-    out = spec.outputs(2)
-    assert out["Q"] == (12, True) and out["stuck"] == (2, False)
+def test_the_checks_loop_is_the_readout_by_sensor_and_band():
+    """The checks' loop (``lumen.compare.photons.loop``) is the production loop on a grid of wavelength bands plus
+    the time-weighted charge "Tw" of the charge cells."""
+    spec = photons.loop(fill.HistogramLayout(3, Grid.bands((300.0, 400.0, 500.0))))
+    out = spec.outputs()
+    assert out["charge:0"] == out["charge2:0"] == (6, True) and out["Tw"] == (6, True) and "stuck" not in out
 
-    def dep(sensor, lam):
-        z = F32(0.0)
-        fields = dict(sensor=jnp.int32(sensor), lam=F32(lam), q=F32(0.5), time=F32(4.0), lost=z, abandoned=z,
-                      escaped=z, retired=z, stuck_pushed=jnp.bool_(True), stuck_abandoned=jnp.bool_(False))  # fmt: skip
-        return type("D", (), fields)
+    def dep(sensor, lam):  # a deposit record as the readout reads it
+        return runner.Record(jnp.int32(sensor), F32(0.5), F32(4.0), F32(lam))
 
-    adds = [(k, int(c), float(v)) for k, c, v in spec.emits(dep(2, 450.0), jnp.int32(1), None)]
-    assert adds[:2] == [("Q", 2 * 2 + 1 + 6, 0.5), ("Tw", 11, 2.0)]
-    assert [a[1:] for a in adds if a[0] == "stuck"] == [(0, 1.0), (-1, 1.0)]  # pushed, not abandoned
-    assert {
-        k: c
-        for k, c, _ in spec.emits(dep(2, 650.0), jnp.int32(0), item.grid(item.HistogramShape(3, (300.0, 400.0, 500.0))))
-    }["Q"] == -1  # outside the bands
-    assert {k: c for k, c, _ in spec.emits(dep(-1, 450.0), jnp.int32(0), None)}["Q"] == -1  # no sensor
+    adds = [(k, int(c), float(v)) for k, c, v in spec.emits(dep(2, 450.0))]
+    assert adds[:3] == [("charge:0", 2 * 2 + 1, 0.5), ("arrival", 2, 0.5), ("arrival_t", 2, 2.0)]
+    assert adds[-1] == ("Tw", 5, 2.0)
+    assert [(k, int(c), float(v)) for k, c, v in spec.moments(dep(2, 450.0))] == [
+        ("charge2:0", 5, 0.5), ("arrival2", 2, 0.5), ("pe2", 2, 0.0)]  # no acceptance weights: no pe  # fmt: skip
+    outside = {k: int(c) for k, c, _ in spec.emits(dep(2, 650.0))}
+    assert outside["charge:0"] == outside["Tw"] == -1 and outside["arrival"] == 2  # outside the bands: arrives only
+    assert {k: c for k, c, _ in spec.emits(dep(-1, 450.0))}["charge:0"] == -1  # no sensor
 
 
 def test_the_traces_integers_are_exact_in_two_halves():
     s = np.array([-1, 0, 65535, 65536, 123456789, 2**31 - 2], np.int32)
     hi, lo = diagnostics.halves(jnp.asarray(s))
-    assert np.array_equal(diagnostics.from_halves(np.asarray(hi), np.asarray(lo)), s)
+    assert np.array_equal(
+        (np.asarray(hi, np.int64) * diagnostics.HALF + np.asarray(lo, np.int64) - 1).astype(np.int32), s
+    )
     assert int(diagnostics.last_event(jnp.int32(3), jnp.int32(-2))) == 1
     assert int(diagnostics.last_event(jnp.int32(3), jnp.int32(0))) == 3  # STRAIGHT keeps it
-    assert int(diagnostics.last_event(jnp.int32(3), jnp.int32(DETECT))) == 2 + DETECT
+    assert int(diagnostics.last_event(jnp.int32(3), jnp.int32(DIFFUSE))) == 2 + DIFFUSE
     assert phase.MIE_HG.n_rand == 3  # the bulk layout's lobe block holds Mie's three uniforms
+
+
+# a model stand-in (hashable: a static argument of the loop)
+NO_ANALOG = type("Model", (), {"analog": False, "local": ()})
+NO_ANALOG.static = Static(NO_ANALOG)  # the jits' static argument (lumen.transport.step.Model.static)
 
 
 def test_the_runner_passes_tallymap_its_schedule(monkeypatch):
@@ -140,14 +173,15 @@ def test_the_runner_passes_tallymap_its_schedule(monkeypatch):
         raise RuntimeError("stop")
 
     monkeypatch.setattr(run.tm, "vmap", vmap)
-    spec = item.photons(item.HistogramShape(1, (300.0, 500.0)))
+    spec = photons.loop(fill.HistogramLayout(1, Grid.bands((300.0, 500.0))))
     with pytest.raises(RuntimeError, match="stop"):
-        run.run(spec, None, None, _row(2), jnp.zeros(2, jnp.uint32), backend="cpu")
-    assert seen["schedule"] == run.SCHEDULE == "step" and seen["backend"] == run.TALLYMAP_BACKEND["cpu"]
+        run.run(spec, NO_ANALOG, None, _row(2), jnp.zeros(2, jnp.uint32), backend="xla")
+    assert seen["schedule"] == run.SCHEDULE == "step" and seen["backend"] == "xla"
 
 
-def test_auto_is_the_cpu_backend_without_a_gpu(monkeypatch):
-    """backend="auto": tallymap's CPU backend (inexact float sums) when JAX has no GPU, CUDA when it has one."""
+def test_auto_is_the_kernel_backend_without_a_gpu(monkeypatch):
+    """backend="auto" and "cpu": tallymap's kernel backend wherever JAX runs (its C++/OpenMP target when JAX has no
+    GPU); "xla" is its plain-JAX backend."""
     from lumen import run
 
     seen = {}
@@ -158,49 +192,11 @@ def test_auto_is_the_cpu_backend_without_a_gpu(monkeypatch):
 
     monkeypatch.setattr(run.tm, "vmap", vmap)
     monkeypatch.setattr(run.jax, "default_backend", lambda: "cpu")
-    spec = item.photons(item.HistogramShape(1, (300.0, 500.0)))
+    monkeypatch.setattr(run._env, "gpu_expected", lambda: None)  # no GPU expected, whatever this job was given
+    spec = photons.loop(fill.HistogramLayout(1, Grid.bands((300.0, 500.0))))
     with pytest.raises(RuntimeError, match="stop"):
-        run.run(spec, None, None, _row(2), jnp.zeros(2, jnp.uint32), backend="auto")
-    assert seen["backend"] == run.TALLYMAP_BACKEND["cpu"]
-
-
-def test_a_many_bounce_chain_is_rescaled_without_changing_a_bit():
-    """A chain grown by many deterministic bounces (x 2^46; SK photon 20390 reached ~2^43) is brought back to ~1 by
-    a power of 2: the pinned end's weight factor and its derivative are bitwise those of the unscaled chain, and finite
-    where the unscaled second-order products overflow float32."""
-    from lumen.transport import moving_source as ms
-
-    rng = np.random.default_rng(3)
-    f32 = lambda a: jnp.asarray(a, jnp.float32)  # noqa: E731
-    ch = ms.Chain(f32(rng.normal(size=(3, 2)) * 2.0**-4), f32(rng.normal(size=(3, 2))), f32(rng.normal(size=(3, 3))),
-                  f32(rng.normal(size=(3, 3))), f32(rng.normal(size=2)), f32(rng.normal(size=2)),
-                  f32(rng.normal(size=(3, 2))), f32(rng.normal(size=(3, 2))), f32(np.zeros(3)))  # fmt: skip
-    n, y0 = f32([0.0, 0.0, 1.0]), f32([0.1, -0.2, 0.0])
-
-    def end(c, dy):  # the pinned end of a surface crossing whose point moves by dy (value 0)
-        Y = [c.A[:, i] + c.B[:, i] for i in range(2)]
-        Y2 = [c.CA[:, k] + c.CB[:, k] for k in range(3)]
-        return ms.surface_end(c, y0 + dy - jax.lax.stop_gradient(dy), n, Y, Y2, jnp.bool_(True))[1]
-
-    def grown(c, s):  # a chain of the same physics in a gauge s times finer
-        return c._replace(A=c.A * s, B=c.B * s, CA=c.CA * s * s, CB=c.CB * s * s, h=c.h * s, ht=c.ht * s,
-                          Er=c.Er * s, Ei=c.Ei * s)  # fmt: skip
-
-    big = grown(ch, f32(2.0**40))
-    r = ms.rescale(big)
-    assert 1.0 <= float(jnp.maximum(jnp.max(jnp.abs(r.A)), jnp.max(jnp.abs(r.B)))) < 2.0
-    assert ms.rescale(ch) is not None and all(  # within the band: untouched
-        np.asarray(a).tobytes() == np.asarray(b).tobytes() for a, b in zip(ms.rescale(ch), ch, strict=True)
-    )
-    want = jax.jvp(lambda d: end(r, d), (f32(np.zeros(3)),), (f32([0.3, 0.1, 0.0]),))
-    same = jax.jvp(lambda d: end(ms.rescale(grown(r, f32(2.0**40))), d), (f32(np.zeros(3)),), (f32([0.3, 0.1, 0.0]),))
-    assert all(np.asarray(a).tobytes() == np.asarray(b).tobytes() for a, b in zip(want, same, strict=True))
-    assert np.isfinite(np.asarray(want[1])).all()
-    huge = grown(ch, f32(2.0**46))  # the unscaled chain after ~20 bounces: in range, its products past float32's
-    raw = jax.jvp(lambda d: end(huge, d), (f32(np.zeros(3)),), (f32([0.3, 0.1, 0.0]),))
-    fixed = jax.jvp(lambda d: end(ms.rescale(huge), d), (f32(np.zeros(3)),), (f32([0.3, 0.1, 0.0]),))
-    assert not np.isfinite(np.asarray(raw)).all()
-    assert all(np.asarray(a).tobytes() == np.asarray(b).tobytes() for a, b in zip(fixed, want, strict=True))
+        run.run(spec, NO_ANALOG, None, _row(2), jnp.zeros(2, jnp.uint32), backend="auto")
+    assert seen["backend"] == run.KERNEL == "auto"
 
 
 def _rot_x(a):
@@ -216,7 +212,10 @@ def test_the_hit_angle_reads_only_the_sensors_own_pose():
     (d) the solid's origin moved along its axis, (e) its axis off z: the angle changes, the documented 0.2 limit (a
     declared axis and reference point).
     """
-    from lumen.transport.step import sensor_angle
+    from lumen.sensors.features import polar_angle
+
+    def sensor_angle(R, t, x):  # the deposit's point in the placement's frame (step._local), then the feature
+        return polar_angle(R.T @ (x - t))
 
     rng = np.random.default_rng(0)
     u = rng.normal(size=(64, 3)).astype(np.float32)
@@ -239,3 +238,87 @@ def test_the_hit_angle_reads_only_the_sensors_own_pose():
     R_e = R @ np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]], np.float32)  # (e) the axis along local y
     a_e = np.asarray(jax.vmap(lambda x: sensor_angle(jnp.asarray(R_e), jnp.asarray(t), x))(jnp.asarray(world)))
     assert np.max(np.abs(a_e - want)) > 1e-1
+
+
+def test_a_trace_writes_only_the_traced_photons():
+    """Trace's cells are indexed by the photon: one beyond n_traced writes nothing (it was left to tallymap's drops)."""
+    import jax.numpy as jnp
+
+    from lumen.diagnostics import Trace
+
+    tr = Trace(steps=2, n_traced=3)
+    ph = SimpleNamespace(alive=True, vertex=jnp.int32(0), x=jnp.zeros(3), d=jnp.zeros(3), vol=0, cls=0, srf=0)
+    dep = SimpleNamespace(event=jnp.int32(-1), lost=0.0, abandoned=0.0, pair=0)
+    for pid, written in ((2, True), (3, False)):
+        _, adds = tr.update(tr.init(ph), ph, ph, dep, jnp.int32(pid))
+        assert all((int(cell) >= 0) == written for _, cell, _ in adds)
+
+
+def test_the_time_histogram_holds_the_detected_light_at_the_values_given():
+    """A deposit fills a weighted time histogram (Grid.weighted) by the QE x CE of its charge cells read from the
+    run's weights (an operand), so light those values do not detect does not shape the time; the charge histogram is
+    unweighted; a weighted grid without weights is refused."""
+    g = Grid.bands((-np.inf, 200.0, np.inf), t0=0.0, dt=1.0, nt=8, weighted=True)
+    loop = fill.readout((fill.HistogramLayout(1, g),))
+
+    def dep(lam):  # a deposit record as the readout reads it
+        return runner.Record(jnp.int32(0), F32(2.0), F32(3.0), F32(lam), label=jnp.int32(0))
+
+    for tw in ((0.0, 0.25), (0.5, 1.0)):
+        for lam, cell in ((128.0, 0), (450.0, 1), (1500.0, 1)):  # the outer bands hold beyond the edges
+            adds = loop.emits(dep(lam), (jnp.asarray(tw, F32),))
+            got = sum(float(v) for k, c, v in adds if k == "time:0" and int(c) >= 0)
+            assert got == pytest.approx(2.0 * tw[cell]), (tw, lam)
+            assert sum(float(v) for k, c, v in adds if k == "charge:0" and int(c) >= 0) == pytest.approx(2.0)
+            pe = [float(v) for k, c, v in loop.moments(dep(lam), (jnp.asarray(tw, F32),)) if k == "pe2"]
+            assert pe == [pytest.approx(2.0 * tw[cell])]  # the pe moment's add: q times its cells' acceptance
+    with pytest.raises(ValueError, match="weighted time histogram"):
+        loop.emits(dep(450.0))
+
+
+def test_the_readout_per_block_of_sensors_is_the_readout_in_one_launch():
+    """The readout built from deposit records block by block (``fill.plan``, ``fill.place``) is the one-launch
+    readout bit for bit: each sensor's cells are the same adds into the same exact sums, whatever its block."""
+    g = Grid.bands((300.0, 400.0, 500.0), t0=0.0, dt=1.0, nt=16, weighted=True)
+    lays = (fill.HistogramLayout(5, g, index=(0, 1, 2, 3, 4, -1, -1, -1)),
+            fill.HistogramLayout(3, Grid.bands((300.0, 500.0)), index=(-1,) * 5 + (0, 1, 2)))  # fmt: skip
+    n, r = 300, np.random.default_rng(3)
+    rec = dict(sensor=r.integers(0, 8, n), q=r.uniform(0, 1, n), w0=r.uniform(0.5, 2, n), time=r.uniform(-3, 20, n),
+               lam=r.uniform(250, 550, n), photon=np.sort(r.integers(0, 100, n)))  # records per photon  # fmt: skip
+    rec = {k: jnp.asarray(rec[k], d) for k, d in runner.record_fields((), False)}
+    weights = (jnp.asarray([0.3, 0.7], F32), jnp.ones(1, F32))
+    one, _ = runner.rebuild(fill.readout(lays), rec, n, weights)
+    blocks = fill.plan(lays, runner.readout_bytes(int(2.5 * fill.sensor_cells(lays[0])), False, "auto"), False, "auto")
+    assert len(blocks) > 2
+    got = None
+    for b in blocks:
+        got = fill.place(lays, b, runner.rebuild(fill.readout(lays, b), rec, n, weights)[0], got)
+    assert set(got) == set(one)
+    for k in one:
+        assert np.array_equal(np.asarray(got[k]), np.asarray(one[k])), k
+    assert float(np.asarray(one["arrival"]).sum()) == pytest.approx(float(np.sum(rec["q"] * rec["w0"])), rel=1e-6)
+
+
+def test_a_moment_squares_each_photons_sum_over_its_records():
+    """A moment cell (``Readout.moments``, ``lumen.run.rebuild``) is sum_i x_i^2, x_i photon i's adds to the cell summed
+    over its records before the square (not each record's add squared), whatever the photon's records in between."""
+    lay = fill.HistogramLayout(4, Grid.bands((300.0, 400.0, 500.0)))
+    n, r = 400, np.random.default_rng(5)
+    photon = np.sort(r.integers(0, 60, n))  # records in (photon, step) order, up to ~15 per photon
+    rec = dict(sensor=r.integers(0, 4, n), q=r.uniform(0, 1, n), w0=r.uniform(0.5, 2, n), time=r.uniform(0, 9, n),
+               lam=r.uniform(250, 550, n), photon=photon)  # fmt: skip
+    rec = {k: jnp.asarray(rec[k], d) for k, d in runner.record_fields((), False)}
+    out, _ = runner.rebuild(fill.readout((lay,)), rec, n)
+    x = {k: np.asarray(v, np.float64) for k, v in rec.items()}
+    add = x["q"] * x["w0"]
+    band = np.where((x["lam"] >= 300) & (x["lam"] < 400), 0, np.where((x["lam"] >= 400) & (x["lam"] < 500), 1, -1))
+    arr2, ch2 = np.zeros(4), np.zeros(8)
+    for p in np.unique(photon):
+        m = photon == p
+        arr2 += np.bincount(x["sensor"][m].astype(int), add[m], 4) ** 2
+        b = m & (band >= 0)
+        ch2 += np.bincount((x["sensor"][b] * 2 + band[b]).astype(int), add[b], 8) ** 2
+    np.testing.assert_allclose(np.asarray(out["arrival2"]), arr2, rtol=1e-5)
+    np.testing.assert_allclose(np.asarray(out["charge2:0"]), ch2, rtol=1e-5)
+    per_record = np.bincount(x["sensor"].astype(int), add * add, 4)
+    assert np.all(np.asarray(out["arrival2"]) > per_record * (1 + 1e-3))  # the photons' sums, not the records'

@@ -1,10 +1,12 @@
 """The navigator (device): where a photon is, and the next visible crossing along its ray, by Geant4's volume tracking.
 
-The photon carries its placed volume ``vol`` (one solid per volume, placements overlap-free and daughters inside their
-mothers: ``lumen.validate.overlaps`` checks it) and the surface it sits on (``srf``, ``lumen.geometry.surface_id``).
-A query is Geant4's step: the nearer of the exit of vol's own solid and the first entry into one of vol's daughters
-(a BVH over each volume's daughters); the next volume from the tree (the daughter entered, or the mother, then
-relocated by ``lumen.rules.navigation``); a crossing into the same class (or a pass pair) continues the scan.
+The photon carries its placed volume ``vol`` (one solid per volume, daughters inside their mothers:
+``lumen.build.placements`` checks it; a region overlapping siblings share is its owner's:
+``lumen.geometry.ownership``) and the surface it sits on (``srf``, ``lumen.geometry.surface_id``). A query is Geant4's
+step: the nearer of the exit of vol's own solid and the first entry into one of vol's daughters or owners (a BVH over
+each volume's candidates); the next volume from the tree (the candidate entered, or the mother, then relocated by
+``lumen.rules.navigation``); a crossing that is no vertex (``vertex_tab``: the same class, or a pass pair; but into
+another volume of a class whose own pair has a surface, not another piece of one split union) continues the scan.
 
 Tolerance by surface identity, not by a push: the photon starts at its hit point and passes ``srf``; an event of that
 item within the band of the start is that same crossing; any other item's event counts, however close. A start state
@@ -12,9 +14,9 @@ that disagrees with the ray (vol's solid does not hold the start, or a daughter 
 it: a zero-length exit to the mother, or a zero-length entry into that daughter.
 
     nav = Navigator.from_scene(scene)                      # host: build (or read the build cache)
-    vol = locate(nav, x)                                    # jnp, one thread (or a jax.vmap batch)
-    cx = next_crossing(nav, o, d, vol, srf=-1, t_max=1e3)  # Crossing
-    t, n = surface_at(nav, cx, o, d)                        # the winner's (t, normal), live in (o, d)
+    vol = nav.locate(x)                                     # jnp, one thread (or a jax.vmap batch)
+    r = nav.query(o, d, vol, t_max=t_max, last=-1)          # the first visible crossing (t_max: m), a dict
+    t, n = surface_at(nav, cx, o, d)  # cx: r's t, hit and win (item, leaf, face, zero): the winner's (t, normal), live
 
 A query starts at its origin. ``t`` is the distance along the ray (m) throughout this module.
 """
@@ -28,58 +30,24 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 
+from lumen._core.safe import safe_norm
 from lumen.geometry import bvh, navigator_build, surface_id
 from lumen.geometry.csg import Csg, pick
 from lumen.rules import navigation as rules
+from lumen.rules.tolerances import TINY_DIR
+from lumen.units import HUGE
 
 F32, I32 = jnp.float32, jnp.int32
-INF = surface_id.INF
 STACK = navigator_build.STACK
-MAX_LOCATE_DEPTH = 64  # locate descends at most this many levels
-MAX_SETTLE_MOVES = 8  # a relocation moves at most this many volumes
-MAX_ROUNDS = 16  # invisible crossings followed per query before a straight continue event
-MAX_ANCESTORS = 8  # a relocation's ancestor test looks this many levels up
-TINY_DIR = 1e-30  # a direction component below this is replaced by +-this (the slab test's inverse)
-NORM_FLOOR = surface_id.NORM_FLOOR
 sg = lax.stop_gradient
 
-__all__ = ["Crossing", "Navigator", "locate", "next_crossing", "surface_at"]
-
-
-class Crossing(NamedTuple):
-    """The next visible crossing of a query (one thread).
-
-    ``t`` (live through custom_jvp), ``hit``, ``normal`` (faces the photon); the volumes: ``vol_start`` (located),
-    ``vol_before`` / ``vol_after`` (of the visible crossing), ``vol_reflect`` (where a reflection stays); ``srf`` the
-    surface met; ``step_too_small``: a straight continue event (Geant4's StepTooSmall, or the rounds ran out on
-    invisible crossings); ``winner`` (item, leaf, face, zero): the handle on the winning surface (``surface_at``). The
-    legacy optical classes (``cls_*``), ``sensor``, ``zero`` and the invisible crossings passed (``t_pass0``,
-    ``t_pass1``, ``n_pass``) serve the step.
-    """
-
-    t: jax.Array
-    hit: jax.Array
-    normal: jax.Array
-    vol_start: jax.Array
-    vol_before: jax.Array
-    vol_after: jax.Array
-    vol_reflect: jax.Array
-    srf: jax.Array
-    step_too_small: jax.Array
-    winner: jax.Array
-    cls_start: jax.Array
-    cls_before: jax.Array
-    cls_after: jax.Array
-    sensor: jax.Array
-    zero: jax.Array
-    t_pass0: jax.Array
-    t_pass1: jax.Array
-    n_pass: jax.Array
+__all__ = ["Navigator", "surface_at"]
 
 
 class _Enter(NamedTuple):
-    """The fixed inputs of one volume visit (``Navigator.enter``)."""
+    """The fixed inputs of one volume visit (``Navigator.enter``); ``v`` the volume visited."""
 
+    v: object
     od: object
     dd: object
     t_lo: object
@@ -98,8 +66,8 @@ class _Query(NamedTuple):
     tmax: object
     xa: object
     snv: object
-    pass_tab: object
-    max_rounds: int
+    vtx: object
+    s_at: object
 
 
 def _pk(v_, k_):
@@ -128,27 +96,31 @@ class Navigator:
     def __init__(self, arrays):
         self.arrays = arrays
         self.E = Csg(arrays.csg)
-        self.host = arrays.host
+        self.host = dict(arrays.host)
         self.n, self.n_mesh, self.chunk = arrays.n, arrays.n_mesh, arrays.chunk
-        self.CH0, self.SRF, self.bg = arrays.ch0, arrays.srf, arrays.bg
+        self.CH0, self.SRF = arrays.ch0, arrays.srf
         self.names, self.defs, self.stats = list(arrays.names), list(arrays.defs), dict(arrays.stats)
-        self.coincident, self.kids = list(arrays.coincident), arrays.kids
+        self.origins, self.pieces = list(arrays.origins), list(arrays.pieces)
+        self.owned, self.kids = list(arrays.owned), arrays.kids
+        self.clipped, self.thin = list(arrays.clipped), list(arrays.thin)
+        # what the geometry needs compiled: ancestor exits where a volume reaches out
+        self.clipping = bool(self.clipped)
         self.lo_w, self.hi_w = arrays.lo_w, arrays.hi_w
         self._D = None
         self._live = None
+        self.build_key = None  # the build cache's key of these arrays (lumen.geometry.cache.key), when built through it
 
     @classmethod
     def from_scene(cls, scene, cache=False, **options):
-        """Return the navigator of a lowered Scene; ``cache``: read or write the build cache (``lumen.build.cache``)."""
+        """Return the navigator of a lowered Scene; ``cache``: read or write the cache (``lumen.geometry.cache``)."""
         if cache:
-            from lumen.build import cache as build_cache
+            from lumen.geometry import cache as build_cache
 
-            return cls(build_cache.nav_arrays(scene, **options))
+            arrays, k = build_cache.nav_arrays(scene, **options)
+            nav = cls(arrays)
+            nav.build_key = k
+            return nav
         return cls(navigator_build.build(scene, **options))
-
-    def with_classes(self, vol_cls, mesh_cls=(), outside_cls=None):
-        """Return a navigator reporting another class per volume, mesh and the outside."""
-        return Navigator(self.arrays.with_classes(vol_cls, mesh_cls, outside_cls))
 
     def dev(self):
         """Return the host arrays as device arrays (made once, at trace time; or the operands ``bind`` gave)."""
@@ -185,19 +157,6 @@ class Navigator:
         k, ol, dl = self.frame(i, od, dd)
         return self.E.inside_ray(k, ol, dl, t)
 
-    def owns_ray(self, i, od, dd, t, pad):
-        """Return whether volume i holds od + t dd as Geant4 places it: its solid does, no hole filler does."""
-        D = self.dev()
-        n = self.n
-
-        def visit(j, g):
-            jc = jnp.minimum(j, n - 1)
-            return g | ((j < n) & (D["parent"][jc] != i) & self.ray_holds(jc, od, dd, t))
-
-        filled = pick(D["fill"][i], lambda: self.scan(i, od + t * dd, visit, jnp.bool_(False), lambda g: g, pad),
-                      lambda: jnp.bool_(False))  # fmt: skip
-        return self.ray_holds(i, od, dd, t) & ~filled
-
     def holds_point(self, i, x):
         """Return whether volume i's solid holds the point x (closed, no tolerance)."""
         D = self.dev()
@@ -229,15 +188,32 @@ class Navigator:
 
         return lax.while_loop(lambda c: (c[0] < D["vg1u"][v]) & ~done(c[1]), grp, (D["vg0"][v], init))[1]
 
+    def is_ancestor(self, i, v):
+        """Return whether volume i is an ancestor of volume v (a candidate v reaches out of: its face is v's exit)."""
+        if not self.clipping:
+            return jnp.bool_(False)
+        D = self.dev()
+        n = self.n
+        ic = jnp.clip(i, 0, n - 1)
+        return (i >= 0) & (i < v) & (v < n) & (v < i + D["size"][ic])
+
+    def rank(self, i):
+        """Return the rank of candidate item i: minus its place in the rule's order (``prio``; a mesh chunk its mesh's),
+        so the volume a point belongs to ranks highest among the candidates holding it."""  # noqa: D205, D209
+        D = self.dev()
+        j = jnp.where(i >= self.CH0, self.n + 1 + D["cmesh"][jnp.clip(i - self.CH0, 0, D["cmesh"].shape[0] - 1)], i)
+        return jnp.where(i >= 0, -D["prio"][jnp.clip(j, 0, D["prio"].shape[0] - 1)], I32(0))
+
     def _find(self, v, x):
-        """Return the daughter of v whose solid holds the point x, or -1."""
+        """Return the daughter (or owner) of v whose solid holds the point x, or -1 (Geant4's LevelLocate: the first in
+        the rule's order)."""  # noqa: D205, D209
         n = self.n
 
         def visit(i, g):
-            ok = (g < 0) & (i < n)
+            ok = rules.level_locate_wins(i, g, I32(-1), n, self.rank(i), self.rank(g)) & ~self.is_ancestor(i, v)
             return jnp.where(ok & self.holds_point(jnp.minimum(i, n - 1), x), i, g)
 
-        return self.scan(v, x, visit, I32(-1), lambda g: g >= 0)
+        return self.scan(v, x, visit, I32(-1), lambda g: jnp.bool_(False))
 
     def locate(self, x, start=None):
         """Return the deepest volume whose solid holds x (``n``: outside every volume).
@@ -254,15 +230,15 @@ class Navigator:
             return jnp.where(f >= 0, f, v), f < 0, k + 1
 
         v0 = I32(self.n) if start is None else jnp.where(known, jnp.asarray(start, I32), I32(self.n))
-        return lax.while_loop(lambda c: ~c[1] & (c[2] < MAX_LOCATE_DEPTH), body, (v0, known, I32(0)))[0]
+        return lax.while_loop(lambda c: ~c[1], body, (v0, known, I32(0)))[0]  # each move goes down, or to an owner
 
     def _find_ray(self, v, od, dd, t, excl, pad):
         """Return the daughter of v (other than excl) holding od + t dd (just after t, along the ray), or -1."""
         n = self.n
         x = od + t * dd
 
-        def visit(i, g):  # Geant4's LevelLocate: the highest index first
-            ok = rules.level_locate_wins(i, g, excl, n)
+        def visit(i, g):  # Geant4's LevelLocate: the first in the rule's order
+            ok = rules.level_locate_wins(i, g, excl, n, self.rank(i), self.rank(g)) & ~self.is_ancestor(i, v)
             return jnp.where(ok & self.ray_holds(jnp.minimum(i, n - 1), od, dd, t), i, g)
 
         return self.scan(v, x, visit, I32(-1), lambda g: jnp.bool_(False), pad)
@@ -270,8 +246,10 @@ class Navigator:
     def _settle(self, v, ray, crossed, pad):
         """Return (the volume holding the ray just after t, from v's neighbourhood; whether it moved).
 
-        Down into a daughter holding it, up while v does not (a zero-length volume is passed through). The item just
-        crossed is decided by the crossing itself, never re-entered or left here. ``ray`` = (od, dd, t).
+        Up while v's solid does not hold it, then down into a daughter or an owner holding it (an owner first: the
+        candidates' rank), as Geant4's LocateGlobalPointAndSetup (a daughter's part outside its mother is not found
+        from outside the mother; a zero-length volume is passed through). The item just crossed is decided by the
+        crossing itself, never re-entered or left here. ``ray`` = (od, dd, t).
         """
         od, dd, t = ray
         D = self.dev()
@@ -279,23 +257,21 @@ class Navigator:
 
         def body(c):
             v_, _, k = c
-            f = self._find_ray(v_, od, dd, t, crossed, pad)
             vi = jnp.minimum(v_, n - 1)
             ins = (v_ >= n) | (v_ == crossed) | self.ray_holds(vi, od, dd, t)
-            nv = jnp.where(f >= 0, f, jnp.where(ins, v_, D["parent"][v_]))
+            f = self._find_ray(v_, od, dd, t, crossed, pad)
+            nv = jnp.where(ins, jnp.where(f >= 0, f, v_), D["parent"][jnp.minimum(v_, D["parent"].shape[0] - 1)])
             return nv, (f < 0) & ins, k + 1
 
-        v2, _, _ = lax.while_loop(lambda c: ~c[1] & (c[2] < MAX_SETTLE_MOVES), body, (v, jnp.bool_(False), I32(0)))
+        v2, _, _ = lax.while_loop(lambda c: ~c[1], body, (v, jnp.bool_(False), I32(0)))  # up, then down: it ends
         return v2, v2 != v
 
     # ---------------------------------------------------------------------------------------- the daughter entry
-    def _triangle(self, ctx, i, k0, kn, b):
-        """Return the best event after testing one triangle of a mesh chunk (the facet rule); ``b`` = (q, best)."""
-        q, bb, hi_t = b
+    def _crossing(self, ctx, k):
+        """Return (whether the ray crosses triangle k, its t, n . d, the start's height s0 over its plane)."""
         D = self.dev()
-        od, dd, t_lo, band = ctx.od, ctx.dd, ctx.t_lo, ctx.band
+        od, dd, t_lo = ctx.od, ctx.dd, ctx.t_lo
         kx, ky, kz, Sx, Sy, Sz = ctx.shear
-        k = k0 + jnp.minimum(q, kn - 1)
         A, B, C = D["V0"][k] - od, D["V1"][k] - od, D["V2"][k] - od
 
         def sh(P):  # noqa: N803 -- P a triangle's vertex
@@ -307,21 +283,30 @@ class Navigator:
         W_ = Bx * Ay - By * Ax
         inside = ((U >= 0) & (V_ >= 0) & (W_ >= 0)) | ((U <= 0) & (V_ <= 0) & (W_ <= 0))
         det = U + V_ + W_
-        ok = inside & (det != 0) & (q < kn)
         # the sheared test decides inside / outside only (watertight); t comes from the plane: the start's height s0
         # over it (outward +) over the slope (the test's own t interpolates the vertices' depths metres away)
         Nk = D["N"][k]
         s0 = jnp.dot(Nk, od + t_lo * dd - D["V0"][k])
         nd = jnp.dot(Nk, dd)
         t_k = t_lo - s0 / jnp.where(nd != 0, nd, F32(-1.0))
-        # the facet rule: met only entering it (n . d < 0), a start behind its plane within the tolerance is on it;
-        # a back facet met first from clearly behind is the inside of the opaque solid: the event face = -2
+        return inside & (det != 0), t_k, nd, s0
+
+    def _triangle(self, ctx, i, k0, kn, b):
+        """Return the best event after testing one triangle of a mesh chunk (the facet rule); ``b`` = (q, best)."""
+        q, bb, hi_t = b
+        t_lo, band = ctx.t_lo, ctx.band
+        k = k0 + jnp.minimum(q, kn - 1)
+        crosses, t_k, nd, s0 = self._crossing(ctx, k)
+        ok = crosses & (q < kn)
+        # the facet rule: met entering it (n . d < 0), a start behind its plane within the tolerance on it; a facet
+        # met from clearly behind (a start inside the closed surface, where no volume holds a point as the mesh's) is
+        # an entry into the opaque part alike
         tol = F32(rules.FACET_BEHIND_BANDS) * band
         front = ok & (nd < 0) & (s0 > -tol) & (t_lo - t_k <= band)
         back = ok & (nd > 0) & (s0 < -tol) & (t_k > t_lo)
         t_c = jnp.maximum(t_k, t_lo)
         better = (front | back) & (t_c < hi_t) & ((t_c < bb[0]) | ((t_c == bb[0]) & bb[5]))
-        return _choose(better, (t_c, i, k, jnp.where(back, I32(-2), I32(-1)), t_k <= t_lo, jnp.bool_(False)), bb)
+        return _choose(better, (t_c, i, k, I32(-1), t_k <= t_lo, jnp.bool_(False)), bb)
 
     def _mesh_visit(self, ctx, i, b):
         """Return the best event after a mesh chunk (item i >= CH0)."""
@@ -338,14 +323,24 @@ class Navigator:
         return lax.fori_loop(0, self.chunk, lambda q, bb: self._triangle(ctx, i, k0, kn, (q, bb, hi_t)), b)
 
     def _on_face(self, ctx, i, fr, kn_i):
-        """Return whether the start is on the first change's face (the on-face rule: K_ON bands, the normal decides)."""
+        """Return whether the start is on the first change's face (the on-face rule: within K_ON bands of it).
+
+        A change within K_ON bands along the ray is on it; one up to GRAZE times farther (a grazing ray) is on it when
+        the start's own distance from the face is within K_ON bands (``surface_id.face_dist``), unless the ray crosses
+        the face the other way at the start, steeper than GRAZE resolves (a ray heading into a curved solid from its
+        face, whose chord ends on that face again: that end is a later crossing).
+        """
         dt = fr["t"] - ctx.t_lo
         lim = rules.K_ON * ctx.band
 
-        def grazing():  # between lim and lim / sin(0.25 deg): the normal decides
-            g = self.hit_grad(i, jnp.maximum(fr["leaf"], 0), fr["face"], ctx.od + fr["t"] * ctx.dd)
-            cs = jnp.abs(jnp.dot(g, ctx.dd)) / jnp.maximum(jnp.linalg.norm(g), NORM_FLOOR)
-            return dt * cs < lim
+        def grazing():  # between lim and GRAZE lim along the ray: the start's own distance from the face decides
+            x0 = ctx.od + ctx.t_lo * ctx.dd
+            lf = jnp.maximum(fr["leaf"], 0)
+            g0 = surface_id.hit_grad(self, i, lf, fr["face"], x0)
+            gc = surface_id.hit_grad(self, i, lf, fr["face"], ctx.od + fr["t"] * ctx.dd)
+            s0 = jnp.dot(g0, ctx.dd) / safe_norm(g0)
+            other_way = (s0 * jnp.dot(gc, ctx.dd) < 0) & (jnp.abs(s0) > 1.0 / rules.GRAZE)
+            return (surface_id.face_dist(self, i, lf, fr["face"], x0) < lim) & ~other_way
 
         far = pick(~kn_i & fr["hit"] & (dt >= lim) & (dt < rules.GRAZE * lim), grazing, lambda: jnp.bool_(False))
         return ~kn_i & fr["hit"] & ((dt < lim) | far)
@@ -361,7 +356,7 @@ class Navigator:
         ED = self.E.dev()
         tor = ED["T"]["typ"][ED["K"]["l0"][k] + jnp.maximum(sd[1], 0)] == 2
         t_on = ctx.t_lo + rules.K_ON * ctx.band / jnp.maximum(jnp.abs(sd[3]), 1.0 / rules.GRAZE)
-        t_hi = jnp.where(tor, t_on, F32(INF))
+        t_hi = jnp.where(tor, t_on, F32(HUGE))
         # while the ray is within that face's band its leaf is on the side the photon crossed to, whatever a float32
         # probe there says (Geant4: within kCarTolerance the direction decides)
         lf_on = jnp.where(kn_i, sd[1], I32(-2))
@@ -370,12 +365,20 @@ class Navigator:
         return r, kn_i
 
     def _unit_visit(self, ctx, i, b, is_own):
-        """Return the best event after volume i: own (item 0) its first exit, a daughter its first entry.
+        """Return the best event after volume i: own (item 0) its first exit, a daughter or an owner its first entry.
 
-        A zero-length exit if the start is outside own, a zero-length entry if it is inside a daughter (never the item
-        just crossed: its identity). The item sat on (side known): in it iff own; its direction decides.
+        An ancestor the volume is not proved inside: its first exit from a start inside it, when earlier than every
+        other event (a start outside it lies on its face where the volume touches it: no event; the volume's own exit
+        wins a tie).
+
+        A zero-length exit if the start is outside own, a zero-length entry if it is inside a daughter
+        (never the item just crossed: its identity). The item sat on (side known): in it iff own; its direction
+        decides.
         """
         sd = ctx.sd
+        clip = ~is_own & self.is_ancestor(i, ctx.v)
+        own = is_own
+        is_own = is_own | clip  # an exit: the first change of a solid the photon is in
         r, kn_i = self._unit_change(ctx, i, b, is_own)
         h, t, lf, f, in0 = r["hit"], r["t"], r["leaf"], r["face"], r["inside0"]
         fr = r["first"]
@@ -384,16 +387,17 @@ class Navigator:
         # daughter only heading in
         by_s = kn_i & jnp.where(is_own, sd[3] > 0, sd[3] < 0)
         ins = jnp.where(kn_i, jnp.where(is_own, (sd[3] <= 0) & h, sd[3] < 0), jnp.where(on, fr["inside"], in0))
-        h = h & (is_own | ~ins)  # a daughter the start is in: its zero-length entry or none
-        zero = jnp.where(is_own, ~ins, ins & ((i != ctx.last) | kn_i))
+        h = h & (is_own | ~ins) & (~clip | ins)  # a daughter the start is in: its zero-length entry or none
+        zero = jnp.where(is_own, ~ins & ~clip, ins & ((i != ctx.last) | kn_i))
         # a zero-length event's face: the face sat on when s decided it, the face at the start when the on-face rule
         # did; else none
         lf = jnp.where(zero, jnp.where(by_s, sd[1], jnp.where(on, fr["leaf"], I32(-1))), lf)
         f = jnp.where(zero, jnp.where(by_s, sd[2], jnp.where(on, fr["face"], I32(-1))), f)
-        te = jnp.where(zero, ctx.t_lo, jnp.where(h, t, F32(INF)))
-        # own is item 0: it sets the best (its exit, INF if none); a daughter beats it on a tie (the entry-tie rule)
-        better = is_own | ((zero | h) & rules.entry_wins(te, i, b))
-        return _choose(better, (te, i, lf, f, zero, is_own), b)
+        te = jnp.where(zero, ctx.t_lo, jnp.where(h, t, F32(HUGE)))
+        # own is item 0: it sets the best (its exit, HUGE if none); a daughter beats it on a tie (the entry-tie rule)
+        wins = rules.entry_wins(te, self.rank(i), b, self.rank(b[1]))
+        better = own | (clip & h & (te < b[0])) | (~is_own & (zero | h) & wins)
+        return _choose(better, (te, i, lf, f, zero, own), b)
 
     def _visit(self, ctx, i, b, is_own):
         if self.n_mesh:
@@ -404,7 +408,8 @@ class Navigator:
     def _node(self, ctx, vi_, c):
         """One step of a group's stackless BVH traversal (node -2: the volume's own solid, item 0)."""
         D = self.dev()
-        node, stack, sp, best, nb, ne, odg, invg, gend = c
+        visit = self._visit
+        node, stack, sp, best, odg, invg, gend = c
         ps = node == -2
         nd = jnp.maximum(node, 0)
 
@@ -416,8 +421,8 @@ class Navigator:
         hit = ps | ((tin <= tout) & (tout >= ctx.t_lo) & (tin <= lim))
         leaf = ps | (D["count"][nd] > 0)
         n_ev = jnp.where(ps, 1, jnp.where(hit & leaf, D["count"][nd], 0))
-        best = lax.fori_loop(0, n_ev, lambda k, b: self._visit(ctx, jnp.where(ps, vi_, D["items"][D["start"][nd] + k]),
-                                                               b, ps), best)  # fmt: skip
+        best = lax.fori_loop(0, n_ev, lambda k, b: visit(ctx, jnp.where(ps, vi_, D["items"][D["start"][nd] + k]),
+                                                         b, ps), best)  # fmt: skip
         last_n = jnp.maximum(gend - 1, 0)
         lc = nd + 1
         rc = D["skip"][jnp.minimum(lc, last_n)]
@@ -429,12 +434,12 @@ class Navigator:
         sp = jnp.where(inner, jnp.minimum(sp + 1, STACK), sp)
         sp2 = jnp.where(inner, sp, sp - 1)
         nxt = jnp.where(inner, near, jnp.where(sp2 >= 0, stack[jnp.maximum(sp2, 0)], I32(-1)))
-        return jnp.where(ps, I32(-1), nxt), stack, sp2, best, nb + 1, ne + n_ev, odg, invg, gend
+        return jnp.where(ps, I32(-1), nxt), stack, sp2, best, odg, invg, gend
 
     def _group(self, ctx, v, vi_, g, c):
         """Traverse one frame group of v (a group index below vg0[v]: the own pseudo-group, item 0)."""
         D = self.dev()
-        best, nb, ne = c
+        best = c
         pg = g < D["vg0"][v]
         gg = jnp.maximum(g, 0)
         Rg = D["gR"][gg]
@@ -442,13 +447,13 @@ class Navigator:
         invg = 1.0 / jnp.where(jnp.abs(ddg) < TINY_DIR, jnp.where(ddg < 0, -TINY_DIR, TINY_DIR), ddg)
         r0 = D["g0"][gg]
         start = jnp.where(pg, I32(-2), jnp.where(r0 < D["g1"][gg], r0, I32(-1)))
-        c0 = (start, jnp.zeros(STACK, I32), I32(0), best, nb, ne, odg, invg, D["g1"][gg])
-        _, _, _, best, nb, ne, *_ = lax.while_loop(lambda c_: (c_[0] >= 0) | (c_[0] == -2),
-                                                   lambda c_: self._node(ctx, vi_, c_), c0)  # fmt: skip
-        return best, nb, ne
+        c0 = (start, jnp.zeros(STACK, I32), I32(0), best, odg, invg, D["g1"][gg])
+        _, _, _, best, *_ = lax.while_loop(lambda c_: (c_[0] >= 0) | (c_[0] == -2),
+                                           lambda c_: self._node(ctx, vi_, c_), c0)  # fmt: skip
+        return best
 
     def enter(self, v, ctx, own=False, vi=None):
-        """Return the photon's next event in volume v: ((t, item, leaf, face, zero, is_own), nodes, evals).
+        """Return the photon's next event in volume v: (t, item, leaf, face, zero, is_own).
 
         Its own exit (``own``: item 0, before the daughters' BVHs) and the first entry into a daughter after t_lo
         (before t_bound); zero: a zero-length event at t_lo. ``ctx.sd`` = (known, leaf, face, s, entry): the photon
@@ -456,10 +461,10 @@ class Navigator:
         """
         D = self.dev()
         ctx = ctx._replace(shear=_shear(ctx.dd) if self.n_mesh else None)
-        none = (F32(INF), I32(-1), I32(-1), I32(-1), jnp.bool_(False), jnp.bool_(False))
+        none = (F32(HUGE), I32(-1), I32(-1), I32(-1), jnp.bool_(False), jnp.bool_(False))
         vi_ = I32(0) if vi is None else jnp.asarray(vi, I32)
         g_lo = D["vg0"][v] - jnp.asarray(own, I32)  # one pseudo-group first: the own volume (item 0)
-        return lax.fori_loop(g_lo, D["vg1"][v], lambda g, c: self._group(ctx, v, vi_, g, c), (none, I32(0), I32(0)))
+        return lax.fori_loop(g_lo, D["vg1"][v], lambda g, c: self._group(ctx, v, vi_, g, c), none)
 
     # ---------------------------------------------------------------------------------------- surface identity
     def srf_decode(self, s):
@@ -488,7 +493,7 @@ class Navigator:
             def s_of():  # s = d . n_out at the start: one leaf gradient of the item
                 g = self.hit_grad(l_it, jnp.maximum(l_lf, 0), l_fc, od + t_lo * dd)
                 gd = jnp.dot(g, dd)
-                return gd / jnp.maximum(jnp.linalg.norm(g), NORM_FLOOR) * jnp.where(l_o, F32(1.0), F32(-1.0)), gd < 0
+                return gd / safe_norm(g) * jnp.where(l_o, F32(1.0), F32(-1.0)), gd < 0
 
             s_, en_ = pick(l_kn, s_of, lambda: (F32(0.0), jnp.bool_(False)))
         else:
@@ -498,129 +503,133 @@ class Navigator:
         return l_it, (l_kn, l_lf, l_fc, s_, en_)
 
     def _next_volume(self, q, ev, v, vi, step):
-        """Return (the volume after the round's event, whether it was relocated, StepTooSmall)."""
-        D = self.dev()
-        OUT = I32(self.n)
-        t_c, u_in, is_own, z_in, t_lo, band, l_it, it, hit = ev
-        has_own = v < OUT
-        go_in = ~is_own
-        # StepTooSmall: the photon was just located in a coincident partner (its srf the member it left, v that one's
-        # partner) and its first event is v's own zero-length exit: a straight continue event, not an interface
-        l_c = jnp.clip(l_it, 0, OUT - 1)
-        stt = ((it == 0) & has_own & is_own & (z_in | (t_c - t_lo <= rules.K_ON * band)) & (l_it >= 0) & (l_it < OUT)
-               & (D["coin_hi"][l_c] == v) & hit)  # fmt: skip
-        is_ch = u_in >= self.CH0
-        v_in = jnp.where(is_ch, OUT + 1 + D["cmesh"][jnp.clip(u_in - self.CH0, 0, D["cmesh"].shape[0] - 1)], u_in)
-        nxt = jnp.where(go_in, v_in, D["parent"][jnp.minimum(v, D["parent"].shape[0] - 1)])
-        unit_x = jnp.where(go_in, jnp.where(is_ch, I32(-1), u_in), vi)
-        # leaving a volume with a coincident partner: located in the partner (zero-length), as Geant4 does
-        co = jnp.where(~go_in & has_own & ~stt, D["coin_hi"][vi], I32(-1))
-        nxt, moved = pick(hit & ~(go_in & is_ch) & (co < 0),
-                          lambda: self._settle(nxt, (q.od, q.dd, t_c + step), unit_x, step + band),
-                          lambda: (nxt, jnp.bool_(False)))  # fmt: skip
-        nxt = jnp.where(hit & (co >= 0), co, nxt)
-        return nxt, moved, stt
+        """Return (the volume after the round's event, whether it was relocated).
 
-    def _reflect_volume(self, q, ev, v, vi, nxt):
-        """Return the volume a reflection here stays in (Geant4 keeps the photon where it was located).
-
-        After a crossing of a face of nxt that is a zero-length step back into v (StepTooSmall); a photon relocated
-        into a volume already holding the point (an overlapping or coincident sibling, a daughter of one) stays in it
-        -- not one whose solid holds the point only because the import lowered its holes.
+        A daughter's or an owner's face: entered, then down; v's own face, or an ancestor's v reaches out of: located
+        from beyond that face, up while a solid does not hold the point, then down (Geant4's
+        LocateGlobalPointAndSetup).
         """
         D = self.dev()
         OUT = I32(self.n)
-        t_c, is_own, hit, step, band = ev
-        anc = lax.fori_loop(0, MAX_ANCESTORS, lambda k_, c_: (jnp.where(c_[0] < OUT, D["parent"][jnp.minimum(
-            c_[0], OUT - 1)], c_[0]), c_[1] | (c_[0] == nxt)), (vi, jnp.bool_(False)))[1]  # fmt: skip
-        n_c = jnp.minimum(nxt, OUT - 1)
-        reloc = hit & is_own & (v < OUT) & (nxt < OUT) & (nxt != vi) & ~anc
-        # the point just before the crossing: two bands back at the crossing's own scale
-        t_b = t_c - 2.0 * rules.band(q.xa, t_c)
-        owns = pick(reloc, lambda: self.owns_ray(n_c, q.od, q.dd, t_b, step + band), lambda: jnp.bool_(False))
-        return jnp.where(owns, nxt, v)
+        t_c, u_in, is_own, band, hit = ev
+        is_ch = u_in >= self.CH0
+        uc = jnp.clip(u_in, 0, OUT - 1)
+        clip = ~is_own & ~is_ch & self.is_ancestor(u_in, v)
+        go_in = ~is_own & ~clip
+        v_in = jnp.where(is_ch, OUT + 1 + D["cmesh"][jnp.clip(u_in - self.CH0, 0, D["cmesh"].shape[0] - 1)], u_in)
+        up = jnp.where(clip, D["parent"][uc], D["parent"][jnp.minimum(v, D["parent"].shape[0] - 1)])
+        nxt = jnp.where(go_in, v_in, up)
+        unit_x = jnp.where(go_in, jnp.where(is_ch, I32(-1), u_in), vi)
+        ray = (q.od, q.dd, t_c + step)
+        return pick(hit & ~(go_in & is_ch), lambda: self._settle(nxt, ray, unit_x, step + band),
+                    lambda: (nxt, jnp.bool_(False)))  # fmt: skip
 
     def _round(self, q, c):
         """One round of a query: the next event in the volume, the volume after it, and whether it is visible."""
         D = self.dev()
         OUT = I32(self.n)
-        t_lo, v, last_, _, it, rec, nb, ne, cur, pz = c
-        band = rules.band(q.xa, t_lo)
-        step = band
+        t_lo, v, last_, _, it, rec, cur, pz = c
+        band = rules.band(q.xa + jnp.abs(t_lo))
         vi = jnp.minimum(v, OUT - 1)
         has_own = v < OUT
         # last_: the photon's srf (round 0: the item it sits on, with its face and outward sign when known), then the
         # item each crossing of this query made (the band rules)
         l_it, side = self._side(q, last_, t_lo)
-        ctx = _Enter(q.od, q.dd, t_lo, q.tmax, l_it, band, side, None)
-        (t_c, u_in, l_in, f_in, z_in, is_own), nb1, ne1 = self.enter(v, ctx, own=has_own, vi=vi)
+        ctx = _Enter(v, q.od, q.dd, t_lo, q.tmax, l_it, band, side, None)
+        t_c, u_in, l_in, f_in, z_in, is_own = self.enter(v, ctx, own=has_own, vi=vi)
         hit = t_c < q.tmax
-        nxt, moved, stt = self._next_volume(q, (t_c, u_in, is_own, z_in, t_lo, band, l_it, it, hit), v, vi, step)
-        v_refl = self._reflect_volume(q, (t_c, is_own, hit, step, band), v, vi, nxt)
+        # the relocation's step past the crossing: the band at the crossing (not at the round's start: the same
+        # crossing steps alike however many rounds led to it)
+        step = rules.band(q.xa + jnp.abs(jnp.where(hit, t_c, t_lo)))
+        nxt, moved = self._next_volume(q, (t_c, u_in, is_own, step, hit), v, vi, step)
         item = jnp.where(~is_own, u_in, vi)
         after = D["cls"][jnp.where(hit, nxt, v)]
+        # a volume the ray only touches is never entered: entered at t_in (the round before), it holds no point of the
+        # ray up to this event -- a zero-length stay (a zero-length event at the round's start, which is t_in or the
+        # relocation's step past it; or this event within a zero-length step of t_in), or its midpoint outside it --
+        # so the crossing is from the volume before it (v_in: itself the one before a touched volume)
+        t_in, v_in = pz[8], pz[7]
+        zl = hit & (it > 0) & (z_in | (t_c - t_in <= rules.ZERO_STEP_BANDS * band))
+        touched = zl | pick(
+            hit & ~zl & (it > 0) & (v < OUT) & (after != cur),
+            lambda: ~self.holds_point(vi, q.od + (0.5 * (t_in + t_c)) * q.dd),
+            lambda: jnp.bool_(False),
+        )
+        cur = jnp.where(touched, D["cls"][v_in], cur)
+        v_b = jnp.where(touched, v_in, v)
+        # a vertex: a crossing into another volume (or class) whose class pair the vertex table marks (default: the
+        # class changes); the pieces of one split union are one volume
         vis = hit & (after != cur)
-        if q.pass_tab is not None:  # a pass pair (one medium, the PASS kernel) is no vertex either
-            P = q.pass_tab
-            npl = P.shape[0]
-            vis = vis & ~((cur < npl) & (after < npl) & P[jnp.clip(cur, 0, npl - 1), jnp.clip(after, 0, npl - 1)])
+        if q.vtx is not None:
+            V = q.vtx
+            nv = V.shape[0]
+            mark = V[jnp.clip(cur, 0, nv - 1), jnp.clip(after, 0, nv - 1)]
+            pc = D["piece"]
+            moved_vol = (nxt != v) & ~((pc[nxt] >= 0) & (pc[nxt] == pc[v]))
+            vis = hit & ((after != cur) | moved_vol) & jnp.where((cur < nv) & (after < nv), mark, after != cur)
         # every invisible crossing (the same class, or a pass pair) is recorded alike -- the first and the last, their
-        # count, and the volume the run ends in -- so the step places a bulk event past any of them
+        # count, the volume the run ends in, and the volume the ray is in at s_at (a bulk event's distance: the ray's
+        # own volume there, as Geant4 steps through each crossing) -- so the step places a bulk event past any of them
         inv = hit & ~vis
-        pz = (jnp.where(inv & (pz[0] == F32(INF)), t_c, pz[0]), jnp.where(inv, t_c, pz[1]), pz[2] + inv.astype(I32),
-              jnp.where(inv, nxt, pz[3]), hit)  # fmt: skip
-        vis = vis | stt
-        done = (~hit) | vis | (it + 1 >= q.max_rounds)
-        rec = jnp.where(hit, jnp.stack([lax.bitcast_convert_type(t_c, I32), item, l_in, f_in, z_in.astype(I32), v,
-                                        vis.astype(I32), stt.astype(I32), v_refl]), rec)  # fmt: skip
-        return (jnp.where(moved, t_c + step, t_c), jnp.where(hit, nxt, v), item, done, it + 1, rec, nb + nb1,
-                ne + ne1, jnp.where(hit, after, cur), pz)  # fmt: skip
+        # zero-length invisible crossings in a row (Geant4's zero steps): at ZERO_STEPS_BEFORE_PUSH the step's stuck
+        # rule takes over (a straight continue event); every other invisible crossing is followed, however many
+        zc = jnp.where(inv & (t_c - t_lo <= rules.ZERO_STEP_BANDS * band), pz[6] + 1, I32(0))
+        pz = (jnp.where(inv & (pz[0] == F32(HUGE)), t_c, pz[0]), jnp.where(inv, t_c, pz[1]), pz[2] + inv.astype(I32),
+              jnp.where(inv, nxt, pz[3]), hit, jnp.where(inv & (t_c <= q.s_at), nxt, pz[5]), zc,
+              jnp.where(hit, v_b, v_in), jnp.where(hit, t_c, t_in))  # fmt: skip
+        done = (~hit) | vis | (zc >= rules.ZERO_STEPS_BEFORE_PUSH)
+        rec = jnp.where(hit, jnp.stack([lax.bitcast_convert_type(t_c, I32), item, l_in, f_in, z_in.astype(I32), v_b,
+                                        vis.astype(I32)]), rec)  # fmt: skip
+        return (jnp.where(moved, t_c + step, t_c), jnp.where(hit, nxt, v), item, done, it + 1, rec,
+                jnp.where(hit, after, cur), pz)  # fmt: skip
 
     def _finish(self, q, o, d, end):
         """Return the query's outputs from the last round's record: the live t, the normal, the surface met."""
         D = self.dev()
         vol, cls0, v_after, rounds, rec, cls_after, pz = end
         bt, bi, bl, bf, zero, vb = lax.bitcast_convert_type(rec[0], F32), rec[1], rec[2], rec[3], rec[4] > 0, rec[5]
-        # hit = a visible crossing, or (cont) the rounds ran out on invisible ones with one in the last round: a
-        # straight event at the last crossing; a scan that ends on invisible crossings and then nothing is no hit
+        # hit = a visible crossing, or (cont) zero-length invisible crossings in a row: a straight event at the last
+        # crossing; a scan that ends on invisible crossings and then nothing is no hit
         vis_end = rec[6] == 1
-        cont = (~vis_end & pz[4] & (rounds >= q.max_rounds)) | (rec[7] == 1)
+        cont = ~vis_end & pz[4] & (pz[6] >= rules.ZERO_STEPS_BEFORE_PUSH)
         hit = (vis_end | cont) & (bt < q.tmax)
         live = hit & ~zero & (bl >= 0)
         if self.n_mesh:
             bt = surface_id.mesh_plane_t(self, (live, bi, bl, bt), q.od, q.dd, q.xa)
         # the live t of every event on a known face, a zero-length one too
         lt = hit & (bl >= 0)
-        bt_live = jnp.where(lt, self.live_t(bi, bl, bf, o, d, jnp.where(lt, bt, F32(INF))), bt)
-        g_hit = self.hit_grad(bi, jnp.maximum(bl, 0), bf, o + jnp.where(bt_live < INF, bt_live, 0.0) * d)
-        nrm = g_hit / jnp.maximum(jnp.linalg.norm(g_hit), NORM_FLOOR)
+        bt_live = jnp.where(lt, self.live_t(bi, bl, bf, o, d, jnp.where(lt, bt, F32(HUGE))), bt)
+        g_hit = self.hit_grad(bi, jnp.maximum(bl, 0), bf, o + jnp.where(bt_live < HUGE, bt_live, 0.0) * d)
+        nrm = g_hit / safe_norm(g_hit)
         nrm = jnp.where(hit & (bl >= 0), nrm, -d)  # a face known (a zero-length event on the face sat on too)
         # srf: the item met with its face and outward sign -- an entry heads against n_out, an exit along it
         gd = jnp.dot(g_hit, d)
-        srf = jnp.where(hit, self.srf_pack(bi, bl, bf, jnp.where(bi != vb, gd < 0, gd > 0), bi != vb), I32(-1))
+        entry = (bi != vb) & ~self.is_ancestor(bi, vb)  # an ancestor's face, reached out of, is an exit
+        srf = jnp.where(hit, self.srf_pack(bi, bl, bf, jnp.where(entry, gd < 0, gd > 0), entry), I32(-1))
         nrm = jnp.where(jnp.sum(nrm * d) > 0, -nrm, nrm)
         # vol_before: the volume just before the visible crossing; without a hit, where the invisible run ends
         vb = jnp.where(hit, vb, pz[3])
-        # a mesh's back facet met first: the photon is inside the opaque solid -- the crossing leaves the solid's class
-        inside_m = hit & (bi >= self.CH0) & (bf == -2)
-        cls_b = jnp.where(inside_m, cls_after, D["cls"][vb])
-        cls_a = jnp.where(inside_m, D["cls"][vb], jnp.where(hit, cls_after, D["cls"][vb]))
+        cls_b = D["cls"][vb]
+        cls_a = jnp.where(hit, cls_after, D["cls"][vb])
         return dict(t=jnp.where(hit, bt_live, q.tmax), hit=hit, cont=cont,
-                    vol_after=jnp.where(hit & ~inside_m, v_after, jnp.where(inside_m, vb, vol)), vol_before=vb,
-                    vol_reflect=jnp.where(hit, rec[8], vb), vol_start=vol, cls_before=cls_b, cls_start=cls0,
+                    vol_after=jnp.where(hit, v_after, vol), vol_before=vb,
+                    vol_start=vol, cls_before=cls_b, cls_start=cls0,
                     cls_after=cls_a, normal=nrm,
-                    sensor=jnp.where(hit, D["sen"][jnp.where(hit, v_after, vol)], I32(-1)),
                     item=jnp.where(hit, bi, -1), leaf=bl, face=bf, zero=hit & zero, t_pass0=pz[0], t_pass1=pz[1],
-                    n_pass=pz[2], srf=srf)  # fmt: skip
+                    n_pass=pz[2], vol_at=pz[5], srf=srf)  # fmt: skip
 
-    def query(self, o, d, vol, last=-1, t_max=1e3, pass_tab=None, sn=None):  # noqa: PLR0913 -- the step's query
-        """Return the first visible crossing along (o, d) for a photon in volume vol, as a dict.
+    def query(  # noqa: PLR0913 -- the step's query
+        self, o, d, vol, *, t_max, last=-1, vertex_tab=None, sn=None, s_at=None
+    ):
+        """Return the first visible crossing along (o, d) before ``t_max`` (m) for a photon in volume vol, as a dict.
 
-        Keys: t, hit, cont, vol_after, vol_before, vol_reflect, vol_start, cls_before, cls_start, cls_after, normal,
-        sensor, item, leaf, face, zero, t_pass0, t_pass1, n_pass, srf.
+        Keys: t, hit, cont, vol_after, vol_before, vol_start, cls_before, cls_start, cls_after, normal,
+        item, leaf, face, zero, t_pass0, t_pass1, n_pass, vol_at, srf; and rounds (the volumes visited).
         ``last``: the srf a query returned (the item with its face and outward sign: the side is the state, the
         direction decides), or a plain item, or -1. ``sn``: the normal that query gave (s = d . n_out from it).
-        ``pass_tab``: (C, C) bool, the class pairs crossed without a vertex.
+        ``vertex_tab``: (C, C) bool, the class pairs a crossing into another volume is a vertex at
+        (``lumen.build.tracked.vertices``; None: where the class changes). ``s_at``: a distance along the ray;
+        ``vol_at`` is the volume the ray is in there (past the invisible crossings before it), as the walk found it.
         """
         D = self.dev()
         o, d = jnp.asarray(o, F32), jnp.asarray(d, F32)
@@ -628,51 +637,31 @@ class Navigator:
         vol = jnp.asarray(vol, I32)
         cls0 = D["cls"][vol]
         snv = None if sn is None else sg(jnp.asarray(sn, F32))
-        P = None if pass_tab is None else jnp.asarray(pass_tab)
-        q = _Query(od, dd, F32(t_max), jnp.max(jnp.abs(od)), snv, P, MAX_ROUNDS)
-        rec0 = jnp.stack([lax.bitcast_convert_type(F32(INF), I32), I32(-1), I32(-1), I32(-1), I32(0), vol, I32(0),
-                          I32(0), vol])  # fmt: skip
-        c0 = (F32(0.0), vol, jnp.asarray(last, I32), jnp.bool_(False), I32(0), rec0, I32(0), I32(0), cls0,
-              (F32(INF), F32(INF), I32(0), vol, jnp.bool_(False)))  # fmt: skip
-        _, v_after, _, _, rounds, rec, _, _, cls_after, pz = lax.while_loop(
-            lambda c: ~c[3], lambda c: self._round(q, c), c0
-        )
-        return self._finish(q, o, d, (vol, cls0, v_after, rounds, rec, cls_after, pz))
-
-
-# ------------------------------------------------------------------------------------------------- the functions
-def locate(nav, x, start=None):
-    """Return the deepest volume holding x (``nav.n``: outside every volume); a known ``start`` (>= 0) as is."""
-    return nav.locate(x, start)
-
-
-def next_crossing(nav, o, d, vol, srf=-1, sn=None, t_max=1e3, pass_tab=None):  # noqa: PLR0913 -- the photon's state
-    """Return the next visible crossing (a Crossing) of a photon at o, heading d, in volume vol, on surface srf."""
-    r = nav.query(o, d, vol, last=srf, t_max=t_max, pass_tab=pass_tab, sn=sn)
-    win = jnp.stack([r["item"], r["leaf"], r["face"], r["zero"].astype(I32)])
-    return Crossing(t=r["t"], hit=r["hit"], normal=r["normal"], vol_start=r["vol_start"], vol_before=r["vol_before"],
-                    vol_after=r["vol_after"], vol_reflect=r["vol_reflect"], srf=r["srf"], step_too_small=r["cont"],
-                    winner=win, cls_start=r["cls_start"], cls_before=r["cls_before"], cls_after=r["cls_after"],
-                    sensor=r["sensor"], zero=r["zero"], t_pass0=r["t_pass0"], t_pass1=r["t_pass1"],
-                    n_pass=r["n_pass"])  # fmt: skip
+        V = None if vertex_tab is None else jnp.asarray(vertex_tab)
+        s_q = F32(HUGE) if s_at is None else sg(jnp.asarray(s_at, F32))
+        q = _Query(od, dd, F32(t_max), jnp.max(jnp.abs(od)), snv, V, s_q)
+        rec0 = jnp.stack([lax.bitcast_convert_type(F32(HUGE), I32), I32(-1), I32(-1), I32(-1), I32(0), vol, I32(0)])
+        c0 = (F32(0.0), vol, jnp.asarray(last, I32), jnp.bool_(False), I32(0), rec0, cls0,
+              (F32(HUGE), F32(HUGE), I32(0), vol, jnp.bool_(False), vol, I32(0), vol, F32(0.0)))  # fmt: skip
+        _, v_after, _, _, rounds, rec, cls_after, pz = lax.while_loop(lambda c: ~c[3], lambda c: self._round(q, c), c0)
+        out = self._finish(q, o, d, (vol, cls0, v_after, rounds, rec, cls_after, pz))
+        return dict(out, rounds=rounds)
 
 
 def surface_at(nav, cx, x, d):
     """Return (t, normal) of the surface crossing cx met, as functions of the ray (x, d), the winner held.
 
     The values and derivatives the query itself gives (its traversal is detached; only the winner's live t and normal
-    carry derivatives), without walking again. ``cx`` is a Crossing, or a mapping with ``t``, ``hit`` and ``win``.
+    carry derivatives), without walking again. ``cx`` is a mapping with the query's ``t`` and ``hit`` and ``win``, the
+    winner (item, leaf, face, zero).
     """
-    if isinstance(cx, Crossing):
-        t_q, hit, win = cx.t, cx.hit, cx.winner
-    else:
-        t_q, hit, win = cx["t"], cx["hit"], cx["win"]
+    t_q, hit, win = cx["t"], cx["hit"], cx["win"]
     it, lf, fc = win[0], win[1], win[2]
     x, d = jnp.asarray(x, F32), jnp.asarray(d, F32)
     live = hit & (lf >= 0)  # a zero-length event on a known face too (the query's)
     t0 = sg(t_q)
-    t = jnp.where(live, nav.live_t(it, lf, fc, x, d, jnp.where(live, t0, INF)), t0)
-    g = nav.hit_grad(it, jnp.maximum(lf, 0), fc, x + jnp.where(t < INF, t, 0.0) * d)
-    n = g / jnp.maximum(jnp.linalg.norm(g), NORM_FLOOR)
+    t = jnp.where(live, nav.live_t(it, lf, fc, x, d, jnp.where(live, t0, HUGE)), t0)
+    g = nav.hit_grad(it, jnp.maximum(lf, 0), fc, x + jnp.where(t < HUGE, t, 0.0) * d)
+    n = g / safe_norm(g)
     n = jnp.where(hit & (lf >= 0), n, -d)
     return t, jnp.where(jnp.sum(n * d) > 0, -n, n)

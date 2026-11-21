@@ -4,7 +4,8 @@ One ``lax.switch`` branch per medium (a real per-photon branch under tallymap) a
 event's direction. A channel's lobe is drawn at the reference values and weighted by its live / reference density; a
 polarised phase function (Rayleigh) is drawn from the photon's own state. After a scattering the state is projected on
 the plane perpendicular to the new direction (G4OpRayleigh's rule, and G4OpMieHG's); a re-emitted photon is
-unpolarised, at a wavelength drawn from the channel's spectrum after a delay drawn from Exp(tau) (G4OpWLS). Mie
+unpolarised and goes on as its channel's emission record gives it (``lumen.media.emission``: the wavelength at or
+below the absorbed energy, the delay, the weight; G4OpWLS). Mie
 (G4OpMieHG) is a channel like any other: a medium without MIEHG has no Mie branch.
 """
 
@@ -16,8 +17,8 @@ import jax
 import jax.numpy as jnp
 
 from lumen.media import bulk
+from lumen.rules.choices import DEFENSIVE_SHARE
 from lumen.surfaces import polar
-from lumen.transport import estimator, moving_source
 
 sg = jax.lax.stop_gradient
 F32 = jnp.float32
@@ -50,7 +51,7 @@ def index_at(tables, pm, lam, mi):
 
 def _state_after(ch, er, ei, wo):
     """Return the polarisation after an event of channel ch into wo (re-emission: unpolarised)."""
-    if ch.reemit is not None:
+    if ch.emission is not None:
         return jnp.zeros_like(er), jnp.zeros_like(ei)
     return polar.project(er, ei, wo)
 
@@ -58,8 +59,8 @@ def _state_after(ch, er, ei, wo):
 class BulkDraw(NamedTuple):
     """What a channel's draw gives.
 
-    The direction, its live and reference log densities, wavelength, delay, yield weight, the polarisation after and
-    (moving source) the live log density's gradient and the state's sensitivity.
+    The direction, its live and reference log densities, wavelength, delay, yield weight (and the yield weight at the
+    reference values), the polarisation after and whether the channel re-emits.
     """
 
     wo: jax.Array
@@ -68,20 +69,10 @@ class BulkDraw(NamedTuple):
     lam: jax.Array
     delay: jax.Array
     yield_w: jax.Array
+    yield_r: jax.Array
     er: jax.Array
     ei: jax.Array
-    sens: tuple
-
-
-def spectrum_arrays(model, ops):
-    """Return spectrum -> its tables (the operands')."""
-    ids = [id(s) for s in model.spectra]
-    return lambda spec: ops.tables["spectra"][ids.index(id(spec))]
-
-
-def reemit_draw(spec, tau, rand, arrays_of):
-    """Return (wavelength, delay) of a re-emission: the spectrum's draw and Exp(tau), from two uniforms."""
-    return sg(spec.sample(rand[0], arrays_of(spec))), -tau * jnp.log(rand[1])
+    reemitted: jax.Array  # the channel re-emits (G4OpWLS)
 
 
 def _lobe_fns(lobe):
@@ -92,22 +83,26 @@ def _lobe_fns(lobe):
 
 
 def _draw(ch, params, d, pol, rand, shared):
-    """Return (wo, lp, lpr, the live log density as a function of wo) of one channel's lobe (params: live, ref)."""
+    """Return (wo, lp, lpr) of one channel's lobe (params: live, ref)."""
     p, pr = params
     er, ei = pol
     sample, logpdf = _lobe_fns(ch.lobe)
     w_c = sg(sample(pr, d, sg(er), sg(ei), rand))
     lp = logpdf(p, d, er, ei, w_c)
     lpr = sg(lp) if shared else logpdf(pr, d, sg(er), sg(ei), w_c)
-    return w_c, lp, lpr, lambda wo: logpdf(sg(p), sg(d), sg(er), sg(ei), wo)
+    return w_c, lp, lpr
 
 
 def channel_draw(model, ops, mi, c, d, pol, lam, rand):  # noqa: PLR0913 -- the event's inputs
-    """Return the BulkDraw of channel c of medium mi for direction d, state pol = (er, ei) and wavelength lam."""
-    tables, moving, rows = model.tables, model.step.moving_source, model.step.edge_rows
+    """Return the BulkDraw of channel c of medium mi for direction d, state pol = (er, ei) and wavelength lam.
+
+    A lobe whose parameter is a defensive row (``StepConfig.edge_rows``) is drawn at its cover of the reference
+    (``Lobe.cover``: the one defensive mixture), and its weight is the live density over the one drawn from.
+    """
+    tables = model.tables
     shared = ops.reference is None
+    covered = {(m, ch) for m, ch, _ in model.step.edge_rows.lobes}
     pm, pmr = ops.params["media"], (ops.params if shared else ops.reference)["media"]
-    arrays_of = spectrum_arrays(model, ops)
     branches, offset = [], []
     for med in tables.media:
         offset.append(len(branches))
@@ -115,25 +110,24 @@ def channel_draw(model, ops, mi, c, d, pol, lam, rand):  # noqa: PLR0913 -- the 
 
             def f(_, med=med, ch=ch):
                 p = pm[med.name][ch.name].get("lobe", {})
-                q = pmr[med.name][ch.name].get("lobe", {})
-                ref = estimator.lobe_reference(q, ch.lobe, (med.name, ch.name), rows)
-                floored = ref is not q
-                pr = jax.tree_util.tree_map(sg, ref)
-                w_c, lp, lpr, lp_out = _draw(ch, (p, pr), d, pol, rand["lobe"], shared and not floored)
-                st = _state_after(ch, *pol, w_c)
-                sens = ()
-                if moving:
-                    E = moving_source.sensitivity(lambda wo: _state_after(ch, *(sg(e) for e in pol), wo), w_c)
-                    sens = (sg(jax.jacfwd(lp_out)(w_c)), *E)
-                if ch.reemit is None:
-                    return BulkDraw(w_c, lp, lpr, lam, F32(0.0), F32(1.0), *st, sens)
-                v = pm[med.name][ch.name]
-                lam2, delay = reemit_draw(ch.reemit, v["tau"], rand["reemit"], arrays_of)
-                return BulkDraw(w_c, lp, lpr, lam2, delay, jnp.asarray(v["yield"], F32), *st, sens)
+                pr = jax.tree_util.tree_map(sg, pmr[med.name][ch.name].get("lobe", {}))
+                cov = (med.name, ch.name) in covered and ch.lobe.cover is not None
+                if cov:
+                    pr = ch.lobe.cover(pr, DEFENSIVE_SHARE)
+                w_c, lp, lpr = _draw(ch, (p, pr), d, pol, rand["lobe"], shared and not cov)
+                er, ei = _state_after(ch, *pol, w_c)
+                if ch.emission is None:
+                    return BulkDraw(wo=w_c, lp=lp, lpr=lpr, lam=lam, delay=F32(0.0), yield_w=F32(1.0),
+                                    yield_r=F32(1.0), er=er, ei=ei,
+                                    reemitted=jnp.bool_(False))  # fmt: skip
+                v, vr = pm[med.name][ch.name], jax.tree_util.tree_map(sg, pmr[med.name][ch.name])
+                e = ch.emission.sample(v, vr, rand["reemit"], lam)
+                return BulkDraw(wo=w_c, lp=lp, lpr=lpr, lam=e.lam, delay=e.delay, yield_w=e.w,
+                                yield_r=e.w_r, er=er, ei=ei, reemitted=jnp.bool_(True))  # fmt: skip
 
             branches.append(f)
     if not branches:
-        sens = moving_source.no_sensitivities() if moving else ()
-        return BulkDraw(d, F32(0.0), F32(0.0), lam, F32(0.0), F32(1.0), *pol, sens)
+        return BulkDraw(wo=d, lp=F32(0.0), lpr=F32(0.0), lam=lam, delay=F32(0.0), yield_w=F32(1.0),
+                        yield_r=F32(1.0), er=pol[0], ei=pol[1], reemitted=jnp.bool_(False))  # fmt: skip
     idx = jnp.asarray(offset, jnp.int32)[mi] + c
     return jax.lax.switch(jnp.clip(idx, 0, len(branches) - 1), branches, None)

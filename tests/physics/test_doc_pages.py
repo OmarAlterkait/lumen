@@ -3,11 +3,8 @@
 import sys
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import doc_pages
-from lumen import _env
 
 
 def test_sources_page_runs(tmp_path, monkeypatch):
@@ -15,7 +12,13 @@ def test_sources_page_runs(tmp_path, monkeypatch):
     assert float(ns["light"].arrivals.sum()) > 0
 
 
-@pytest.mark.skipif(_env.data_dir() is None, reason="needs LUMEN_DATA (the shipped detectors' GDML)")
-def test_shipped_detectors_page_runs(tmp_path, monkeypatch):
-    ns = doc_pages.run("docs/howto/shipped-detectors.md", tmp_path, monkeypatch)
-    assert len(ns["det"].sensor_table()["name"]) > 0
+def test_yaml_detector_page_runs(tmp_path, monkeypatch):
+    """the hand-written YAML toy converts, loads and simulates"""
+    ns = doc_pages.run("docs/howto/yaml-detector.md", tmp_path, monkeypatch)
+    assert len(ns["det"].sensor_set.ids) == 6 and float(ns["light"].arrivals.sum()) > 0
+
+
+def test_readme_quick_start_runs(tmp_path, monkeypatch):
+    """the README's quick start, from a clone, on the toy detector shipped in examples/ (nothing downloaded)"""
+    ns = doc_pages.run("README.md", tmp_path, monkeypatch)
+    assert ns["light"].arrivals.shape == (8,) and float(ns["light"].arrivals.sum()) > 0

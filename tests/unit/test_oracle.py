@@ -5,8 +5,8 @@ import helpers
 import numpy as np
 import scene_fixture as fixture
 
-from lumen.build import scene, solids
-from lumen.validate import oracle
+from lumen.compare import oracle
+from lumen.geometry import scene, solids
 
 T_MIN = 1e-7
 
@@ -26,15 +26,15 @@ def test_daughter_clipped_to_its_mother():
     defs = {
         "root": scene.Definition(
             "root",
-            members=[scene.Member(solids.g4_box(1.0, 1.0, 1.0), scene.Label(1), 0)],
+            member=scene.Member(solids.g4_box(1.0, 1.0, 1.0), scene.Label(1)),
             placements=[scene.Placement("m", np.eye(3), np.zeros(3))],
         ),
         "m": scene.Definition(
             "m",
-            members=[scene.Member(solids.g4_orb(0.1), scene.Label(2), 0)],
+            member=scene.Member(solids.g4_orb(0.1), scene.Label(2)),
             placements=[scene.Placement("d", np.eye(3), np.array([0.09, 0.0, 0.0]))],
         ),
-        "d": scene.Definition("d", members=[scene.Member(solids.g4_orb(0.05), scene.Label(3), 0)]),
+        "d": scene.Definition("d", member=scene.Member(solids.g4_orb(0.05), scene.Label(3))),
     }
     orc = oracle.Oracle(scene.Scene(defs, "root", scene.Label(0)))
     med, _, _ = orc.label_many(np.array([[0.09, 0, 0], [0.13, 0, 0], [0.3, 0, 0]]))
@@ -46,13 +46,12 @@ def test_oracle_thin_layer_contract():
     point); with push 0 the glass is the medium after"""
     defs = {
         "root": scene.Definition(
-            "root",
-            members=[
-                scene.Member(solids.g4_orb(1.0), scene.Label(1, -1, "water"), 1),
-                scene.Member(solids.g4_orb(0.500001), scene.Label(2, -1, "glass"), 2),
-                scene.Member(solids.g4_orb(0.5), scene.Label(3, 0, "cathode"), 3),
-            ],
-        )
+            "root", scene.Member(solids.g4_orb(1.0), scene.Label(1, -1, "water")), [scene.Placement("glass")]
+        ),
+        "glass": scene.Definition(
+            "glass", scene.Member(solids.g4_orb(0.500001), scene.Label(2, -1, "glass")), [scene.Placement("cathode")]
+        ),
+        "cathode": scene.Definition("cathode", scene.Member(solids.g4_orb(0.5), scene.Label(3, 0, "cathode"))),
     }
     orc = oracle.Oracle(scene.Scene(defs, "root", scene.Label(0, -1, "outside")))
     cos_in = np.array([1.0, 0.8, 0.3, 0.2])
@@ -100,10 +99,10 @@ def test_torus_roots_and_locate():
     defs = {
         "root": scene.Definition(
             "root",
-            members=[scene.Member(solids.g4_box(4.0, 4.0, 4.0), scene.Label(1), 0)],
+            member=scene.Member(solids.g4_box(4.0, 4.0, 4.0), scene.Label(1)),
             placements=[scene.Placement("t", np.eye(3), np.array([0.5, 0.0, 0.0]), name="torus_pv")],
         ),
-        "t": scene.Definition("t", members=[scene.Member(solids.g4_torus(0.0, 0.1, 0.3), scene.Label(2, -1, "T"))]),
+        "t": scene.Definition("t", member=scene.Member(solids.g4_torus(0.0, 0.1, 0.3), scene.Label(2, -1, "T"))),
     }
     orc = oracle.Oracle(scene.Scene(defs, "root", scene.Label(0)))
     roots = np.sort(orc.solids[orc.sol[1]].roots(np.array([-1.0, 0, 0]), np.array([1.0, 0, 0])))

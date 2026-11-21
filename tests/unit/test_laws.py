@@ -3,6 +3,7 @@ law, Geant4's RINDEX and GROUPVEL, and no recompilation when a value changes."""
 
 import math
 
+import helpers
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -19,25 +20,52 @@ def ev(law, p, lam=LAM):
     return np.asarray(law({k: jnp.asarray(v, F32) for k, v in p.items()}, jnp.asarray(lam, F32)), np.float64)
 
 
-def test_tabulated_is_linear_in_energy_and_fails_outside_its_knots():
+def test_tabulated_is_linear_in_energy_held_beyond_and_checked_at_its_knots():
     e = np.array([1.5, 2.0, 3.0, 4.0, 6.5])
     v = np.array([10.0, 20.0, 15.0, 5.0, 1.0])
-    law = laws.tabulated("length", e[0], e[-1])
+    law = laws.tabulated("length")
     np.testing.assert_allclose(ev(law, {"energy": e, "value": v}), np.interp(HC / LAM, e, v), rtol=2e-6)
     assert abs(ev(law, {"energy": e, "value": v}, np.array([HC / 2.5]))[0] - 17.5) < 1e-4
-    with pytest.raises(laws.LawError):
-        laws.validate(law, {"energy": e, "value": v}, 150.0, 600.0)  # 150 nm = 8.3 eV > 6.5 eV
-    laws.validate(laws.tabulated("length", e[0], e[-1], outside="clamp"), {"energy": e, "value": v}, 150.0, 900.0)
+    assert np.all(ev(law, {"energy": e, "value": v}, np.array([HC / 9.0, HC / 1.0])) == np.float32([1.0, 10.0]))
+    lam, got = laws.validate(law, {"energy": e, "value": v})
+    np.testing.assert_allclose(lam, HC / e)
+    np.testing.assert_allclose(got, v, rtol=1e-6)
+    with pytest.raises(laws.LawError, match="out of range at 190.7 nm"):  # 6.5 eV
+        laws.validate(law, {"energy": e, "value": np.array([10.0, 20.0, 15.0, 5.0, 0.0])})
+    with pytest.raises(laws.LawError, match="no points"):  # a law in closed form names where it is checked
+        laws.validate(helpers.power("length"), dict(v0=30.0, lam0=400.0, k=4.0))
+
+
+def test_a_table_is_checked_only_where_light_evaluates_it():
+    """Hyper-K's mPMT gel (WCSim e2dc7a4): ABSLENGTH 0 at its end knots (177 nm, 12398 nm), outside the water light
+    (its RINDEX 200-790 nm). Checked at its knots inside the light's domain and at the domain's ends (held beyond its
+    knots), it passes; a zero inside the domain, or a value out of range the domain's end reaches by interpolation, is
+    refused."""
+    law = laws.tabulated("length")
+    e = np.array([0.1, 1.0, 2.0, 5.0, 7.0])
+    gel = {"energy": e, "value": np.array([0.0, 0.2, 0.9, 0.9, 0.0])}
+    dom = ((HC / 790.0, HC / 200.0),)  # 1.57-6.2 eV
+    with pytest.raises(laws.LawError, match="out of range"):
+        laws.validate(law, gel)  # every knot: the zeros outside any light refused
+    lam, got = laws.validate(law, gel, domain=dom)
+    np.testing.assert_allclose(np.sort(lam), np.sort(np.r_[HC / e[2:4], 790.0, 200.0]))
+    assert np.all(got > 0.0)
+    with pytest.raises(laws.LawError, match="out of range"):  # a zero inside the domain
+        laws.validate(law, dict(gel, value=np.array([0.0, 0.2, 0.0, 0.9, 0.0])), domain=dom)
+    with pytest.raises(laws.LawError, match="out of range at 200.0 nm"):  # the domain's end, interpolated
+        laws.validate(laws.tabulated("fraction"), {"energy": np.array([1.0, 2.0, 7.0]),
+                                                   "value": np.array([0.9, 0.9, 1.5])}, domain=dom)  # fmt: skip
+    assert laws.domain_points([500.0], None).tolist() == [500.0]
 
 
 def test_sellmeier_and_cauchy_against_float64():
     p = dict(B1=0.6961663, B2=0.4079426, B3=0.8974794, C1=0.0684043**2, C2=0.1162414**2, C3=9.896161**2)
     l2 = (LAM * 1e-3) ** 2
     ref = np.sqrt(1 + sum(p[f"B{i}"] * l2 / (l2 - p[f"C{i}"]) for i in (1, 2, 3)))
-    np.testing.assert_allclose(ev(laws.sellmeier(), p), ref, rtol=1e-6)
-    assert abs(ev(laws.sellmeier(), p, np.array([587.6]))[0] - 1.4585) < 2e-4  # fused silica (Malitson 1965)
+    np.testing.assert_allclose(ev(helpers.sellmeier(), p), ref, rtol=1e-6)
+    assert abs(ev(helpers.sellmeier(), p, np.array([587.6]))[0] - 1.4585) < 2e-4  # fused silica (Malitson 1965)
     pc = dict(A=1.32, B=0.004, C=1e-5)
-    np.testing.assert_allclose(ev(laws.cauchy(), pc), 1.32 + 0.004 / l2 + 1e-5 / l2**2, rtol=1e-6)
+    np.testing.assert_allclose(ev(helpers.cauchy(), pc), 1.32 + 0.004 / l2 + 1e-5 / l2**2, rtol=1e-6)
 
 
 def test_group_index_is_n_minus_lambda_dn_dlambda_of_the_same_law():
@@ -45,14 +73,14 @@ def test_group_index_is_n_minus_lambda_dn_dlambda_of_the_same_law():
     l2 = (LAM * 1e-3) ** 2
     n = 1.32 + 0.004 / l2 + 1e-5 / l2**2
     dn = (-2 * 0.004 / (l2 * LAM * 1e-3) - 4 * 1e-5 / (l2**2 * LAM * 1e-3)) * 1e-3  # per nm
-    np.testing.assert_allclose(ev(laws.group_index(laws.cauchy()), p), n - LAM * dn, rtol=1e-5)
+    np.testing.assert_allclose(ev(laws.group_index(helpers.cauchy()), p), n - LAM * dn, rtol=1e-5)
     with pytest.raises(ValueError):
         laws.group_index(laws.constant("length"))
 
 
 def test_power_law_and_ranges_fail_closed():
     np.testing.assert_allclose(
-        ev(laws.power("length"), dict(v0=30.0, lam0=400.0, k=4.0)), 30.0 * (LAM / 400.0) ** 4, rtol=1e-5
+        ev(helpers.power("length"), dict(v0=30.0, lam0=400.0, k=4.0)), 30.0 * (LAM / 400.0) ** 4, rtol=1e-5
     )
     for law, bad in (
         (laws.constant("index"), {"value": 0.9}),
@@ -61,13 +89,13 @@ def test_power_law_and_ranges_fail_closed():
         (laws.constant("length"), {"value": np.nan}),
     ):
         with pytest.raises(laws.LawError):
-            laws.validate(law, bad, 200.0, 700.0)
+            laws.validate(law, bad)
     with pytest.raises(laws.LawError):
-        laws.validate(laws.cauchy(), {"A": 1.3, "B": 0.0}, 200.0, 700.0)  # missing parameter
+        laws.validate(helpers.cauchy(points=helpers.VISIBLE), {"A": 1.3, "B": 0.0})  # missing parameter
 
 
 def test_changing_a_value_does_not_recompile_and_gradients_flow():
-    law = laws.power("length")
+    law = helpers.power("length")
     f = jax.jit(lambda p, lam: jnp.sum(law(p, lam)))
     lam = jnp.asarray(LAM, F32)
     p = {"v0": F32(30.0), "lam0": F32(400.0), "k": F32(4.0)}
@@ -126,3 +154,54 @@ def test_geant4_rindex_group_index_is_geant4s_groupvel(energy, n):
         lambda v: jnp.sum(laws.group_index(law)({"energy": p["energy"], "value": v}, jnp.asarray(lam[::50], F32)))
     )(p["value"])
     assert np.all(np.isfinite(np.asarray(gr)))
+
+
+@pytest.mark.parametrize(
+    "energy,n,lam",
+    [
+        (np.array([2.0, 3.0, 4.0]), np.array([1.30, 1.32, 1.35]), 420.0),  # a synthetic 3-knot table
+        # a quantised acrylic-like table (index steps of 1e-3, uneven knots), off the segment's midpoint
+        (np.array([2.80, 2.95, 3.03, 3.10, 3.25]), np.array([1.495, 1.497, 1.498, 1.500, 1.502]), 400.10),
+    ],
+)
+def test_geant4_rindex_wavelength_derivative_is_the_segment_slope(energy, n, lam):
+    """The index's derivative in wavelength is its forward interpolation's (the segment's slope in energy), not
+    Geant4's group index (that is ``group_index``, for timing)"""
+    p = {"energy": jnp.asarray(energy, F32), "value": jnp.asarray(n, F32)}
+    _, dn = jax.jvp(lambda x: laws.geant4_rindex()(p, x), (jnp.float32(lam),), (jnp.float32(1.0),))
+    k = np.searchsorted(energy, HC / lam) - 1
+    e32, n32 = energy.astype(F32).astype(float), n.astype(F32).astype(float)  # the knots as the law holds them
+    slope = (n32[k + 1] - n32[k]) / (e32[k + 1] - e32[k]) * (-HC / lam**2)
+    np.testing.assert_allclose(float(dn), slope, rtol=1e-5)
+    flat = {"energy": p["energy"], "value": jnp.full(len(n), 1.5, F32)}
+    assert float(jax.jvp(lambda x: laws.geant4_rindex()(flat, x), (jnp.float32(lam),), (jnp.float32(1.0),))[1]) == 0.0
+
+
+def test_one_admissibility_predicate_for_the_file_the_parameters_and_every_run():
+    """A length of 0 is refused by the file's law check, by Params.set and by the run's value check alike (one range
+    table, one predicate); NaN is never a value, even of a key with no finite range; a traced NaN counts as invalid."""
+
+    from lumen._core import domains
+    from lumen.build import values
+    from lumen.params import Param, Params
+    from lumen.rules.keys import PARAMS
+
+    law_of = {"ABSLENGTH": "length", "RAYLEIGH": "length", "MIEHG": "length", "WLSABSLENGTH": "length",
+              "RINDEX": "index", "REALRINDEX": "index", "IMAGINARYRINDEX": "extinction", "REFLECTIVITY": "fraction",
+              "TRANSMITTANCE": "fraction", "EFFICIENCY": "fraction"}  # each key's law (lumen.rules.optics)  # fmt: skip
+    assert {k: PARAMS[k].range for k in law_of} == {k: laws.RANGES[q] for k, q in law_of.items()}
+    with pytest.raises(laws.LawError, match="out of range"):
+        laws.validate(laws.constant("length"), {"value": 0.0})
+    spec = {"m/W/ABSLENGTH": PARAMS["ABSLENGTH"], "m/W/ANY": Param()}
+    p = Params({"m/W/ABSLENGTH": 10.0, "m/W/ANY": 1.0}, spec, {})
+    for key, bad in (("m/W/ABSLENGTH", 0.0), ("m/W/ANY", float("nan")), ("m/W/ANY", float("inf"))):
+        with pytest.raises(ValueError, match="outside"):
+            p.set(key, bad)
+        with pytest.raises(values.InvalidValue, match="not finite"):
+            values.check(None, Params({**p._values, key: bad}, spec, {}))
+    assert bool(domains.admits(np, 1e-30, *domains.LENGTH)) and not domains.admits(np, 0.0, *domains.LENGTH)
+
+    def invalid(x):
+        return values.check(None, Params({**p._values, "m/W/ANY": x}, spec, {}))[2]
+
+    assert int(jax.jit(invalid)(float("nan"))) == 1 and int(jax.jit(invalid)(2.0)) == 0

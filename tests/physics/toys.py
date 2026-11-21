@@ -9,6 +9,8 @@ Each toy is a GDML string and a recipe. Materials have constant tables over 1-12
 - ``border_pair()``: two touching water boxes A | B in a vacuum world, a detecting border A -> B only; B the sensor.
 - ``rt_boxes(r)``: three touching water boxes A | B | C; A -> B a dielectric_dielectric surface with R = r and T = 0
   (a probability at its domain's edge), B -> C detecting; C the sensor.
+- ``self_pair(r, t)``: two touching placements A | B of one water box LV, a polishedfrontpainted skin (R = r,
+  T = t) on it; a counting slab beyond B. Leaving A into B Geant4 applies the skin (pre's): the class's own pair.
 - ``lobe_plate(sigma, **consts)``: a unified ground metal plate (its three constants at 0 unless set) in a water
   detector volume, hit once by a pencil; two counting slabs above it.
 - ``overlap(name)``: one of g4ref's overlap toys (tests/data/overlap_toys), its slab counting every entry.
@@ -19,23 +21,48 @@ from __future__ import annotations
 from pathlib import Path
 
 import jax
+import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from lumen import run as runner
+from lumen import sources
+from lumen.build import tracked
+from lumen.compare import photons
 from lumen.format.sensorsets import SensorGroup
 from lumen.recipe import Recipe
-from lumen.transport import item
 from lumen.transport import step as steps
-from lumen.validate import photons
 
 A = 1.0  # m: the sphere's radius
 SHELL = 0.01  # m: the sensor shell's thickness
 N_WATER = 1.33
 GLASS = (0.6, 0.65)  # m: the refracting shell's radii
-BAND = (300.0, 600.0)
 DATA = Path(__file__).resolve().parents[1] / "data" / "overlap_toys"
 GPU = jax.default_backend() == "gpu"
 gpu_only = pytest.mark.skipif(not GPU, reason="needs a GPU (the comparison is against the CPU)")
+
+
+def setup(det, lam_edges=None, step=None) -> photons.Setup:
+    """Return a ``photons.Setup`` of a loaded detector on a bare Model: no reach bound, ``step`` (default: no edge
+    rows), so a test sets the step config itself (``photons.setup`` is the production Model)."""
+    geom = tracked.from_parts(det.parts, cache=True)
+    edges = tuple(float(v) for v in (lam_edges or (-np.inf, np.inf)))
+    model = steps.Model(geom, det.parts.optics, step or steps.StepConfig())
+    return photons.Setup(det, model, len(det.parts.optics.sensor_pvs), edges)
+
+
+def pencil(x, d, lam, n):
+    """Return the Photons of ``n`` photons from ``x`` along ``d`` at ``lam`` nm, t = 0, weight 1, unpolarised."""
+    return sources.Point(x, n_photons=float(n), lam=lam, direction=d).emit(None, jax.random.PRNGKey(0), n)
+
+
+def raw_key(seed, *folds):
+    """Return the raw key data of ``PRNGKey(seed)`` folded in with each of ``folds`` (the loop's key operand)."""
+    k = jax.random.PRNGKey(seed)
+    for f in folds:
+        k = jax.random.fold_in(k, f)
+    return jax.random.key_data(k) if jnp.issubdtype(k.dtype, jax.dtypes.prng_key) else k
+
 
 HEAD = """<?xml version="1.0" encoding="UTF-8"?>
 <gdml>
@@ -58,7 +85,7 @@ HEAD = """<?xml version="1.0" encoding="UTF-8"?>
 UNITS = {"RINDEX": "", "ABSLENGTH": "*m", "RAYLEIGH": "*m"}
 
 
-def table(name, value, unit=""):
+def table(name, value, unit="", key=""):
     return f'  <matrix name="{name}" coldim="2" values="1.0*eV {value}{unit} 12.0*eV {value}{unit}"/>'
 
 
@@ -76,7 +103,7 @@ def surface(name, define, finish, value, **props):
     """Return a dielectric_metal unified opticalsurface with constant tables."""
     refs = []
     for k, v in props.items():
-        define.append(table(f"{name}_{k}", v))
+        define.append(table(f"{name}_{k}", v, key=k))
         refs.append(f'<property name="{k}" ref="{name}_{k}"/>')
     return (f'  <opticalsurface name="{name}" model="unified" finish="{finish}" type="dielectric_metal" '
             f'value="{value}">{"".join(refs)}</opticalsurface>')  # fmt: skip
@@ -103,14 +130,16 @@ def cube_mesh(name, half_m, centre_m):
     return f'  <tessellated name="{name}" aunit="deg" lunit="mm">{tri}</tessellated>', pos
 
 
-def sphere(r=0.3, finish="polished", sigma_alpha=0.0, absorption=2.0, rayleigh=None, occluder=None, glass=False):
+def sphere(r=0.3, finish="polished", sigma_alpha=0.0, absorption=2.0, rayleigh=None, occluder=None, glass=False,
+           groupvel=None):  # fmt: skip
     """Return (GDML, recipe) of the sensor sphere.
 
     ``occluder``: None, or ("box" | "mesh", half side m, z of its centre m); ``glass``: a glass shell (n 1.5, radii
-    ``GLASS``) about the centre, inside the water.
+    ``GLASS``) about the centre, inside the water; ``groupvel``: the water's user GROUPVEL (mm / ns, a flat table).
     """
     define = []
     water = dict(RINDEX=N_WATER, ABSLENGTH=absorption) | ({} if rayleigh is None else dict(RAYLEIGH=rayleigh))
+    water |= {} if groupvel is None else dict(GROUPVEL=groupvel)
     mats = [material("Liquid", define, **water), material("Vac", define), material("Cathode", define),
             material("Black", define), material("Glass", define, RINDEX=1.5, ABSLENGTH=1e3)]  # fmt: skip
     props = dict(REFLECTIVITY=r, EFFICIENCY=1.0, SPECULARSPIKECONSTANT=0.0, SPECULARLOBECONSTANT=0.0,
@@ -143,8 +172,8 @@ def sphere(r=0.3, finish="polished", sigma_alpha=0.0, absorption=2.0, rayleigh=N
                  '<physvolref ref="pvCath"/></bordersurface>')  # fmt: skip
     gdml = HEAD.format(define="\n".join(define), materials="\n".join(mats), solids="\n".join(solids),
                        structure=structure)  # fmt: skip
-    group = SensorGroup("cath", "border_into", "lumen:geant4", lv="CathLV", settings={"efficiency_on_entry": 1.0})
-    return gdml, Recipe("sphere", "WorldLV", BAND, (group,))
+    group = SensorGroup("cath", rule="border_into", lv="CathLV", settings={"entry_efficiency": 1.0})
+    return gdml, Recipe("sphere", "WorldLV", groups=(group,))
 
 
 def border_pair():
@@ -165,8 +194,38 @@ def border_pair():
                  "</bordersurface>")  # fmt: skip
     gdml = HEAD.format(define="\n".join(define), materials="\n".join(mats), solids="\n".join(solids),
                        structure=structure)  # fmt: skip
-    group = SensorGroup("b", "border_into", "lumen:geant4", lv="BLV", settings={"efficiency_on_entry": 1.0})
-    return gdml, Recipe("border_pair", "WorldLV", BAND, (group,))
+    group = SensorGroup("b", rule="border_into", lv="BLV", settings={"entry_efficiency": 1.0})
+    return gdml, Recipe("border_pair", "WorldLV", groups=(group,))
+
+
+def junction():
+    """Return (GDML, recipe) of a glass box (n 1.5, 0.2 m, at the origin) touching a steel slab (no RINDEX, a
+    polished metal skin with R 1) on its +x face (x = 0.1 m), in water; a water shell (r 0.4-0.41 m) counts."""
+    define = []
+    mats = [material("WaterJ", define, RINDEX=N_WATER, ABSLENGTH=1e3), material("GlassJ", define, RINDEX=1.5,
+            ABSLENGTH=1e3), material("Steel", define), material("Vac", define)]  # fmt: skip
+    solids = ['  <box name="WorldS" x="1.2" y="1.2" z="1.2" lunit="m"/>',
+              '  <box name="TankS" x="1" y="1" z="1" lunit="m"/>',
+              '  <box name="GlassS" x="0.2" y="0.2" z="0.2" lunit="m"/>',
+              '  <box name="SteelS" x="0.02" y="0.2" z="0.2" lunit="m"/>', *shell("ShellS", 0.4, 0.41),
+              surface("Refl", define, "polished", 0.0, REFLECTIVITY=1.0)]  # fmt: skip
+    structure = (
+        '  <volume name="GlassLV"><materialref ref="GlassJ"/><solidref ref="GlassS"/></volume>\n'
+        '  <volume name="SteelLV"><materialref ref="Steel"/><solidref ref="SteelS"/></volume>\n'
+        '  <volume name="ShellLV"><materialref ref="WaterJ"/><solidref ref="ShellS"/></volume>\n'
+        '  <volume name="TankLV"><materialref ref="WaterJ"/><solidref ref="TankS"/>\n'
+        '    <physvol name="pvGlass"><volumeref ref="GlassLV"/></physvol>\n'
+        '    <physvol name="pvSteel"><volumeref ref="SteelLV"/><position name="ps" x="0.11" unit="m"/>'
+        "</physvol>\n"
+        '    <physvol name="pvShell"><volumeref ref="ShellLV"/></physvol>\n  </volume>\n'
+        '  <volume name="WorldLV"><materialref ref="Vac"/><solidref ref="WorldS"/>\n'
+        '    <physvol name="pvTank"><volumeref ref="TankLV"/></physvol>\n  </volume>\n'
+        '  <skinsurface name="ReflSkin" surfaceproperty="Refl"><volumeref ref="SteelLV"/></skinsurface>'
+    )
+    gdml = HEAD.format(define="\n".join(define), materials="\n".join(mats), solids="\n".join(solids),
+                       structure=structure)  # fmt: skip
+    group = SensorGroup("shell", rule="any_entry", lv="ShellLV", settings={"entry_efficiency": 1.0})
+    return gdml, Recipe("junction", "TankLV", groups=(group,))
 
 
 def rt_boxes(r=0.5, absorption=1e3):
@@ -199,8 +258,41 @@ def rt_boxes(r=0.5, absorption=1e3):
                  "</bordersurface>")  # fmt: skip
     gdml = HEAD.format(define="\n".join(define), materials="\n".join(mats), solids="\n".join(solids),
                        structure=structure)  # fmt: skip
-    group = SensorGroup("c", "border_into", "lumen:geant4", lv="CLV", settings={"efficiency_on_entry": 1.0})
-    return gdml, Recipe("rt_boxes", "WorldLV", BAND, (group,))
+    group = SensorGroup("c", rule="border_into", lv="CLV", settings={"entry_efficiency": 1.0})
+    return gdml, Recipe("rt_boxes", "WorldLV", groups=(group,))
+
+
+def self_pair(r=0.3, t=0.5, absorption=1e3):
+    """Return (GDML, recipe) of two touching placements A | B of one water box LV (0.5 m cubes at x = -0.25, +0.25 m)
+    in a world of index 1, and a counting slab S (x in [0.75, 0.85] m) beyond B.
+
+    The box LV's skin: dielectric_dielectric polishedfrontpainted, REFLECTIVITY r, TRANSMITTANCE t (straight through,
+    specular reflection, the rest absorbed). A and B are one class; the crossing A -> B is the class table's diagonal:
+    Geant4 applies the skin there (pre's skin, A not entering a daughter), as at A's and B's faces on the world.
+    """
+    define = []
+    mats = [material("Liq", define, RINDEX=N_WATER, ABSLENGTH=absorption), material("Air1", define, RINDEX=1.0)]
+    for k, v in (("Paint_R", r), ("Paint_T", t)):
+        define.append(table(k, v))
+    solids = ['  <box name="WorldS" x="4" y="4" z="4" lunit="m"/>',
+              '  <box name="CubeS" x="0.5" y="0.5" z="0.5" lunit="m"/>',
+              '  <box name="SlabS" x="0.1" y="1" z="1" lunit="m"/>',
+              '  <opticalsurface name="Paint" model="unified" finish="polishedfrontpainted" '
+              'type="dielectric_dielectric" value="0"><property name="REFLECTIVITY" ref="Paint_R"/>'
+              '<property name="TRANSMITTANCE" ref="Paint_T"/></opticalsurface>']  # fmt: skip
+    structure = ('  <volume name="BoxLV"><materialref ref="Liq"/><solidref ref="CubeS"/></volume>\n'
+                 '  <volume name="SLV"><materialref ref="Air1"/><solidref ref="SlabS"/></volume>\n'
+                 '  <volume name="WorldLV"><materialref ref="Air1"/><solidref ref="WorldS"/>\n'
+                 '    <physvol name="pvA"><volumeref ref="BoxLV"/><position name="pa" x="-0.25" unit="m"/></physvol>\n'
+                 '    <physvol name="pvB"><volumeref ref="BoxLV"/><position name="pb" x="0.25" unit="m"/></physvol>\n'
+                 '    <physvol name="pvS"><volumeref ref="SLV"/><position name="ps" x="0.8" unit="m"/></physvol>\n'
+                 "  </volume>\n"
+                 '  <skinsurface name="PaintSkin" surfaceproperty="Paint"><volumeref ref="BoxLV"/>'
+                 "</skinsurface>")  # fmt: skip
+    gdml = HEAD.format(define="\n".join(define), materials="\n".join(mats), solids="\n".join(solids),
+                       structure=structure)  # fmt: skip
+    group = SensorGroup("slab", rule="any_entry", lv="SLV", settings={"entry_efficiency": 1.0})
+    return gdml, Recipe("self_pair", "WorldLV", groups=(group,))
 
 
 def lobe_plate(sigma=0.2, **consts):
@@ -237,23 +329,44 @@ def lobe_plate(sigma=0.2, **consts):
                  "</skinsurface>")  # fmt: skip
     gdml = HEAD.format(define="\n".join(define), materials="\n".join(mats), solids="\n".join(solids),
                        structure=structure)  # fmt: skip
-    group = SensorGroup("slab", "any_entry", "lumen:counting", lv_pattern="^Slab", settings={"efficiency": 1.0})
-    return gdml, Recipe("lobe_plate", "WaterLV", BAND, (group,))
+    group = SensorGroup("slab", rule="any_entry", lv_pattern="^Slab", settings={"entry_efficiency": 1.0})
+    return gdml, Recipe("lobe_plate", "WaterLV", groups=(group,))
 
 
 def overlap(name):
     """Return (GDML, recipe) of one of g4ref's overlap toys (their world kept, the slab volS counting)."""
-    group = SensorGroup("slab", "any_entry", "lumen:counting", lv="volS", settings={"efficiency": 1.0})
-    return (DATA / f"{name}.gdml").read_text(), Recipe(name, "volWorld", (415.0, 425.0), (group,))
+    group = SensorGroup("slab", rule="any_entry", lv="volS", settings={"entry_efficiency": 1.0})
+    return (DATA / f"{name}.gdml").read_text(), Recipe(name, "volWorld", groups=(group,))
 
 
-SPECS = {}
+# the toys' roulette ε: below float32's resolution of a photon's start weight, so the closed forms hold to float32
+# (a photon ends only at weight 0, by the roulette)
+EXACT = 2.0**-24
 
 
-def simulate(s, params, rows, *, reference=None, replicas=1, controls=None, seed=7, backend="auto", spec=None):
-    """Return the outputs of one run of ``rows`` through toy setup ``s`` at packed ``params``."""
-    spec = spec or SPECS.setdefault(s.tally, item.photons(s.tally))
-    ops = photons.operands(s, params, reference, controls or steps.Controls(roulette=0.0))
-    t = runner.run(spec, s.model, ops, rows, photons.raw_key(seed), max_vertices=20000, replicas=replicas,
-                   backend=backend)  # fmt: skip
-    return t.outputs
+def simulate(s, params, rows, *, reference=None, seeds=None, controls=None, seed=7, backend="auto", spec=None):
+    """Return the outputs of a run of ``rows`` through toy setup ``s`` at packed ``params``; with ``seeds`` K, the rows
+    split into K equal runs of their own seeds (seed + j), each output stacked (K, ...): K independent estimates."""
+    spec = spec or s.loop()
+    ops = photons.operands(s, params, reference, controls or steps.Controls(roulette=EXACT))
+
+    def one(r, j):
+        return runner.run(spec, s.model, ops, r, raw_key(seed + j), max_vertices=20000, backend=backend).outputs
+
+    if seeds is None:
+        return one(rows, 0)
+    return stack_seeds(lambda r, j: one(r, j), rows, seeds)
+
+
+def stack_seeds(run, rows, k: int) -> dict:
+    """Return ``run(rows_j, j)`` of the rows split into ``k`` equal parts, each output stacked (k, ...)."""
+    n = rows.x.shape[0]
+    if n % k:
+        raise ValueError(f"stack_seeds: {n} rows do not split into {k} seeds")
+    m = n // k
+
+    def part(j):
+        return jax.tree_util.tree_map(lambda a: a[j * m : (j + 1) * m] if jnp.ndim(a) and a.shape[0] == n else a, rows)
+
+    outs = [run(part(j), j) for j in range(k)]
+    return {key: jnp.stack([o[key] for o in outs]) for key in outs[0]}

@@ -3,9 +3,9 @@
     export LUMEN_DETECTORS=$PWD/lumen-examples/calibrations
     python examples/your_own_detector.py
 
-Converts examples/data/demo_barrel.gdml (written with two deliberate defects) under examples/demo_barrel_recipe.py,
-reads the repair warnings, fixes the file, simulates, calibrates (a source-position fit with ``wrt=`` and a
-liner-reflectivity scan by value), saves the calibration and exports the detector back to GDML. Outputs go to
+Converts examples/data/demo_barrel.gdml (written with two deliberate defects) under examples/demo_barrel_recipe.py:
+the refusal, the repaired copy, the fixed file; then simulates, calibrates (a liner-reflectivity scan by value and its
+derivative with ``jax.jvp``), saves the calibration and exports the detector back to GDML. Outputs go to
 ./lumen-examples (or $LUMEN_EXAMPLES_OUT).
 """
 # ruff: noqa: T201, TID251, D103  (an example script: it prints, reads its output directory from the environment)
@@ -15,7 +15,6 @@ import os
 import re
 import sys
 import time
-import warnings
 from pathlib import Path
 
 import jax
@@ -24,7 +23,7 @@ import numpy as np
 
 import lumen
 import lumen.gdml
-from lumen.format import io
+from lumen.gdml import importer, reader, repair
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -40,28 +39,30 @@ def section(title):
 
 
 def convert(gdml, out):
-    """Convert ``gdml`` under the recipe; print every warning and the repairs the detector file records."""
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        path = lumen.convert(gdml, RECIPE, out, overwrite=True)
-    for w in caught:
-        print(f"  warning: {w.message}")
+    """Convert ``gdml`` under the recipe; print what Geant4 would not read and the import left out."""
+    path = lumen.convert(gdml, RECIPE, out, overwrite=True)
     det = lumen.load(path)
-    repaired = [line for line in det.file.report if line.startswith("repaired")]
-    print(f"  {len(repaired)} repair(s) recorded in {path.name}:")
-    for line in repaired:
-        print("   ", line)
+    for line in det.file.report:
+        if "left out" in line:
+            print("   ", line)
     return det
 
 
-# --------------------------------------------------------------------------------------- 1. import, warnings
-section("1. Convert the GDML: repairs and their warnings")
-det = convert(HERE / "data" / "demo_barrel.gdml", OUT / "demo_barrel_as_given.lumen")
+# --------------------------------------------------------------------------------------- 1. import, repair
+section("1. Convert the GDML: Geant4 refuses it, and so does lumen; repair it apart")
+try:
+    convert(HERE / "data" / "demo_barrel.gdml", OUT / "demo_barrel_as_given.lumen")
+except reader.GDMLError as err:
+    print(" ", err)
+text, edits = repair.repair((HERE / "data" / "demo_barrel.gdml").read_text())
+print("  repairs:", edits)
+(OUT / "demo_barrel_repaired.gdml").write_text(text)
+det = convert(OUT / "demo_barrel_repaired.gdml", OUT / "demo_barrel_as_given.lumen")
 key = "surfaces/LinerSurface/REFLECTIVITY"
 p = det.params()
-print(f"  {key} = {p[key]} (from: {p.explain(key)}; {p.info(key).default or 'in the file'})")
+print(f"  {key} = {p[key]} (from: {p.explain(key)}; {p.info(key).note or 'in the file'})")
 
-section("1b. Fix the file where the repair changes the physics, and convert again")
+section("1b. Fix the file where Geant4's reading is not what was meant, and convert again")
 text = (HERE / "data" / "demo_barrel.gdml").read_text()
 text = text.replace('<matrix name="LINER_REFLECTIVITY" coldim="1" values="0.1"/>',
                     '<matrix name="LINER_REFLECTIVITY" coldim="2" values="1.5*eV 0.1 5.0*eV 0.1"/>')
@@ -78,34 +79,13 @@ section("2. Forward simulation")
 src = lumen.sources.Point(position=(0.0, 0.0, 0.0), lam=400.0, n_photons=1e5)
 light = lumen.simulate(det, src, samples=2**18, seed=0)
 pe = lumen.readout.pe(light, p0)
-for i, name in enumerate(det.sensors["ids"]):
+for i, name in enumerate(det.sensor_table().name):
     print(f"  {i:2d} {name:28s} arrivals {float(light.arrivals[i]):8.1f} +- {float(light.arrivals_error[i]):5.1f}"
           f"   PE {float(pe[i]):7.1f}")
-print("  health:", {k: round(float(np.sum(v)), 1) for k, v in light.health.items()})
+print("  health:", {k: round(float(np.sum(v)), 1) for k, v in light.health._asdict().items()})
 
 # ------------------------------------------------------------------------------ 3. calibration and fits
-section("3a. Fit a calibration source's position (wrt=)")
-
-
-def expected_pe_at(x):
-    s = lumen.sources.Point(position=x, lam=400.0, n_photons=1e5)
-    return lumen.readout.pe(lumen.simulate(det, s, samples=2**18, seed=0, wrt=["source/position"]), p0)
-
-
-x_true = jnp.asarray([0.10, -0.05, 0.20], jnp.float32)
-truth = lumen.sources.Point(position=x_true, lam=400.0, n_photons=1e5)
-n_obs = jnp.asarray(lumen.readout.sample(lumen.simulate(det, truth, samples=2**20, seed=7), p0, seed=1).pe)
-x = jnp.zeros(3, jnp.float32)
-for it in range(8):                                 # Gauss-Newton (Fisher scoring) on the Poisson likelihood
-    mu, J = expected_pe_at(x), jax.jacfwd(expected_pe_at)(x)    # J (sensors, 3): one derivative per coordinate
-    fisher = (J / mu[:, None]).T @ J
-    step = jnp.linalg.solve(fisher, J.T @ ((n_obs - mu) / mu))
-    x = x + step * jnp.minimum(1.0, 0.1 / jnp.linalg.norm(step))   # at most 10 cm per step: stay inside the tank
-    print(f"  iteration {it}: x = {np.round(np.asarray(x), 4).tolist()} m")
-err = np.sqrt(np.diag(np.linalg.inv(np.asarray(fisher))))
-print(f"  fitted {np.round(np.asarray(x), 4).tolist()} +- {np.round(err, 4).tolist()} m; truth {x_true.tolist()}")
-
-section("3b. Fit the liner's reflectivity by value (no recompilation)")
+section("3a. Fit the liner's reflectivity by value (no recompilation)")
 KEY = "surfaces/LinerSurface/REFLECTIVITY"
 info = p0.info(KEY)
 print(f"  {KEY}: unit {info.unit or '-'}, range {info.range}, gradient method {info.method}")
@@ -128,7 +108,7 @@ print(f"  fitted REFLECTIVITY {0.1 * s_hat:.4f} +- {0.1 * s_err:.4f} (truth 0.15
 
 def nll(s):
     ps = p0.scale(KEY, s)
-    mu = n_flash * lumen.readout.pe(lumen.simulate(det, src, ps, samples=2**20, seed=0, wrt=[KEY]), ps)
+    mu = n_flash * lumen.readout.pe(lumen.simulate(det, src, ps, samples=2**20, seed=0), ps)
     return jnp.sum(mu - data * jnp.log(mu))
 
 
@@ -136,7 +116,7 @@ v, slope = jax.jvp(nll, (float(s_hat),), (1.0,))               # the gradient th
 step = float(slope) / (2 * c2)                                # a Newton step on the parabola's curvature
 print(f"  dNLL/d(scale) at the fit: {float(slope):.2f} (curvature {2 * c2:.1f}: a step of {step:+.4f})")
 
-section("3c. Save the calibration and load it")
+section("3b. Save the calibration and load it")
 name = f"liner_{int(time.time())}"
 fitted = p0.scale(KEY, float(s_hat))
 note = f"liner REFLECTIVITY {0.1 * s_hat:.4f} +- {0.1 * s_err:.4f} from {n_flash} simulated flashes"
@@ -147,12 +127,12 @@ print(f"  {KEY} now from '{det_cal.params().explain(KEY)}'")
 # ---------------------------------------------------------------------------------------------- 4. export
 section("4. Export to GDML")
 nominal = OUT / "demo_barrel_export.gdml"
-report = lumen.gdml.export(det.path, nominal, scope="full")
-print("  wrote", nominal, "and its sidecar; lossless:", report.lossless, "; g4ref arguments:", report.g4ref_args)
-back = lumen.gdml.read_export(nominal)
-print("  re-imported detector file equals the original:", io.equal(back.detector_file, det.file))
+report = lumen.gdml.export(det.path, nominal)
+print("  wrote", nominal, "; lossless:", report.lossless)
+back = importer.read_gdml(nominal, warn=False)
+print("  read back with the same geometry:", back.solids == det.file.solids and back.placements == det.file.placements)
 calibrated = OUT / "demo_barrel_calibrated.gdml"
-lumen.gdml.export(det.path, calibrated, calibration=name, scope="full")
+lumen.gdml.export(det.path, calibrated, calibration=name)
 print("  wrote", calibrated, "(the calibration's values written into the GDML)")
 
 section("done")

@@ -1,44 +1,18 @@
-"""Emission spectra: the wavelength sampler follows its spectrum, and Geant4's WLS / scintillation sampler is the
-literal Geant4 inverse."""
+"""Emission spectra: Geant4's WLS / scintillation sampler is the literal Geant4 inverse; its density is 0 outside the
+table."""
 
 import math
 
 import jax
 import jax.numpy as jnp
 import numpy as np
-import pytest
+from scipy.stats import ks_2samp
 
 from lumen.media import spectra
+from lumen.tools import stats
 from lumen.units import HC
 
 F32 = jnp.float32
-TPB = spectra.wavelength_spectrum("tpb_like", [380, 400, 420, 440, 470, 520], [0.0, 0.6, 1.0, 0.8, 0.3, 0.0])
-
-
-def chi2_vs_spectrum(lam, r, n_bins=25):
-    edges = np.linspace(r.wl[0], r.wl[-1], n_bins + 1)
-    grid = np.linspace(r.wl[0], r.wl[-1], 20001)
-    dens = r.density_at(grid)
-    cdf = np.concatenate([[0], np.cumsum(0.5 * (dens[1:] + dens[:-1]) * np.diff(grid))])
-    exp = len(lam) * np.diff(np.interp(edges, grid, cdf))
-    obs = np.histogram(lam, edges)[0]
-    ok = exp > 20
-    return float(np.sum((obs[ok] - exp[ok]) ** 2 / exp[ok]) / (ok.sum() - 1))
-
-
-def test_wavelength_sampler_follows_its_spectrum():
-    u = jax.random.uniform(jax.random.PRNGKey(0), (400_000,), F32, 1e-7, 1 - 1e-7)
-    lam = np.asarray(jax.vmap(TPB.sample)(u), np.float64)
-    assert lam.min() >= 380 and lam.max() <= 520
-    assert chi2_vs_spectrum(lam, TPB) < 1.6
-    grid = np.linspace(381.0, 519.0, 50)
-    back = np.asarray(jax.vmap(TPB.sample)(jnp.asarray(TPB.rand_of(grid), F32)), np.float64)
-    np.testing.assert_allclose(back, grid, atol=2e-3)  # rand_of is the inverse of sample
-
-
-def test_wavelength_spectrum_refuses_bad_tables():
-    with pytest.raises(ValueError):
-        spectra.wavelength_spectrum("bad", [400.0, 390.0], [1.0, 1.0])
 
 
 def geant4_sampler(energy, intensity, u):
@@ -62,9 +36,36 @@ def test_geant4_spectrum_sampler_is_geant4s():
     intensity = np.array([0.0, 0.3, 1.0, 0.7, 0.4, 0.2, 0.0])
     sp = spectra.geant4_spectrum("shifter", energy, intensity)
     u = np.asarray(jax.random.uniform(jax.random.PRNGKey(0), (400_000,), F32, 1e-7, 1 - 1e-7))
-    E = HC / np.asarray(jax.vmap(sp.sample)(jnp.asarray(u)), np.float64)
+    E = HC / np.asarray(spectra.sample(spectra.g4_arrays(sp.energy, sp.intensity), jnp.asarray(u)), np.float64)
     Eg = geant4_sampler(energy, intensity, np.random.default_rng(1).random(400_000))
     grid = np.linspace(2.5, 3.4, 9001)
     assert chi2_two(E, Eg, np.linspace(2.5, 3.4, 61)) < 1.6
-    assert abs(np.trapezoid(sp.density_energy(grid), grid) - 1) < 2e-3
+    assert abs(np.trapezoid(np.asarray(spectra.density(energy, intensity, grid)), grid) - 1) < 2e-3
+    assert float(spectra.density(energy, intensity, 3.5)) == 0.0 == float(spectra.density(energy, intensity, 2.4))
     assert E.min() >= 2.5 - 1e-4 and E.max() <= 3.4 + 1e-4
+
+
+def test_wls_draw_conserves_energy_as_g4opwls():
+    """The energy-conserving draw (the spectrum truncated at the absorbed energy by its inverse CDF, weighted by
+    ``kept``, as ``lumen.media.emission`` draws it) is G4OpWLS's redraw loop: the truncated spectrum, and the chance
+    that one of 100 draws lands there (else the photon is dropped)."""
+    spec = spectra.geant4_spectrum("g4", [2.4, 2.8, 3.0, 3.3, 3.5], [0.0, 1.0, 0.7, 1.2, 0.0])
+    arrays = spectra.g4_arrays(spec.energy, spec.intensity)
+    lo, hi = HC / spec.energy[-1], HC / spec.energy[0]  # the wavelengths the table spans
+    rng = np.random.default_rng(5)
+    for lam_in in (lo + 0.3 * (hi - lo), 0.5 * (lo + hi), 300.0, 2000.0):
+        # Geant4: redraw until E <= E_in, up to 100 times; a failed photon is dropped
+        u = rng.uniform(size=(100, 40_000)).astype(np.float32)
+        draws = np.asarray(spectra.sample(arrays, jnp.asarray(u)), np.float64)
+        ok = draws >= lam_in
+        found = ok.any(0)
+        first = draws[ok.argmax(0), np.arange(draws.shape[1])][found]
+        f = spectra.cumulative(arrays, F32(lam_in))
+        lam = spectra.sample(arrays, jnp.asarray(rng.uniform(size=40_000), F32) * f)
+        kept = spectra.kept(f)
+        lam = np.asarray(lam, np.float64)
+        sd = np.sqrt(found.mean() * (1 - found.mean()) / 40_000)  # binomial; 0 where every or no photon is found
+        assert abs(float(np.ravel(kept)[0]) - found.mean()) <= stats.z_limit(4) * sd
+        assert float(np.ravel(kept)[0]) == 0.0 or np.all(lam >= lam_in * (1 - 1e-5))  # kept 0: a dropped photon
+        if found.sum() > 1000:
+            assert ks_2samp(lam, first).pvalue > stats.ALPHA / stats.SUITE_TESTS  # the two samples' laws

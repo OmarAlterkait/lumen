@@ -1,11 +1,11 @@
 """Geant4's boundary rule: the surface a photon meets crossing from one placed volume into the next.
 
     stype, origin, reason, side = crossing(v, pre, post, rel)
-    stype, origin, reason, side = through(leg_pb, leg_bq, names)     # a coincident face across a pass
+    stype, origin, reason, side = through(leg_pb, leg_bq, b_name, names)  # a coincident face across a pass
 
-``v`` (``lumen.build.surfaces.Volumes``) gives per placed volume (PV) its medium, material, skin surface and sensor,
-the border surfaces by ordered PV pair, the library entries and which media are opaque. For an ordered crossing
-(pre, post), in Geant4's order:
+``v`` (``lumen.build.lookup.Description``) gives per placed volume (PV) its medium, material, skin surface and
+sensor, the border surface of an ordered PV pair (``border(pre, post)``: its physvols' border, where they touch), the
+library entries and which media are opaque. For an ordered crossing (pre, post), in Geant4's order:
 
 1. entering a sensor PV whose rule is "any entry" (or across the border bound to its sensor): that sensor's type;
    a border sensor out of pre (an exit sensor: WCSim's Detection leaving the tube) is credited to pre;
@@ -15,13 +15,15 @@ the border surfaces by ordered PV pair, the library entries and which media are 
 4. the material default: the same medium is no boundary (Pass); post without RINDEX absorbs (NoRINDEX); otherwise
    the Fresnel interface of the two indices.
 
-A polished dielectric_dielectric surface (found at 2 or 3) between two PVs of one material is skipped (SameMaterial).
-A surface whose far-side outcome would put the photon into a medium without RINDEX: the Fresnel default absorbs
-(NoRINDEX); a frontpainted transmission is absorbed where it lands (Geant4 transmits, then kills the photon at its
-next step: ``lumen.surfaces.types.into_opaque``); a stacked (coated) type never ends beyond its backing; any other is
-refused.
+A polished dielectric_dielectric surface (found at 1, 2 or 3) between two PVs of one material is skipped (SameMaterial).
+A surface whose far-side outcome would put the photon into a medium without RINDEX follows Geant4's rule for its
+(type, finish), which the reader records on the entry (``far_side``): the default and a polished or ground
+dielectric_dielectric surface, detecting ones included (an exit sensor's too), kill the photon (NoRINDEX, before the
+R / T draw: ``FAR_KILL``); a frontpainted transmission is absorbed where it lands (Geant4 transmits, then kills the
+photon at its next step: ``FAR_ABSORB``, ``lumen.surfaces.types.into_opaque``); an entry with no Geant4 reading (a
+registered model's) is refused.
 
-A daughter's face may lie ON its mother's boundary (SBND's ullage under the cryostat roof; a float32-thin shell): the
+A daughter's face may lie ON its mother's boundary (a gas layer under a vessel's roof; a float32-thin shell): the
 navigator then reports p -> q with the zero-thickness b between them skipped. Geant4 locates the photon directly in
 q: one interface p -> q resolved by ``crossing``, except where a leg through b is a Pass (b one medium with p, or
 with q, no surface between), which makes b optically p (or q): the crossing is the other leg's interface, its border
@@ -38,7 +40,7 @@ into any b thicker than its 1e-12 m tolerance; a float32 geometry merges a b thi
 
 from __future__ import annotations
 
-from lumen.surfaces import types as legacy
+from lumen.surfaces import types
 from lumen.surfaces.outcomes import FAR_SIDE
 
 
@@ -46,13 +48,14 @@ class BoundaryError(ValueError):
     """A crossing Geant4's rule cannot give a surface for (a type that would end in an opaque medium)."""
 
 
+FAR_KILL, FAR_ABSORB = "kill", "absorb"  # a surface's far side into a medium without RINDEX (SurfaceEntry.far_side)
 OUTWARD = ("mother", "sibling", "outward")  # p inside b, q beyond it
 INWARD = ("daughter", "sibling", "inward")  # p beyond b, q inside it
 
 
 def _surface(v, pre, post, rel):
-    """Return (type, origin, reason) of steps 2 to 4 (no sensor)."""
-    surf, reason = v.borders.get((pre, post)), "border"
+    """Return (type, origin, reason, far side) of steps 2 to 4 (no sensor)."""
+    surf, reason = v.border(pre, post), "border"
     if surf is None:
         order = (("post", post), ("pre", pre)) if rel == "daughter" else (("pre", pre), ("post", post))
         for side, n in order:
@@ -62,36 +65,45 @@ def _surface(v, pre, post, rel):
     if surf is not None:
         e = v.library.surfaces[surf]
         if e.ignored_between_same_material and v.material(pre) == v.material(post):
-            return legacy.PASS, None, f"{reason} {surf}: same-material"
-        return e.surface_type, f"surface:{surf}", reason
+            return types.PASS, None, f"{reason} {surf}: same-material", None
+        return e.surface_type, f"surface:{surf}", reason, e.far_side
     if v.medium[pre] == v.medium[post]:
-        return legacy.PASS, None, "default"
+        return types.PASS, None, "default", None
     if not v.opaque[v.medium[post]]:
-        return legacy.DIELECTRIC, None, "default"
-    return legacy.ABSORBER, None, "default: NoRINDEX"
+        return types.DIELECTRIC, None, "default", FAR_KILL
+    return types.ABSORBER, None, "default: NoRINDEX", None
 
 
 def crossing(v, pre, post, rel):
-    """Return (type, origin, reason, side credited) of the crossing pre -> post (``rel``: post relative to pre)."""
-    lib = v.library
+    """Return (type, origin, reason, side credited) of the crossing pre -> post (``rel``: post relative to pre).
+
+    A sensor's surface is read as any surface is: skipped between two volumes of one material where its reading says
+    so (SameMaterial, before any detection), and its far side into an opaque medium as its reading records, an exit
+    sensor's too.
+    """
+    lib, side, name = v.library, "post", None
     if v.enters_sensor(pre, post):
-        stype, origin, reason = lib.sensors[v.sensor[post]].surface_type, f"sensor:{v.sensor[post]}", "sensor"
-    elif v.borders.get((pre, post)) in lib.sensors:  # an exit sensor: pre is a sensor PV
-        s = v.borders[(pre, post)]
-        return lib.sensors[s].surface_type, f"sensor:{s}", f"border sensor {s} (credited to pre)", "pre"
+        name, reason = v.sensor[post], "sensor"
+    elif v.border(pre, post) in lib.sensors:  # an exit sensor: pre is a sensor PV
+        name = v.border(pre, post)
+        side, reason = "pre", f"border sensor {name} (credited to pre)"
+    if name is None:
+        stype, origin, reason, far = _surface(v, pre, post, rel)
+    elif lib.sensors[name].ignored_between_same_material and v.material(pre) == v.material(post):
+        return types.PASS, None, f"{reason}: same-material", "post"
     else:
-        stype, origin, reason = _surface(v, pre, post, rel)
-    if v.opaque[v.medium[post]] and not stype.stack and any(FAR_SIDE[o] for o in stype.outcomes):
-        if stype is legacy.DIELECTRIC:
-            stype, origin, reason = legacy.ABSORBER, None, f"{reason}: NoRINDEX"
-        elif legacy.is_painted(stype):
-            stype, reason = legacy.into_opaque(stype), f"{reason}: transmitted into {v.medium[post]!r}, absorbed"
+        stype, origin, far = lib.sensors[name].surface_type, f"sensor:{name}", lib.sensors[name].far_side
+    if v.opaque[v.medium[post]] and any(FAR_SIDE[o] for o in stype.outcomes):
+        if far == FAR_KILL:
+            stype, origin, reason = types.ABSORBER, None, f"{reason}: NoRINDEX"
+        elif far == FAR_ABSORB:
+            stype, reason = types.into_opaque(stype), f"{reason}: transmitted into {v.medium[post]!r}, absorbed"
         else:
             raise BoundaryError(f"{pre!r} -> {post!r}: type {stype.name} ({reason}) would put the photon into the "
                                 f"opaque medium {v.medium[post]!r}")  # fmt: skip
     if not stype.params:
         origin = None
-    return stype, origin, reason, "post"
+    return stype, origin, reason, side
 
 
 def coincident(inside_pb, inside_qb, rp, rq):
@@ -113,6 +125,6 @@ def through(leg_pb, leg_bq, b_name, names):
     ``leg_pb`` / ``leg_bq``: the resolved legs (type, origin, reasons, ..., side), ``names`` the two class names of
     the leg used.
     """
-    use = leg_bq if leg_pb[0] is legacy.PASS else leg_pb
+    use = leg_bq if leg_pb[0] is types.PASS else leg_pb
     reason = f"pass via {b_name}: as {names[0]} -> {names[1]} ({use[2][0]})"
     return use[0], use[1], reason, use[5]

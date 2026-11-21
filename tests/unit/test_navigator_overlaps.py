@@ -1,20 +1,19 @@
-"""Overlapping siblings navigated as Geant4 10.7.4 navigates them (g4ref's coinc_sib toys), no configuration:
+"""Overlapping siblings navigated by ownership (lumen.geometry.ownership), no configuration:
 
-- inside the volume it entered the photon sees none of its overlapping siblings; at that volume's exit it is located
-  in the highest-index sibling holding the point (partial overlaps, either order);
-- an entry tie (coincident faces) goes to the lowest index;
-- siblings placed coincident: the lowest index fills the region; leaving it the photon crosses into the highest (a
-  zero-length crossing of that pair's interface), and its zero-length step out of that one is Geant4's StepTooSmall,
-  a straight continue event.
+- the region two siblings share belongs to a solid proved inside the other, else to the one placed first: a photon in
+  the non-owner enters the owner at the owner's face, and leaves the owner into the non-owner;
+- coincident siblings (one solid, one pose): the first placed fills the region, the other holds nothing;
+- an entry tie (coincident faces) goes to the first in the rule's order (the owner).
 
 The toys are GDML strings read by the importer (the coinc_sib layout: a 4 m world, two 0.4 m cubes)."""
 
+import jax
 import numpy as np
 from nav_toys import defn, locate, make_scene, one, query
 
-from lumen.build import lowering, solids
+from lumen.build import lowering
 from lumen.gdml import importer
-from lumen.geometry import navigate
+from lumen.geometry import navigate, solids
 
 WORLD, A_, B_ = 0, 1, 2
 CUBES = """<?xml version="1.0"?>
@@ -81,62 +80,123 @@ def walk(toy, n=4):
     return nav, out
 
 
-def test_coincident_siblings_fill_with_the_first_and_cross_into_the_last(tmp_path):
+def test_coincident_siblings_fill_with_the_first_placed(tmp_path):
+    """equal volumes, one pose: the first placed owns all of it; the photon crosses it once, the other is never seen"""
     nav, w = walk(cubes(tmp_path, "AB"))
-    assert nav.coincident == [(1, 2)]  # (the world is volume 0)
-    assert w[0] == (-0.2, A_, False)  # the entry tie: the lowest index
-    assert w[1] == (0.2, B_, False)  # leaving A: into B (A -> B's interface)
-    assert w[2] == (0.2, WORLD, True)  # B's zero-length exit: StepTooSmall, no interface
+    assert [(2, 1, False)] == [tuple(x) for x in nav.owned]  # (non-owner, owner; the world is volume 0)
+    assert w[:2] == [(-0.2, A_, False), (0.2, WORLD, False)], w
     _, w2 = walk(cubes(tmp_path, "BA"))
-    assert w2[0] == (-0.2, B_, False) and w2[1] == (0.2, A_, False) and w2[2] == (0.2, WORLD, True)
+    assert w2[:2] == [(-0.2, B_, False), (0.2, WORLD, False)], w2
 
 
-def test_partial_overlap_relocates_at_the_exit_in_either_order(tmp_path):
-    """B over [-0.1, 0.3]: entered A at -0.2, B unseen inside A, located in B at A's exit (0.2), out at 0.3"""
-    for order in ("AB", "BA"):
-        _, w = walk(cubes(tmp_path, order, 0.1))
-        assert [(x, c) for x, c, _ in w[:3]] == [(-0.2, A_), (0.2, B_), (0.3, WORLD)], (order, w)
-    for order in ("AB", "BA"):  # B over [-0.3, 0.1]: B first, A at B's exit
-        _, w = walk(cubes(tmp_path, order, -0.1))
-        assert [(x, c) for x, c, _ in w[:3]] == [(-0.3, B_), (0.1, A_), (0.2, WORLD)], (order, w)
+def test_partial_overlap_of_equal_volumes_goes_to_the_first_placed(tmp_path):
+    """B over [-0.1, 0.3]: A placed first owns [-0.1, 0.2] (A, then B's rest); B first owns it (A's rest, then B)"""
+    _, w = walk(cubes(tmp_path, "AB", 0.1))
+    assert [(x, c) for x, c, _ in w[:3]] == [(-0.2, A_), (0.2, B_), (0.3, WORLD)], w
+    _, w = walk(cubes(tmp_path, "BA", 0.1))
+    assert [(x, c) for x, c, _ in w[:3]] == [(-0.2, A_), (-0.1, B_), (0.3, WORLD)], w
+    _, w = walk(cubes(tmp_path, "AB", -0.1))  # B over [-0.3, 0.1]
+    assert [(x, c) for x, c, _ in w[:3]] == [(-0.3, B_), (-0.2, A_), (0.2, WORLD)], w
+    _, w = walk(cubes(tmp_path, "BA", -0.1))
+    assert [(x, c) for x, c, _ in w[:3]] == [(-0.3, B_), (0.1, A_), (0.2, WORLD)], w
 
 
-def test_a_reflection_at_a_relocation_stays_in_the_volume_located(tmp_path):
-    """Geant4 reflects with the photon already located beyond: after a face of the volume entered it steps back
-    (StepTooSmall), but a photon relocated into a sibling already holding the point stays in that sibling"""
-    for off, x_cross in ((0.1, 0.2), (0.0, 0.2)):  # partial overlap; coincident
-        nav = navigate.Navigator.from_scene(cubes(tmp_path, "AB", off)[0])
-        q = _q(nav)
-        d = np.asarray([1.0, 0.0, 0.0], np.float32)
-        o = np.asarray([-0.8, 0.0, 0.0], np.float32)
-        r1 = q(o, d, locate(nav, o, by_layout=True)[0], -1)  # the entry into A: a reflection stays in the world
-        assert int(r1["vol_reflect"]) == int(r1["vol_before"]) == 0
-        o2 = o + r1["t"] * d
-        r2 = q(o2, d, r1["vol_after"], r1["srf"])  # A's exit, located in B
-        assert abs(float(o2[0] + r2["t"]) - x_cross) < 1e-5
-        assert int(r2["vol_after"]) == 2 and int(r2["vol_before"]) == 1 and int(r2["vol_reflect"]) == 2
+def test_a_solid_inside_owns_whatever_the_order_else_the_first_placed(tmp_path):
+    """a 0.2 m cube S over [0.1, 0.3], half inside the 0.4 m cube A: the first placed owns the shared part; S over
+    [0.0, 0.2], inside A: S owns it in either order"""
+    for x_s, order, want in ((200.0, "AS", [(-0.2, A_), (0.2, B_), (0.3, WORLD)]),
+                             (200.0, "SA", [(-0.2, A_), (0.1, B_), (0.3, WORLD)]),
+                             (100.0, "AS", [(-0.2, A_), (0.0, B_), (0.2, WORLD)]),
+                             (100.0, "SA", [(-0.2, A_), (0.0, B_), (0.2, WORLD)])):  # fmt: skip
+        x = {"A": 0.0, "S": x_s}
+        body = "".join(f'<physvol name="p{k}"><volumeref ref="vol{k}"/><position name="x{k}" x="{x[k]}" y="0" z="0" '
+                       'unit="mm"/></physvol>' for k in order)  # fmt: skip
+        gd = CUBES.replace('<box name="cube" x="400" y="400" z="400" lunit="mm"/>',
+                           '<box name="cube" x="400" y="400" z="400" lunit="mm"/><box name="small" x="200" y="200" '
+                           'z="200" lunit="mm"/>').replace('<volume name="volB"><materialref ref="MB"/><solidref '
+                           'ref="cube"/></volume>', '<volume name="volS"><materialref ref="MB"/><solidref ref="small"/>'
+                           '</volume>').format(physvols=body)  # fmt: skip
+        path = tmp_path / f"small_{order}_{x_s}.gdml"
+        path.write_text(gd)
+        loaded = lowering.lower(importer.read_gdml(path), detector="volWorld")
+        ids = tuple(loaded.media[m] for m in ("MW", "MA", "MB"))
+        _, w = walk((loaded.scene, ids))
+        assert [(x, c) for x, c, _ in w[:3]] == want, (x_s, order, w)
+
+
+def test_a_reflection_at_an_owner_face_stays_where_the_photon_was(tmp_path):
+    """Geant4 reflects with the photon located where it was: at the face between an owner and its non-owner (A owns
+    [-0.1, 0.2] of B, the first placed of equal volumes) a reflection stays in A, a crossing goes into B"""
+    nav = navigate.Navigator.from_scene(cubes(tmp_path, "AB", 0.1)[0])
+    q = _q(nav)
+    d = np.asarray([1.0, 0.0, 0.0], np.float32)
+    o = np.asarray([-0.8, 0.0, 0.0], np.float32)
+    r1 = q(o, d, locate(nav, o, by_layout=True)[0], -1)  # the entry into A: a reflection stays in the world
+    assert int(r1["vol_before"]) == 0
+    o2 = o + r1["t"] * d
+    r2 = q(o2, d, r1["vol_after"], r1["srf"])  # A's exit at 0.2, into B
+    assert abs(float(o2[0] + r2["t"]) - 0.2) < 1e-5
+    assert int(r2["vol_after"]) == 2 and int(r2["vol_before"]) == 1  # a reflection stays in vol_before
 
 
 def test_a_reflection_at_a_lowered_hole_steps_back_into_the_filler():
-    """the import keeps a holed solid without its holes and ranks the siblings filling them above it
+    """the import keeps a holed solid without its holes and the siblings filling them own the holes
     (Scene.hole_fillers): a filler's face inside the holed solid's slab is the hole's wall, a touching face in Geant4
-    -- a reflection there steps back into the filler; the same pair as a plain overlap (no hole) still stays in the
-    sibling located"""
+    -- a reflection there steps back into the filler; the same pair as a plain overlap (no hole, F placed first)
+    gives the shared region to F, so the same"""
 
     def at0(name, solid, med, pls=()):
         return defn(name, solid, med, [(p, np.eye(3), np.zeros(3)) for p in pls])
 
     for holed in (True, False):
-        S = "S|holes:00000000" if holed else "S"  # S: a 0.2 m slab across x = 0; F: a 0.4 m cube on it
+        S = "S"  # S: a 0.2 m slab across x = 0 (holed: Definition.holed, filled by F); F: a 0.4 m cube on it
         defs = {
-            "world": at0("world", solids.g4_box(4.0, 4.0, 4.0), WORLD, [S, "F"]),
+            "world": at0("world", solids.g4_box(4.0, 4.0, 4.0), WORLD, [S, "F"] if holed else ["F", S]),
             S: at0(S, solids.g4_box(0.2, 3.0, 3.0), A_),
             "F": at0("F", solids.g4_box(0.4, 0.4, 0.4), B_),
         }
+        defs[S].holed = holed
         nav = navigate.Navigator.from_scene(make_scene(defs, outside=3, hole_fillers=["F"] if holed else []))
         q = _q(nav)
         o = np.asarray([0.0, 0.0, 0.0], np.float32)
         d = np.asarray([0.0, 1.0, 0.0], np.float32)
-        r = q(o, d, 2, -1)  # the photon in F; F's face y = 0.2 lies inside S's slab
-        assert abs(float(r["t"]) - 0.2) < 1e-5 and int(r["vol_after"]) == 1 and int(r["vol_before"]) == 2
-        assert int(r["vol_reflect"]) == (2 if holed else 1), holed
+        f_, s_ = nav.names.index("F_1" if holed else "F_0"), nav.names.index("S_0" if holed else "S_1")
+        r = q(o, d, f_, -1)  # the photon in F; F's face y = 0.2 lies inside S's slab
+        assert abs(float(r["t"]) - 0.2) < 1e-5 and int(r["vol_after"]) == s_ and int(r["vol_before"]) == f_, holed
+
+
+def test_locate_picks_the_owner(toys, tmp_path):
+    """a point in a ∩ b is a's, placed first, neither inside the other (the same volume a ray leaving b there is
+    located in); two coincident placements: the first placed"""
+    _, nav = toys("overlap")
+    a, b = nav.names.index("a_0"), nav.names.index("b_1")
+    assert list(locate(nav, [[0.025, 0.0, 0.0], [0.045, 0.1, -0.1], [0.1, 0.0, 0.0]])) == [a, a, b]
+    o = np.asarray([0.15, 0.0, 0.0], np.float32)
+    r = one(query(nav, o, [-1.0, 0.0, 0.0], b, t_max=10.0))  # a's face at x = 0.05, inside b: a entered there
+    assert int(r["vol_after"]) == a and abs(float(r["t"]) - 0.1) < 1e-6
+    for order in ("AB", "BA"):
+        nav2 = navigate.Navigator.from_scene(cubes(tmp_path, order)[0])
+        assert int(locate(nav2, [[0.05, 0.0, 0.0]], by_layout=True)[0]) == 1, order
+
+
+def test_the_volume_at_a_bulk_event_is_the_rays_and_a_fresh_locates():
+    """invisible crossings (one class) through overlapping siblings: the walk is in A over the overlap (A, placed
+    first, owns it), as Geant4 stepping through each crossing, and a fresh point locate agrees. The query's vol_at is
+    the ray's volume at s_at, before, inside and past the overlap"""
+    sc = make_scene(
+        {
+            "world": defn(
+                "world", solids.g4_box(4.0, 4.0, 4.0), 1, [("A", np.eye(3), (0.0, 0, 0)), ("B", np.eye(3), (0.2, 0, 0))]
+            ),
+            "A": defn("A", solids.g4_box(0.4, 0.4, 0.4), 1),
+            "B": defn("B", solids.g4_box(0.4, 0.4, 0.4), 1),
+        }
+    )
+    nav = navigate.Navigator.from_scene(sc)
+    a, b = nav.names.index("A_0"), nav.names.index("B_1")
+    o, d = np.asarray([-0.8, 0.0, 0.0], np.float32), np.asarray([1.0, 0.0, 0.0], np.float32)
+    v0 = int(locate(nav, o)[0])
+    q = jax.jit(lambda s: nav.query(o, d, v0, t_max=3.0, s_at=s)["vol_at"])
+    got = [int(q(np.float32(x + 0.8))) for x in (-0.5, -0.1, 0.1, 0.25, 0.5)]
+    assert got == [v0, a, a, b, v0], got
+    assert int(locate(nav, [[0.1, 0.0, 0.0]])[0]) == a

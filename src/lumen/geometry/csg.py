@@ -25,17 +25,21 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 
+from lumen._core.safe import safe_norm
 from lumen.geometry import leaf_kernels
-from lumen.geometry.csg_build import INF
 from lumen.rules import navigation as rules
+from lumen.rules.tolerances import (
+    BIG,
+    DIVISOR_FLOOR,
+    MAX_SCAN_EXTRA,
+    MAX_SCAN_PER_LEAF,
+    PARALLEL,
+    TINY_DIR,
+    TORUS_PAD_REL,
+)
+from lumen.units import HUGE
 
 F32, I32 = jnp.float32, jnp.int32
-BIG = leaf_kernels.BIG
-PARALLEL = 1e-12  # a plane with |n . d| below this is parallel to the ray
-SMALL_DIR = 1e-20  # a direction component below this: the ray is parallel to that slab of a leaf box
-TORUS_PAD_REL = 1e-4  # the torus pretests' pad, relative to R + r
-MAX_SCAN_PER_LEAF = 4  # first_change scans at most this many endpoints per leaf (plus MAX_SCAN_EXTRA)
-MAX_SCAN_EXTRA = 5
 
 
 def pick(p, a, b):
@@ -105,7 +109,7 @@ class Csg:
 
     def _planes(self, g, o, d):
         """Return (t0p, t1p, f0p, f1p, empty_par) of leaf g's plane slab along o + t d (o relative to its origin)."""
-        inf = F32(INF)
+        inf = F32(HUGE)
         p0 = self.T["p0"][g]
 
         def body(k, c):
@@ -127,7 +131,7 @@ class Csg:
 
     def _q_iv(self, g, o, d):
         """Return a quadric leaf's two intervals (lo0, hi0, flo0, fhi0, lo1, hi1, flo1, fhi1) along o + t d."""
-        inf, ninf, m1 = F32(INF), F32(-INF), I32(-1)
+        inf, ninf, m1 = F32(HUGE), F32(-HUGE), I32(-1)
         og, oq = self._o(g), self._qo(g)
         y = [o[a] - oq[a] for a in range(3)]
         o = [o[a] - og[a] for a in range(3)]
@@ -203,7 +207,7 @@ class Csg:
         kk = jnp.sqrt(dl[0] * dl[0] + dl[1] * dl[1] + dl[2] * dl[2])
         du = [dl[a] / kk for a in range(3)]
         meet = self._torus_window(g, ol, du, kk, (w0, w1))
-        inf, m1 = F32(INF), I32(-1)
+        inf, m1 = F32(HUGE), I32(-1)
 
         def solve(a):
             s = leaf_kernels.torus_set(a[2], a[3], jnp.stack(a[0]), jnp.stack(a[1]))
@@ -228,7 +232,7 @@ class Csg:
         lo_t, hi_t, ne = w0, w1, jnp.bool_(True)
         for a in range(3):
             lo, hi = self.T[f"bl{a}"][g], self.T[f"bh{a}"][g]
-            small = jnp.abs(d[a]) < SMALL_DIR
+            small = jnp.abs(d[a]) < TINY_DIR
             inv = 1.0 / jnp.where(small, 1.0, d[a])
             ta, tb = (lo - o[a]) * inv, (hi - o[a]) * inv
             lo_t = jnp.where(small, lo_t, jnp.maximum(lo_t, jnp.minimum(ta, tb)))
@@ -238,7 +242,7 @@ class Csg:
 
     def _iv_in(self, g, o, d, w0, w1):
         """Return _iv where the window [w0, w1] meets leaf g's box; else no intervals (the leaf is false there)."""
-        inf, m1 = F32(INF), I32(-1)
+        inf, m1 = F32(HUGE), I32(-1)
         return pick(self._meets(g, o, d, w0, w1), lambda: self._iv(g, o, d, w0, w1),
                     lambda: (inf, inf, m1, m1, inf, inf, m1, m1))  # fmt: skip
 
@@ -312,7 +316,7 @@ class Csg:
     # ------------------------------------------------------------------ the first change along a ray
     def _nearest(self, s, t_cur):
         """Return the nearest leaf endpoint after t_cur (<= t1): (e, leaf, face, entry)."""
-        inf = F32(INF)
+        inf = F32(HUGE)
 
         def leaf(l, c):  # noqa: E741 -- a kind-local leaf
             e1, lb, fc, ek = c
@@ -341,7 +345,7 @@ class Csg:
         t_cur, done, now, lb_h, fc_h, now0, it, fs, hend = c
         first = it == 0
         e, lb, fc, ek = pick(first, lambda: (t0, I32(-1), I32(-1), jnp.bool_(False)), lambda: self._nearest(s, t_cur))
-        has = first | (e < INF)
+        has = first | (e < HUGE)
         tp = jnp.where(first, t0, e + s.band(e))
         hd = None
         if s.on_face is not None:  # the overridden leaf's other kind of endpoint ends the override
@@ -355,10 +359,10 @@ class Csg:
         fs = (fs[0] | chg, jnp.where(new, e, fs[1]), jnp.where(new, aft, fs[2]), jnp.where(new, lb, fs[3]),
               jnp.where(new, fc, fs[4]))  # fmt: skip
         now = jnp.where(has, aft, now)  # the state past every change: a passed kind changes it too
-        t_nx = jnp.where(first, t0, jnp.where(vis, e, jnp.where(has, tp, F32(INF))))
+        t_nx = jnp.where(first, t0, jnp.where(vis, e, jnp.where(has, tp, F32(HUGE))))
         return (t_nx, vis, now, jnp.where(vis, lb, lb_h), jnp.where(vis, fc, fc_h), now0, it + 1, fs, hend)
 
-    def first_change(self, kind, o, d, t0, t1, tau=None, want=None, init=None, skip=None, on_face=None):  # noqa: PLR0913 -- the scan's options
+    def first_change(self, kind, o, d, t0, t1, want=None, init=None, skip=None, on_face=None):  # noqa: PLR0913 -- the scan's options
         """Return the first change of the solid's membership in (t0, t1].
 
         Returns dict(hit, t, inside (after it), leaf (kind-local), face, inside0 (just after t0), first (the first
@@ -378,15 +382,15 @@ class Csg:
         xa = jnp.maximum(jnp.maximum(jnp.abs(o[0]), jnp.abs(o[1])), jnp.abs(o[2]))
 
         def band(t):
-            return rules.band(xa, t) if tau is None else tau
+            return rules.band(xa + jnp.abs(t))
 
         s = _Scan(kind, o, d, t1, nl, band, want, init, skip, on_face)
 
         def cond(c):
-            return (~c[1]) & (c[0] < INF) & (c[6] < MAX_SCAN_PER_LEAF * nl + MAX_SCAN_EXTRA)
+            return (~c[1]) & (c[0] < HUGE) & (c[6] < MAX_SCAN_PER_LEAF * nl + MAX_SCAN_EXTRA)
 
-        fs0 = (jnp.bool_(False), F32(INF), jnp.bool_(False), I32(-1), I32(-1))
-        h0 = F32(-INF) if on_face is None else jnp.asarray(on_face[2], F32)
+        fs0 = (jnp.bool_(False), F32(HUGE), jnp.bool_(False), I32(-1), I32(-1))
+        h0 = F32(-HUGE) if on_face is None else jnp.asarray(on_face[2], F32)
         c0 = (t0, jnp.bool_(False), jnp.bool_(False), I32(-1), I32(-1), jnp.bool_(False), I32(0), fs0, h0)
         t_end, hit, aft, lb, fc, now0, _, fs, _ = lax.while_loop(cond, lambda c: self._change(s, t0, c), c0)
         return dict(hit=hit, t=jnp.where(hit, t_end, t1), inside=jnp.where(hit, aft, now0), leaf=lb, face=fc,
@@ -405,8 +409,28 @@ class Csg:
         q = self.T["p0"][g] + jnp.maximum(face - 1, 0)
         gp = [self.T["n0"][q], self.T["n1"][q], self.T["n2"][q]]
         u = self._Mv(g, xl)
-        rho = jnp.sqrt(jnp.maximum(u[0] * u[0] + u[1] * u[1], 1e-30))
+        rho = jnp.sqrt(jnp.maximum(u[0] * u[0] + u[1] * u[1], DIVISOR_FLOOR))
         kk = (rho - self.T["R"][g]) / rho
         gt = self._Mv(g, [kk * u[0], kk * u[1], u[2]], tr=True)
         typ = self.T["typ"][g]
         return jnp.stack([jnp.where(typ == 2, gt[a], jnp.where(face >= 1, gp[a], gq[a])) for a in range(3)])
+
+    def leaf_dist(self, kind, leaf, face, x):
+        """Return the distance of x (kind frame) from the surface of a leaf's face (as ``leaf_grad``): |f| / |grad f|.
+
+        f is the face's function: a plane's n . x - h, a quadric's, a torus's ((rho - R)^2 + z^2 - r^2) / 2 (whose
+        gradient ``leaf_grad`` gives). Exact for a plane; for a curved face, first order in the distance.
+        """
+        g = self.dev()["K"]["l0"][kind] + jnp.maximum(leaf, 0)
+        og, oq = self._o(g), self._qo(g)
+        xl = [x[a] - og[a] for a in range(3)]
+        q = self.T["p0"][g] + jnp.maximum(face - 1, 0)
+        fp = self.T["n0"][q] * xl[0] + self.T["n1"][q] * xl[1] + self.T["n2"][q] * xl[2] - self.T["h"][q]
+        fq = self._qv(g, [x[a] - oq[a] for a in range(3)])
+        u = self._Mv(g, xl)
+        rho = jnp.sqrt(u[0] * u[0] + u[1] * u[1])
+        ft = 0.5 * ((rho - self.T["R"][g]) ** 2 + u[2] * u[2] - self.T["r"][g] ** 2)
+        typ = self.T["typ"][g]
+        f = jnp.where(typ == 2, ft, jnp.where(face >= 1, fp, fq))
+        gr = self.leaf_grad(kind, leaf, face, x)
+        return jnp.abs(f) / safe_norm(gr)

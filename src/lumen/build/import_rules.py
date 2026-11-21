@@ -1,22 +1,33 @@
-"""The general import rules: what float32 tracking cannot resolve, rewritten once at conversion, for every detector.
+"""The general import rules: rewritten once at conversion, for every detector, whatever its source.
 
-    df = import_rules.apply(df)          # after the recipe's decisions (``lumen.Recipe.apply``)
+    df = import_rules.apply(df)          # after the recipe's decisions (``lumen.recipe.import_structure``)
 
-Each choice is recorded with ``origin="import"`` and a note.
+- **Geant4-10 scintillation keys are translated** (``geant4_10``): a material's FASTCOMPONENT, SLOWCOMPONENT,
+  FAST/SLOWTIMECONSTANT, FAST/SLOWSCINTILLATIONRISETIME and YIELDRATIO as Geant4 11's SCINTILLATIONCOMPONENTi,
+  SCINTILLATIONTIMECONSTANTi, SCINTILLATIONRISETIMEi and SCINTILLATIONYIELDi (``lumen.rules.keys.
+  geant4_11_scintillation``): the light Geant4 10.7.4's G4Scintillation emits from them (``geant4_10_light``), which
+  Geant4 11 itself does not reproduce (its GDML reader adds the old names as new user keys, and G4Scintillation,
+  finding no SCINTILLATIONCOMPONENT1, emits nothing). The translated record is read back by lumen's own reader and
+  compared with a reference implementation of how Geant4 10.7 reads the original (``check_scintillation``); a
+  translation that would change the light is never written (AssertionError). Each is a ``report`` line
+  ("translated: ...") and an entry of ``provenance["translations"]`` (neither is in the content digest; the
+  translated content is). Keys with no single reading are refused (``TranslationRefused``), naming what to add or
+  delete. A recipe's decision sees the source's keys as they are (it runs before the rules).
 
-- **Absorbed at entry.** A mesh volume's material whose ABSLENGTH is below the band floor (``BAND_FLOOR``, the
-  smallest length the navigator resolves) at every knot is bound opaque: Geant4 refracts a photon in and absorbs it
+The two rules below are what float32 tracking cannot resolve; each choice is recorded with ``origin="import"`` and a
+note.
+
+- **The band where a volume is.** Both rules compare a length with the navigator's band at the volume's own
+  coordinate scale: the largest |coordinate| of its solid's box over every world placement of it (``_scales``), as the
+  navigator takes its band at a crossing's coordinates.
+- **Absorbed at entry.** A mesh volume's material whose ABSLENGTH is below the band of every mesh volume of it at
+  every knot is bound opaque: Geant4 refracts a photon in and absorbs it
   within that length, and lumen's navigator does not track inside a mesh (the facet rule). Its surfaces still apply.
   Elsewhere such a medium is tracked as Geant4 tracks it (the photon refracts in and is absorbed on its first step).
-- **One-sided WLS films** (docs/dev/decisions.md, 9). A box of a WLS material (WLSABSLENGTH) thinner than the band
-  at its first placement, with no surface of its own, is a film on the face it touches: per placement, its sibling boxes
-  in its mother (turned by signed permutations, as is the film) are searched for a contact; the contact set must be
-  exactly one complete flat face of one backing, else the conversion is refused. Every placement of the backing's volume
-  must carry a film on the same face of its own frame (a film on both faces is refused). The film material is bound to
-  its mother's material (index-matched: checked when the film is built), and the backing's skin becomes a
-  ``lumen:wls_film`` surface named after the film volume, with that face's normal as ``local_axis`` (the build turns it
-  by each placement's world rotation: ``lumen.build.library.split_films``). Geant4 never attaches a film to a face: its
-  effect follows from the face the film volume touches.
+- **Thin WLS boxes are refused** (docs/dev/decisions.md, 9). A box of a WLS material (WLSABSLENGTH) thinner than the
+  band where it is placed is not resolved by the navigator, and lumen lowers no film onto a surface: the conversion
+  is refused, and a recipe makes the box one the navigator resolves (a coated foil: split into a coating half and a
+  substrate half, each thicker than the band).
 
 The union split by leaf count is the navigator build's rule (``lumen.build.lowering.split_unions``).
 """
@@ -29,23 +40,24 @@ import numpy as np
 
 from lumen.build import lowering
 from lumen.format import schema
-from lumen.rules.navigation import BAND_FLOOR, BAND_ULPS, FLOAT32_EPS
+from lumen.geometry import solids as so
+from lumen.rules import keys
+from lumen.rules.navigation import band
 
 ORIGIN = "import"
-CONTACT = 1e-12  # m: two GDML lengths that agree to this are equal (1e-9 mm)
 
 
 class ImportRuleError(ValueError):
-    """A WLS film whose contact is not exactly one complete flat face per placement."""
+    """A WLS box thinner than the band where it is placed."""
 
 
 def apply(df: schema.DetectorFile) -> schema.DetectorFile:
     """Return the detector file with the general import rules applied (see the module docstring)."""
-    return wls_films(absorbed_at_entry(df))
+    return thin_wls(absorbed_at_entry(geant4_10(df)))
 
 
 def _detector_lvs(df):
-    lvs, stack = set(), [df.detector_volume]
+    lvs, stack = set(), [schema.detector_lv(df)]
     while stack:
         lv = stack.pop()
         if lv not in lvs:
@@ -54,19 +66,56 @@ def _detector_lvs(df):
     return lvs
 
 
+def _scales(df, lvs) -> dict:
+    """Return {lv: the largest |coordinate| (m) of its solid's box over every world placement of it} of ``lvs``."""
+    mapper = lowering.SolidMapper(df)
+    radius = {}
+    for lv in lvs:
+        bb = lowering.solid_box(mapper.solid(df.volumes[lv].solid)) if df.volumes[lv].solid else None
+        radius[lv] = float(np.max(np.linalg.norm(so.corners(*bb), axis=1))) if bb is not None else 0.0
+    holds: dict = {}  # lv -> whether its subtree places one of lvs (the walk descends only there)
+
+    def has(lv):
+        if lv not in holds:
+            holds[lv] = False
+            holds[lv] = lv in radius or any(has(df.placements[i].volume) for i in df.volumes[lv].daughters)
+        return holds[lv]
+
+    out = dict.fromkeys(lvs, 0.0)
+
+    def walk(lv, lin, t):
+        if lv in out:
+            out[lv] = max(out[lv], float(np.max(np.abs(t))) + radius[lv])
+        for i in df.volumes[lv].daughters:
+            pl = df.placements[i]
+            if has(pl.volume):
+                lc, tc = lowering.placement_pose(pl)
+                walk(pl.volume, lin @ lc, lin @ tc + t)
+
+    walk(df.world, np.eye(3), np.zeros(3))
+    return out
+
+
 def absorbed_at_entry(df: schema.DetectorFile) -> schema.DetectorFile:
-    """Bind opaque every mesh volume's material that absorbs within the band floor at every knot."""
+    """Bind opaque every mesh volume's material that absorbs within the band where its meshes are, at every knot."""
     lvs = _detector_lvs(df)
-    meshes = {df.volumes[lv].material for lv in lvs
-              if df.volumes[lv].solid and df.solids[df.volumes[lv].solid].type == "tessellated"}  # fmt: skip
+    mesh_lvs = [
+        lv for lv in sorted(lvs) if df.volumes[lv].solid and df.solids[df.volumes[lv].solid].type == "tessellated"
+    ]
+    scale = _scales(df, mesh_lvs) if mesh_lvs else {}
+    meshes = {df.volumes[lv].material for lv in mesh_lvs}
     mats, rep = dict(df.materials), list(df.report)
     for name in sorted(m for m in meshes if m in mats):
         a, o = mats[name].properties.get("ABSLENGTH"), mats[name].optics
-        if a is None or o.name != "geant4" or float(np.max(a.value)) >= BAND_FLOOR:
+        b = min(band(scale[lv]) for lv in mesh_lvs if df.volumes[lv].material == name)  # the finest band it is at
+        if a is None or o.name != "geant4" or float(np.max(a.value)) >= b:
             continue
-        note = f"mesh material with ABSLENGTH < {BAND_FLOOR} m at every knot: absorbed at entry"
-        mats[name] = dataclasses.replace(mats[name], optics=schema.OpticsModel("lumen:opaque", 1, {"medium": name},
-                                                                               ORIGIN, note))  # fmt: skip
+        note = (
+            f"mesh material with ABSLENGTH < {b:.3g} m (the band where its meshes are) at every knot: absorbed at entry"
+        )
+        mats[name] = dataclasses.replace(
+            mats[name], optics=schema.OpticsModel("lumen:opaque", settings={}, origin=ORIGIN, note=note)
+        )
         rep.append(f"import: material {name} bound opaque ({note})")
     return dataclasses.replace(df, materials=mats, report=tuple(rep))
 
@@ -76,99 +125,155 @@ def _box(df, lv):
     return None if s is None or s.type != "box" else np.array([s.params[k] for k in "xyz"], np.float64)
 
 
-def _pose(df, i):
-    """Return (half extents in the mother's frame, centre, matrix, exact) of a box placement, or None (not a box).
+def thin_wls(df: schema.DetectorFile) -> schema.DetectorFile:
+    """Refuse a box of a WLS material thinner than the band where it is placed (see the module docstring)."""
+    cand = [lv for lv in sorted(_detector_lvs(df)) if _box(df, lv) is not None
+            and "WLSABSLENGTH" in df.materials[df.volumes[lv].material].properties]  # fmt: skip
+    scale = _scales(df, cand) if cand else {}
+    thin = [lv for lv in cand if _box(df, lv).min() < band(scale[lv])]
+    if thin:
+        raise ImportRuleError(f"WLS boxes {thin} are thinner than the band where they are placed: the navigator does "
+                              "not resolve them, and lumen lowers no film; thicken them in the recipe (a coated "
+                              "foil: split it into a coating half and a substrate half)")  # fmt: skip
+    return df
 
-    ``exact``: the placement turns the box by a signed permutation, so its extents in the mother's frame are its faces.
+
+# ------------------------------------------------------------------------------- Geant4-10 scintillation keys
+class TranslationRefused(ValueError):  # noqa: N818 (named like ImportRefused, OpticsRefused)
+    """A record in a form with no single meaning to translate: refused, naming what to add or delete."""
+
+
+G4_11_SCINTILLATION = frozenset(k for v in keys.SCINTILLATION_KEYS.values() for k in v)
+
+
+def refuse_geant4_10(props: dict, what: str) -> None:
+    """Refuse (TranslationRefused) Geant4-10 scintillation keys with no single reading, naming what to add or delete.
+
+    Geant4 10.7.4's G4Scintillation::PostStepDoIt (default optics parameters: enhanced time constants off,
+    excitation ratio 1): no FASTCOMPONENT and no SLOWCOMPONENT emits nothing; a component reads its
+    FAST/SLOWTIMECONSTANT (GetConstProperty: a missing key aborts); two components read YIELDRATIO (aborts without it)
+    and give the fast one G4int(min(YIELDRATIO, 1) N) photons, the slow one the rest (a negative ratio gives the slow
+    one more than the yield: no physical reading). Keys of both releases have two readings (Geant4 10.7 reads the 10
+    keys, Geant4 11 the 11 keys).
     """
-    p, b = df.placements[i], _box(df, df.placements[i].volume)
-    if b is None:
-        return None
-    m, t = lowering.placement_pose(p)
-    r = np.round(m)
-    exact = bool(np.allclose(m, r, rtol=0.0, atol=CONTACT)) and np.allclose(np.abs(r).sum(0), 1.0)
-    return np.abs(r if exact else m) @ (b / 2), t, r, exact
+    old = sorted(k for k in props if k in keys.G4_10_KEYS)
+    if not old:
+        return
+    new = sorted(k for k in props if k in G4_11_SCINTILLATION)
+    if new:
+        raise TranslationRefused(f"{what} has the Geant4-10 scintillation keys {old} and the Geant4 11 keys {new}: "
+                                 "Geant4 10.7 reads only the first, Geant4 11 only the second; delete one of the two "
+                                 "sets")  # fmt: skip
+    present = [c for c in ("FAST", "SLOW") if f"{c}COMPONENT" in props]
+    if not present:
+        raise TranslationRefused(f"{what} has the Geant4-10 scintillation keys {old} without a FASTCOMPONENT or "
+                                 "SLOWCOMPONENT spectrum (Geant4 10.7 emits no light from them): add the spectrum, or "
+                                 "delete the keys")  # fmt: skip
+    need = [f"{c}TIMECONSTANT" for c in present if f"{c}TIMECONSTANT" not in props]
+    if len(present) == 2 and "YIELDRATIO" not in props:
+        need.append("YIELDRATIO")
+    if need:
+        raise TranslationRefused(f"{what} has the Geant4-10 scintillation keys {old} without {need} (Geant4 10.7 "
+                                 f"aborts at its first scintillating step): add {need}")  # fmt: skip
+    if len(present) == 2:
+        r = np.asarray(props["YIELDRATIO"].value, np.float64)
+        if r.ndim or not np.isfinite(r) or r < 0.0:
+            raise TranslationRefused(f"{what} has YIELDRATIO {r.tolist()}: Geant4 10.7 gives the fast component "
+                                     "min(YIELDRATIO, 1) of the light; give a finite constant >= 0 (the fast "
+                                     "share)")  # fmt: skip
 
 
-def _contacts(df, i):
-    """Return [(sibling placement, the face's normal in the sibling's frame)]: film placement i's large faces on a
-    sibling's faces."""  # noqa: D205, D209
-    p = df.placements[i]
-    hf, tf, _, exact = _pose(df, i)
-    if not exact:
-        raise ImportRuleError(f"WLS film {p.name!r} is turned off the axes of its mother: not a flat face contact")
-    k, rest, out = int(np.argmin(hf)), [a for a in range(3) if a != int(np.argmin(hf))], []
-    for j in df.volumes[p.mother].daughters:
-        q = _pose(df, j) if j != i else None
-        if q is None:
-            continue
-        hb, tb, rb, ok = q
-        for s in (1.0, -1.0):  # the film's face -s on the sibling's face +s (the film on its +s side)
-            if abs(tf[k] - s * hf[k] - (tb[k] + s * hb[k])) >= CONTACT:
-                continue
-            lo, hi = np.maximum(tf - hf, tb - hb)[rest], np.minimum(tf + hf, tb + hb)[rest]
-            if np.all(hi > lo + CONTACT):  # the faces overlap: they must be one face
-                if not (ok and np.all(np.abs((tf - tb)[rest]) < CONTACT) and np.all(np.abs((hf - hb)[rest]) < CONTACT)):
-                    raise ImportRuleError(f"WLS film {p.name!r} covers part of a face of {df.placements[j].name!r}"
-                                          " (or a turned face): not one complete flat face")  # fmt: skip
-                out.append((j, tuple(float(x) + 0.0 for x in rb.T @ (s * np.eye(3)[k]))))
-    return out
+def geant4_10_light(props: dict) -> list:
+    """Return the light Geant4 10.7.4's G4Scintillation emits from a material's Geant4-10 keys: per component,
+    (spectrum Property, decay time ns, rise time ns or None, share of the yield). The reference reading the
+    translation is checked against, written from G4Scintillation::PostStepDoIt independently of the translation.
+
+    With FASTCOMPONENT and SLOWCOMPONENT (N_timeconstants = 2): the fast one first, with FASTTIMECONSTANT (and
+    FASTSCINTILLATIONRISETIME, read under the finite-rise-time switch), numPhot = G4int(min(yieldRatio, 1) *
+    fNumPhotons); then the slow one with SLOWTIMECONSTANT, fNumPhotons - numPhot. With one of them: that one with its
+    own time constants, all the photons. The yield (SCINTILLATIONYIELD) is the same key in 10.7 and 11.
+    """  # noqa: D205
+    fast, slow = props.get("FASTCOMPONENT"), props.get("SLOWCOMPONENT")
+    if fast is not None and slow is not None:
+        r = min(float(props["YIELDRATIO"].value), 1.0)
+        parts = [("FAST", fast, r), ("SLOW", slow, 1.0 - r)]
+    elif fast is not None:
+        parts = [("FAST", fast, 1.0)]
+    else:
+        parts = [("SLOW", slow, 1.0)]
+    rise = lambda c: float(props[f"{c}SCINTILLATIONRISETIME"].value) if f"{c}SCINTILLATIONRISETIME" in props else None  # noqa: E731
+    return [(spec, float(props[f"{c}TIMECONSTANT"].value), rise(c), share) for c, spec, share in parts]
 
 
-def _film_lvs(df):
-    paths, out = lowering._first_paths(df), []
-    for lv in sorted(_detector_lvs(df)):
-        v, b = df.volumes[lv], _box(df, lv)
-        if b is None or "WLSABSLENGTH" not in df.materials[v.material].properties:
-            continue
-        t = paths[lv][-1][2]
-        if b.min() < BAND_ULPS * FLOAT32_EPS * float(np.max(np.abs(t))) + BAND_FLOOR:
-            out.append(lv)
-    return out
+def check_scintillation(old: dict, new: dict, what: str) -> None:
+    """Check that lumen's scintillation source reads the translated keys ``new`` as Geant4 10.7 reads ``old``
+    (``geant4_10_light``): the same components in order, each spectrum's energies and values bit for bit, its decay
+    and rise times exactly, its share to float32 rounding (lumen computes it in float32), and the same
+    SCINTILLATIONYIELD. Raises AssertionError naming the difference."""  # noqa: D205, D209
+    from lumen.sources import scintillation as sc  # lazily: the sources import the rules
+
+    k = keys.SCINTILLATION_KEYS
+    ref = geant4_10_light(old)
+    comps = keys.components(lambda key: key in new)
+    if len(comps) != len(ref):
+        raise AssertionError(f"{what}: Geant4 10.7's {len(ref)} components read as {len(comps)}")
+    f = np.asarray(sc.shares(lambda key, d: float(new[key].value) if key in new else d, comps), np.float64)
+    for i, (spec, tau, rise, share) in zip(comps, ref, strict=True):
+        s = new[k["spectra"][i]]
+        if not (np.array_equal(s.value, spec.value) and np.array_equal(s.energy, spec.energy)):
+            raise AssertionError(f"{what}: component {i + 1}'s spectrum differs from Geant4 10.7's")
+        if float(new[k["times"][i]].value) != tau:
+            raise AssertionError(f"{what}: component {i + 1}'s decay time {float(new[k['times'][i]].value)} != {tau}")
+        got = float(new[k["rises"][i]].value) if k["rises"][i] in new else None
+        if got != rise:
+            raise AssertionError(f"{what}: component {i + 1}'s rise time {got} != {rise}")
+        if abs(f[i] - share) > 1e-6:
+            raise AssertionError(f"{what}: component {i + 1}'s share {f[i]} != Geant4 10.7's {share}")
+    y_old, y_new = old.get("SCINTILLATIONYIELD"), new.get("SCINTILLATIONYIELD")
+    if (y_old is None) != (y_new is None) or (y_old is not None and not np.array_equal(y_old.value, y_new.value)):
+        raise AssertionError(f"{what}: SCINTILLATIONYIELD changed")
+    if any(key in new for key in keys.G4_10_KEYS):
+        raise AssertionError(f"{what}: Geant4-10 keys left after the translation")
 
 
-def _backings(df, films):
-    """Return {backing LV: [(film LV, film placement, backing placement, local axis)]}, every contact checked."""
-    out = {}
-    for f in films:
-        pvs = [i for i, p in enumerate(df.placements) if p.volume == f]
-        if any(k.volume == f for k in df.skins) or any(df.placements[i].name in (b.pv1, b.pv2)
-                                                        for b in df.borders for i in pvs):  # fmt: skip
-            raise ImportRuleError(f"WLS film {f!r} carries an optical surface of its own")
-        for i in pvs:
-            c = _contacts(df, i)
-            if len(c) != 1:
-                raise ImportRuleError(f"WLS film placement {df.placements[i].name!r} touches {len(c)} faces "
-                                      "(want exactly one complete flat face)")  # fmt: skip
-            j, axis = c[0]
-            out.setdefault(df.placements[j].volume, []).append((f, i, j, axis))
-    for b, rows in out.items():
-        placed = [j for j, p in enumerate(df.placements) if p.volume == b]
-        if len({r[3] for r in rows}) != 1 or len({r[0] for r in rows}) != 1 or sorted(r[2] for r in rows) != placed:
-            raise ImportRuleError(f"backing {b!r}: its placements do not all carry one film on one face of its "
-                                  f"frame ({sorted({r[3] for r in rows})}; {len(rows)} films, {len(placed)} "
-                                  "placements): a film on both faces, or on some placements only")  # fmt: skip
-    return out
+def geant4_10_scintillation(name: str, m: schema.Material):
+    """Return (material, translation record or None, report line or None) for a material's Geant4-10 keys."""
+    what = f"material {name!r}"
+    refuse_geant4_10(m.properties, what)
+    props, note = keys.geant4_11_scintillation(m.properties)
+    if note is None:
+        return m, None, None
+    check_scintillation(m.properties, props, what)
+    old = sorted(k for k in m.properties if k in keys.G4_10_KEYS)
+    new = sorted(k for k in props if k not in m.properties)
+    read = {"FASTCOMPONENT", "FASTTIMECONSTANT", "FASTSCINTILLATIONRISETIME"} if "FASTCOMPONENT" in m.properties \
+        else set()  # fmt: skip
+    if "SLOWCOMPONENT" in m.properties:
+        read |= {"SLOWCOMPONENT", "SLOWTIMECONSTANT", "SLOWSCINTILLATIONRISETIME"}
+    if {"FASTCOMPONENT", "SLOWCOMPONENT"} <= set(m.properties):
+        read.add("YIELDRATIO")
+    unread = [k for k in old if k not in read]  # keys Geant4 10.7 reads in no case of this material (dropped)
+    rec = dict(translation="geant4_10_scintillation", material=name, old=old, new=new, unread_by_geant4_10=unread,
+               reference="Geant4 10.7.4 G4Scintillation::PostStepDoIt (lumen.build.import_rules.geant4_10_light)",
+               check="components, spectra, decay and rise times, shares and yield equal to the reference")  # fmt: skip
+    line = f"{what}: {note}; checked against Geant4 10.7's reading"
+    if unread:
+        line += f"; {unread} read by Geant4 10.7 in no case here, dropped"
+    return dataclasses.replace(m, properties=props), rec, line
 
 
-def wls_films(df: schema.DetectorFile) -> schema.DetectorFile:
-    """Lower every one-sided WLS film onto its backing's face (see the module docstring)."""
-    found = _backings(df, _film_lvs(df))
-    mats, surfs, skins, rep = dict(df.materials), dict(df.surfaces), list(df.skins), list(df.report)
-    for b, rows in found.items():
-        f, i, _, axis = rows[0]
-        front = df.volumes[df.placements[i].mother].material
-        backing = next((k.surface for k in df.skins if k.volume == b), None)
-        if backing is None:
-            raise ImportRuleError(f"WLS film {f!r}: its backing {b!r} has no skin surface")
-        m = df.volumes[f].material
-        note = f"the WLS film {f!r} on the face {axis} of {b!r}"
-        bind = schema.OpticsModel("lumen:same_as", 1, {"material": front}, ORIGIN, f"{note}: index-matched to {front}")
-        mats[m] = dataclasses.replace(mats[m], optics=bind)
-        settings = dict(film_material=m, front_material=front, backing=backing,
-                        thickness_m=float(_box(df, f).min()), local_axis=list(axis))  # fmt: skip
-        surfs[f] = schema.Surface(f, "", "", "", 0.0, {}, schema.OpticsModel("lumen:wls_film", 1, settings, ORIGIN,
-                                                                             note))  # fmt: skip
-        skins.append(schema.Skin(f, f, b, ORIGIN, f"replaces {backing!r} on {b!r}"))
-        rep.append(f"import: {note}: {m} bound to {front}; {b!r}'s skin is a film over {backing}")
-    return dataclasses.replace(df, materials=mats, surfaces=surfs, skins=tuple(skins), report=tuple(rep))
+def geant4_10(df: schema.DetectorFile) -> schema.DetectorFile:
+    """Return the detector with every material's Geant4-10 scintillation keys translated, each reported and recorded
+    (see the module docstring); keys with no single reading are refused (TranslationRefused, naming what to change).
+    A detector with nothing to translate is returned as it is."""  # noqa: D205, D209
+    mats, recs, rep = dict(df.materials), [], list(df.report)
+    for name in df.materials:
+        m, rec, line = geant4_10_scintillation(name, mats[name])
+        mats[name] = m
+        if rec:
+            recs.append(rec)
+            rep.append(f"translated: {line}")
+    if not recs:
+        return df
+    prov = dict(df.provenance, translations=[*df.provenance.get("translations", []), *recs])
+    return dataclasses.replace(df, materials=mats, provenance=prov, report=tuple(rep))

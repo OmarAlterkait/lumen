@@ -2,7 +2,7 @@
 
 - The isotropic-source sphere: a point source at the centre of a sphere of radius R = 1 m in a Mie-only medium
   (MIEHG 20 m, no absorption), the wall a detecting counting sensor. (i) The charge is N (each photon's expected
-  deposits sum to 1 in expectation: checked against the replicas' error); (ii) the direct light, the first step's
+  deposits sum to 1 in expectation: checked against its photons' moment error); (ii) the direct light, the first step's
   deposits, is N exp(-R / L) to float32 accuracy (each photon deposits exp(-mu R) there); (iii) the single-scatter
   light (the second step's deposits) per path-length bin on (R, 3R) against the float64 quadrature of
   f1(l) = int da / L e^(-a / L) int dmu p(mu) e^(-b / L) delta(l - a - b), b = -a mu + sqrt(R^2 - a^2 (1 - mu^2)).
@@ -22,27 +22,32 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+import toys
 from scipy import stats
+from toys import EXACT
 
 import lumen
 from lumen import run as runner
 from lumen._core.safe import literal
+from lumen.build import tracked
+from lumen.compare import photons
 from lumen.format.sensorsets import SensorGroup
-from lumen.geometry import tracked
+from lumen.readout import fill
+from lumen.readout.grid import Grid, moment_error
 from lumen.recipe import Recipe
-from lumen.transport import estimator, item, state
+from lumen.record import Photons
+from lumen.tools.stats import ALPHA, SUITE_TESTS, z_limit
+from lumen.transport import estimator
 from lumen.transport import step as steps
 from lumen.units import C_VACUUM, HC
 
-pytestmark = pytest.mark.skipif(jax.default_backend() != "gpu", reason="the physics tier runs on a GPU")
 DATA = Path(__file__).resolve().parents[1] / "data" / "g4ref_mie"
 R, L_MIE, N_IDX, E_EV, R_OUT = 1.0, 20.0, 1.33, 3.0, 1.01
 LAM = HC / E_EV
 CASES = {"A": (0.6, 0.3, 0.7), "B": (0.0, 0.8, 0.5), "water": (0.95, 0.3, 1.0)}
-N_ISO, N_RING, REPLICAS = 1 << 20, 4_000_000, 16
+N_ISO, N_RING, SEEDS = 1 << 20, 4_000_000, 16
 ELL = np.linspace(R, 3 * R, 21)  # single-scatter path-length bins (m)
-Z_MAX, P_MIN = 4.0, 1e-3
-Z_T = 5.0  # the largest |t| over the bins with 16 groups (t with 15 degrees of freedom: 3e-3 over 20 bins)
+P_MIN = ALPHA / SUITE_TESTS  # a chi2's smallest p-value: the suites' one level (``lumen.tools.stats.z_limit``)
 
 GDML = """<?xml version="1.0" encoding="UTF-8"?>
 <gdml>
@@ -100,9 +105,9 @@ def detectors(tmp_path_factory):
         if (case, rings) not in out:
             d = tmp_path_factory.mktemp(f"mie_{case}_{rings}")
             # one group per ring: adjacent rings of one sensor type would be one region, crossed invisibly
-            groups = tuple(SensorGroup(f"ring{i}", "any_entry", "lumen:counting", lv=f"volRing{i}",
-                                       settings={"efficiency": 1.0}) for i in range(rings))  # fmt: skip
-            recipe = Recipe(f"mie_{case}", "volWorld", (300.0, 600.0), groups)
+            groups = tuple(SensorGroup(f"ring{i}", rule="any_entry", lv=f"volRing{i}",
+                                       settings={"entry_efficiency": 1.0}) for i in range(rings))  # fmt: skip
+            recipe = Recipe(f"mie_{case}", "volWorld", groups=groups)
             out[(case, rings)] = lumen.load(lumen.convert(write_gdml(d / "mie.gdml", case, rings), recipe,
                                                           d / "mie.lumen"))  # fmt: skip
         return out[(case, rings)]
@@ -122,8 +127,8 @@ def emission(n, seed, iso=True):
     else:
         d = np.tile([0.0, 0.0, 1.0], (n, 1))
     z = jnp.zeros(n, jnp.float32)
-    return state.Emission(jnp.zeros((n, 3), jnp.float32), jnp.asarray(d, jnp.float32), z, z + LAM, z + 1.0,
-                          jnp.zeros((n, 2, 3), jnp.float32), jnp.full(n, iso))  # fmt: skip
+    return Photons(jnp.zeros((n, 3), jnp.float32), jnp.asarray(d, jnp.float32), z, z + LAM, z + 1.0,
+                   jnp.zeros((n, 2, 3), jnp.float32))  # fmt: skip
 
 
 class SingleScatter:
@@ -144,24 +149,26 @@ class SingleScatter:
         return mem, [("direct", direct, dep.q), ("f1", cell, dep.q), ("f1sq", cell, dep.q * dep.q)]
 
 
-MODELS = {}  # one Model per detector and step config, one PhotonLoop per shape: new ones would recompile
-SPECS = {}  # one PhotonLoop per shape: a new one would be a new static argument of the loop
+MODELS = {}  # one Model per detector and step config, one readout per shape: new ones would recompile
 
 
 SINGLE = SingleScatter()
 
 
-def simulate(det, params, rows, *, reference=None, cfg=None, replicas=REPLICAS, seed=7):
+def simulate(det, params, rows, *, reference=None, cfg=None, seeds=None, seed=7, records=None):
+    """Return the run's outputs; with ``seeds`` K, the rows split over K seeds, each output stacked (K, ...)."""
     cfg = cfg or steps.StepConfig()
     if (id(det), cfg) not in MODELS:
         MODELS[(id(det), cfg)] = steps.Model(tracked.from_parts(det.parts), det.parts.optics, cfg)
     model = MODELS[(id(det), cfg)]
-    tally = item.HistogramShape(len(det.parts.optics.sensor_pvs), (300.0, 600.0))
-    spec = SPECS.setdefault(tally, item.photons(tally))
-    ops = steps.operands(model, params, reference, steps.Controls(10.0, float("inf"), 0.0), item.grid(tally))
-    key = jax.random.PRNGKey(seed)
-    t = runner.run(spec, model, ops, rows, key, max_vertices=20000, replicas=replicas, diagnostics=(SINGLE,))
-    return t.outputs
+    spec = photons.loop(fill.HistogramLayout(len(det.parts.optics.sensor_pvs), Grid.bands((300.0, 600.0))))
+    ops = steps.operands(model, params, reference, steps.Controls(10.0, EXACT))
+
+    def one(r, j):
+        return runner.run(spec, model, ops, r, jax.random.PRNGKey(seed + j), max_vertices=20000, diagnostics=(SINGLE,),
+                          records=records).outputs  # fmt: skip
+
+    return one(rows, 0) if seeds is None else toys.stack_seeds(one, rows, seeds)
 
 
 # ------------------------------------------------------------------------------------------ the float64 quadrature
@@ -220,9 +227,10 @@ def f1_bins(gf, gb, r, length=L_MIE, n_a=400, n_u=64):
 def test_isotropic_sphere_charge_direct_light_and_single_scatters(detectors, case):
     det = detectors(case, 1)
     o = simulate(det, det.pack(), emission(N_ISO, seed=1))
-    q = np.asarray(o["Q"], np.float64).reshape(REPLICAS, -1).sum(1) / (N_ISO / REPLICAS)
-    z_q = (q.mean() - 1.0) / (q.std(ddof=1) / math.sqrt(REPLICAS))
-    assert abs(z_q) < Z_MAX, (case, q.mean(), z_q)
+    q = float(np.asarray(o["charge:0"]).sum())  # one sensor, one band: its moment is the total's
+    err = float(moment_error(np.asarray(o["charge2:0"]).sum(), q, N_ISO))
+    z_q = (q / N_ISO - 1.0) / (err / N_ISO)
+    assert abs(z_q) < z_limit() and err > 0, (case, q / N_ISO, z_q)  # the photons' moment: a normal score
     direct = float(o["direct"][0]) / N_ISO
     assert direct == pytest.approx(math.exp(-R / L_MIE), rel=2e-5), case
     f1 = np.asarray(o["f1"], np.float64) / N_ISO
@@ -231,7 +239,7 @@ def test_isotropic_sphere_charge_direct_light_and_single_scatters(detectors, cas
     err = np.where(sq > 0, np.sqrt(sq) / N_ISO, np.sqrt(want / N_ISO))  # an empty bin: the bound of its error (q <= 1)
     z = (f1 - want) / err
     c2 = float(np.sum(z * z))
-    assert stats.chi2.sf(c2, len(z)) > P_MIN and np.max(np.abs(z)) < Z_MAX, (case, c2, z.round(2).tolist())
+    assert stats.chi2.sf(c2, len(z)) > P_MIN and np.max(np.abs(z)) < z_limit(len(z)), (case, c2, z.round(2).tolist())
 
 
 def _scaled(p, m, which, th):
@@ -249,9 +257,11 @@ def _jvp(det, which, rows, cfg=None, seed=7):
     p0 = jax.tree_util.tree_map(jnp.asarray, det.pack())
     m = medium_key(p0)
 
+    rec = 2 * int(simulate(det, p0, rows, reference=p0, cfg=cfg, seed=seed)["records"])  # for jax.jit
+
     def obs(th):
         o = simulate(det, _scaled(p0, m, which, th), rows, reference=_scaled(p0, m, which, jax.lax.stop_gradient(th)),
-                     cfg=cfg, replicas=1, seed=seed)  # fmt: skip
+                     cfg=cfg, seed=seed, records=rec)  # fmt: skip
         return o["direct"][0], o["f1"]
 
     return jax.jit(lambda: jax.jvp(obs, (jnp.float32(0.0),), (jnp.float32(1.0),)))()
@@ -287,22 +297,22 @@ def test_single_scatter_derivatives_in_the_lobe_constants(detectors, which):
     ad = np.array(ad)
     want = _quad_derivative("A", which)
     z = (ad.mean(0) - want) / np.maximum(ad.std(0, ddof=1) / math.sqrt(k), 1e-12)
-    assert np.max(np.abs(z)) < Z_T, (which, z.round(2).tolist())
+    assert np.max(np.abs(z)) < z_limit(len(z), k - 1), (which, z.round(2).tolist())
 
 
 def test_the_forward_ratio_at_its_edge_keeps_its_one_sided_derivative(detectors):
     det = detectors("water", 1)  # r = 1 with both lobes defined: WITHIN
     p0 = det.pack()
     m = medium_key(p0)
-    rows = estimator.edge_rows(det.parts.optics, p0, [("media", m, "mie", "lobe", "forward_ratio")])
-    assert rows == ((m, "mie", "forward_ratio"),)
+    rows = estimator.edge_rows(det.parts.optics, [("media", m, "mie", "lobe", "forward_ratio")])
+    assert rows == estimator.EdgeRows(lobes=((m, "mie", "forward_ratio"),))
     cfg = steps.StepConfig(edge_rows=rows)
     n, k = 1 << 21, 16
     runs = [_jvp(det, "forward_ratio", emission(n // k, seed=30 + s), cfg, seed=30 + s)[1][1] for s in range(k)]
     ad = np.array([np.asarray(r, np.float64) / (n // k) for r in runs])
     want = _quad_derivative("water", "forward_ratio")
     z = (ad.mean(0) - want) / np.maximum(ad.std(0, ddof=1) / math.sqrt(k), 1e-12)
-    assert np.max(np.abs(z)) < Z_T, z.round(2).tolist()
+    assert np.max(np.abs(z)) < z_limit(len(z), k - 1), z.round(2).tolist()
     # the value with the moved reference is unchanged in expectation
     o = simulate(det, p0, emission(N_ISO, seed=3), cfg=cfg)
     f1 = np.asarray(o["f1"], np.float64) / N_ISO
@@ -319,9 +329,11 @@ def test_forward_and_reverse_mode_agree(detectors):
     rows = emission(1 << 16, seed=4)
     c = jnp.asarray(np.random.default_rng(0).normal(size=len(ELL) - 1), jnp.float32)
 
+    rec = 2 * int(simulate(det, p0, rows, reference=p0)["records"])  # the records' number for jax.jit
+
     def scalar(th):
         o = simulate(det, _scaled(p0, m, "g_forward", th), rows,
-                     reference=_scaled(p0, m, "g_forward", jax.lax.stop_gradient(th)), replicas=1)  # fmt: skip
+                     reference=_scaled(p0, m, "g_forward", jax.lax.stop_gradient(th)), records=rec)  # fmt: skip
         return jnp.sum(c * o["f1"])
 
     fwd = jax.jit(lambda: jax.jvp(scalar, (jnp.float32(0.0),), (jnp.float32(1.0),))[1])()
@@ -339,24 +351,24 @@ def test_ring_toy_against_geant4(detectors, case, geant4):
         counts, t_sum, t2_sum, launched = g["counts"], g["t_sum"], g["t2_sum"], int(g["launched"])
     assert man[name]["hits"] == int(counts.sum())
     det = detectors(case, 36)
-    o = simulate(det, det.pack(), emission(N_RING, seed=5, iso=False))
+    o = simulate(det, det.pack(), emission(N_RING, seed=5, iso=False), seeds=SEEDS)
     ring = np.array([int(pv.rsplit("pvRing", 1)[1].split("/")[0]) for pv in det.parts.optics.sensor_pvs])
-    q = np.zeros((REPLICAS, 36))
-    tw = np.zeros((REPLICAS, 36))
-    q[:, ring] = np.asarray(o["Q"], np.float64).reshape(REPLICAS, -1)
-    tw[:, ring] = np.asarray(o["Tw"], np.float64).reshape(REPLICAS, -1)
-    per = N_RING / REPLICAS
-    ours, ours_err = q.mean(0) / per, q.std(0, ddof=1) / per / math.sqrt(REPLICAS)
+    q = np.zeros((SEEDS, 36))
+    tw = np.zeros((SEEDS, 36))
+    q[:, ring] = np.asarray(o["charge:0"], np.float64).reshape(SEEDS, -1)
+    tw[:, ring] = np.asarray(o["Tw"], np.float64).reshape(SEEDS, -1)
+    per = N_RING / SEEDS
+    ours, ours_err = q.mean(0) / per, q.std(0, ddof=1) / per / math.sqrt(SEEDS)
     ref, ref_err = counts / launched, np.sqrt(counts) / launched
     z = (ours - ref) / np.sqrt(ours_err**2 + ref_err**2)
     c2 = float(np.sum(z * z))
-    assert stats.chi2.sf(c2, 36) > P_MIN and np.max(np.abs(z)) < Z_MAX, (case, geant4, z.round(2).tolist())
+    assert stats.chi2.sf(c2, 36) > P_MIN and np.max(np.abs(z)) < z_limit(36), (case, geant4, z.round(2).tolist())
     # the mean arrival time per ring, where both have light
     use = counts > 1000
     t_ref = t_sum[use] / counts[use]
     t_ref_err = np.sqrt(np.maximum(t2_sum[use] / counts[use] - t_ref**2, 0.0) / counts[use])
     t_ours = tw.sum(0)[use] / q.sum(0)[use]
     t_rep = tw[:, use] / np.maximum(q[:, use], 1e-30)
-    t_err = t_rep.std(0, ddof=1) / math.sqrt(REPLICAS)
+    t_err = t_rep.std(0, ddof=1) / math.sqrt(SEEDS)
     zt = (t_ours - t_ref) / np.sqrt(t_err**2 + t_ref_err**2)
-    assert np.max(np.abs(zt)) < Z_MAX, (case, geant4, zt.round(2).tolist())
+    assert np.max(np.abs(zt)) < z_limit(len(zt)), (case, geant4, zt.round(2).tolist())

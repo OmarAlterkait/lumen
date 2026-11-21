@@ -3,27 +3,32 @@
 A calibration is ``<name>.params.json`` plus ``<name>/*.npy`` for its arrays, written anywhere on the detector
 search path (by default the user's own directory), never inside a shared detector file::
 
-    {"schema": "lumen-params/1", "name": "calib_2026_10", "detector": "sk", "detector_digest": "sha256:...",
-     "sensor_set": "default", "parent": "nominal", "note": "...", "values": {
+    {"schema": "lumen-calibration/1", "name": "calib_2026_10", "detector": "my_detector",
+     "detector_digest": "sha256:...", "note": "...", "values": {
         "materials/Water/ABSLENGTH": {"energy": "calib_2026_10/0.energy.npy", "value": "calib_2026_10/0.value.npy"},
         "surfaces/BlackSheet/REFLECTIVITY": 0.051}}
 
-``parent`` names the calibration it starts from; ``nominal`` is the detector file itself. A table keeps its knot
-count (a new knot count is a new detector file).
+A calibration is flat: its values are every value that differs from the detector file's own (``nominal``), and
+loading it applies them to the file's values; it never starts from another calibration. A table keeps its knot count
+(a new knot count is a new detector file). ``detector_digest`` (the detector file's content and its sensor set) ties
+a calibration to its detector; ``detector`` is a label for the reader, never checked.
 """
 
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import jax
 import numpy as np
 
-from lumen.format.io import dumps
+from lumen.format import atomic
+from lumen.format.io import check_format, dumps
 
-PARAMS_SCHEMA = "lumen-params/1"
+SCHEMA = "lumen-calibration/1"  # a calibration's own format, tied to a detector by detector_digest alone
+
 NOMINAL = "nominal"
 
 
@@ -40,41 +45,51 @@ jax.tree_util.register_pytree_node(Table, lambda t: ((t.energy, t.value), None),
 
 @dataclass(frozen=True)
 class Calibration:
-    """A named set of parameter values (constants, arrays or Tables) keyed by GDML names."""
+    """A named set of parameter values (constants, arrays or Tables) keyed by GDML names, over the nominal values."""
 
     name: str
     detector: str
     detector_digest: str
     values: dict = field(default_factory=dict)
-    parent: str = NOMINAL
-    sensor_set: str = "default"
     note: str = ""
 
 
 def save(c: Calibration, directory) -> Path:
-    """Write ``<directory>/<name>.params.json`` and its arrays; refuse to overwrite an existing calibration."""
+    """Write ``<directory>/<name>.params.json`` and its arrays; refuse to overwrite an existing calibration.
+
+    Atomic (``lumen.format.atomic``): the arrays directory ``<name>/`` is placed whole, then the head, which names
+    them, is linked into place; either step finding another calibration of the name there raises ``FileExistsError``,
+    also when two processes save one name at once. A reader that finds the head finds its arrays.
+    """
     d = Path(directory)
     path = d / f"{c.name}.params.json"
     if path.exists():
         raise FileExistsError(f"calibration {path} exists: choose a new name")
-    arrays = d / c.name
+    arrays: dict[str, np.ndarray] = {}
     values: dict[str, object] = {}
     for i, (key, v) in enumerate(sorted(c.values.items())):
         if isinstance(v, Table):
-            arrays.mkdir(parents=True, exist_ok=True)
-            np.save(arrays / f"{i}.energy.npy", np.asarray(v.energy, np.float64))
-            np.save(arrays / f"{i}.value.npy", np.asarray(v.value, np.float64))
+            arrays.update({f"{i}.energy.npy": v.energy, f"{i}.value.npy": v.value})
             values[key] = dict(energy=f"{c.name}/{i}.energy.npy", value=f"{c.name}/{i}.value.npy")
         elif np.ndim(v):
-            arrays.mkdir(parents=True, exist_ok=True)
-            np.save(arrays / f"{i}.npy", np.asarray(v, np.float64))
+            arrays[f"{i}.npy"] = v
             values[key] = f"{c.name}/{i}.npy"
         else:
             values[key] = float(v)
-    head = dict(schema=PARAMS_SCHEMA, name=c.name, detector=c.detector, detector_digest=c.detector_digest,
-                sensor_set=c.sensor_set, parent=c.parent, note=c.note, values=values)  # fmt: skip
-    d.mkdir(parents=True, exist_ok=True)
-    path.write_text(dumps(head))
+    head = dict(schema=SCHEMA, name=c.name, detector=c.detector, detector_digest=c.detector_digest, note=c.note,
+                values=values)  # fmt: skip
+    placed = None
+    try:
+        if arrays:
+            with atomic.directory(d / c.name, exists="raise") as tmp:
+                for name, a in arrays.items():
+                    np.save(tmp / name, np.asarray(a, np.float64))
+            placed = d / c.name
+        atomic.write_bytes(path, dumps(head).encode(), exclusive=True)
+    except FileExistsError:
+        if placed is not None:  # this save's own arrays, named by no head: another head took the name
+            shutil.rmtree(placed, ignore_errors=True)
+        raise FileExistsError(f"calibration {path} exists: choose a new name") from None
     return path
 
 
@@ -82,8 +97,8 @@ def read(path) -> Calibration:
     """Read a calibration file."""
     path = Path(path)
     head = json.loads(path.read_text())
-    if head.get("schema") != PARAMS_SCHEMA:
-        raise ValueError(f"{path}: schema {head.get('schema')!r}; this lumen reads {PARAMS_SCHEMA}")
+    check_format(head.get("schema"), SCHEMA, path,
+                 "save the calibration again with Detector.save_calibration")  # fmt: skip
     values = {}
     for key, v in head["values"].items():
         if isinstance(v, dict):
@@ -92,8 +107,7 @@ def read(path) -> Calibration:
             values[key] = np.load(path.parent / v)
         else:
             values[key] = v
-    return Calibration(head["name"], head["detector"], head["detector_digest"], values, head["parent"],
-                       head["sensor_set"], head["note"])  # fmt: skip
+    return Calibration(head["name"], head["detector"], head["detector_digest"], values, head["note"])
 
 
 class CalibrationMismatch(ValueError):  # noqa: N818 -- the documented error catalogue's name
@@ -115,21 +129,3 @@ def find(name: str, search) -> Path:
         if p.exists():
             return p
     raise FileNotFoundError(f"no calibration {name!r} in {[str(d) for d in search]}")
-
-
-def lineage(name: str, search) -> list[Calibration]:
-    """Return the calibration ``name`` and its parents, oldest first (``nominal`` is the detector file itself)."""
-    out, seen = [], set()
-    while name != NOMINAL:
-        if name in seen:
-            raise ValueError(f"calibration parent cycle through {name!r}")
-        seen.add(name)
-        c = read(find(name, search))
-        out.append(c)
-        name = c.parent
-    return out[::-1]
-
-
-def merged(parents) -> dict:
-    """Return the values of a calibration and its parents (oldest first), the later calibration winning."""
-    return {k: v for c in parents for k, v in c.values.items()}

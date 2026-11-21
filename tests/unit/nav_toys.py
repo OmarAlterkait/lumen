@@ -6,9 +6,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from lumen.build import scene, solids
-from lumen.geometry import navigate
-from lumen.validate import oracle
+from lumen.compare import oracle
+from lumen.geometry import navigate, scene, solids
 
 F32, I32 = jnp.float32, jnp.int32
 T_ORC = 1e-9  # the oracle's start (its merge length is 1e-10)
@@ -33,18 +32,18 @@ def g4(op, a, b, R=None, t=(0.0, 0.0, 0.0)):
 
 
 def make_scene(defs, root="world", outside=0, hole_fillers=()):
-    return scene.Scene(dict(defs), root, scene.Label(outside, -1, "outside"), [], list(hole_fillers))
+    return scene.Scene(dict(defs), root, scene.Label(outside, -1, "outside"), list(hole_fillers))
 
 
 def defn(name, solid, med, pls=(), sensor=-1):
     """A definition of one solid (or none) placing (definition, R, t) daughters named '<definition>_<k>'."""
-    members = [scene.Member(solid, scene.Label(med, sensor, name), 0)] if solid is not None else []
-    return scene.Definition(name, members, [scene.Placement(p[0], p[1], np.asarray(p[2], float), name=f"{p[0]}_{k}")
+    member = scene.Member(solid, scene.Label(med, sensor, name)) if solid is not None else None
+    return scene.Definition(name, member, [scene.Placement(p[0], p[1], np.asarray(p[2], float), name=f"{p[0]}_{k}")
                                             for k, p in enumerate(pls)])  # fmt: skip
 
 
 def mesh_def(name, tris, med):
-    return scene.Definition(name, [scene.Member(scene.Mesh(tris), scene.Label(med, -1, name), 0)], [])
+    return scene.Definition(name, scene.Member(scene.Mesh(tris), scene.Label(med, -1, name)), [])
 
 
 def scene_nest():
@@ -112,6 +111,29 @@ def scene_overlap(b_x=0.1):
     })  # fmt: skip
 
 
+def scene_coincident(gap=0.0):
+    """coincident faces (``gap`` 0), or faces a few bands apart (within the on-face tolerance), between media shared
+    and not: env (the world's medium) holds glass flush with three of its faces, glass holds inner flush with the same
+    faces (a crossing of three faces at once); edge and edgein (one medium) flush with the world's +x face; s1 and s2
+    (one medium) sharing a face, s2's daughter flush with it"""
+    g = gap
+    return make_scene({
+        "world": defn("world", solids.g4_box(2.0, 2.0, 2.0), 1, [("env", np.eye(3), (0, 0, 0)),
+                                                              ("edge", np.eye(3), (0.8 - g, 0, 0)),
+                                                              ("s1", np.eye(3), (0, 0.8, 0)),
+                                                              ("s2", np.eye(3), (0.2, 0.8, 0))]),
+        "env": defn("env", solids.g4_box(0.6, 0.6, 0.6), 1, [("glass", np.eye(3), (0, 0, 0.15 - g))]),
+        "glass": defn("glass", solids.g4_box(0.6 - 2 * g, 0.6 - 2 * g, 0.3), 2,
+                      [("inner", np.eye(3), (0, 0, 0.1 - g))]),
+        "inner": defn("inner", solids.g4_box(0.6 - 4 * g, 0.6 - 4 * g, 0.1), 3),
+        "edge": defn("edge", solids.g4_box(0.4, 0.4, 0.4), 4, [("edgein", np.eye(3), (0.1 - g, 0, 0))]),
+        "edgein": defn("edgein", solids.g4_box(0.2, 0.4, 0.4), 4),
+        "s1": defn("s1", solids.g4_box(0.2, 0.2, 0.2), 5),
+        "s2": defn("s2", solids.g4_box(0.2, 0.2, 0.2), 5, [("s2in", np.eye(3), (-0.05 + g, 0, 0))]),
+        "s2in": defn("s2in", solids.g4_box(0.1, 0.1, 0.1), 6),
+    })  # fmt: skip
+
+
 def tet_tris():
     v = np.array([[0, 0, 0], [0.3, 0, 0], [0, 0.3, 0], [0, 0, 0.3]]) - 0.075
     return v[np.array([[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]])]
@@ -132,7 +154,8 @@ def nav_of(sc):
 
 
 SCENES = {"nest": scene_nest, "bool": scene_bool, "wires": scene_wires, "mesh": scene_mesh, "split": scene_split,
-          "overlap": scene_overlap}  # fmt: skip
+          "overlap": scene_overlap, "coincident": scene_coincident,
+          "near": functools.partial(scene_coincident, 3e-7)}  # fmt: skip
 
 
 @functools.cache
@@ -202,8 +225,8 @@ def _query_sn(nv, o, d, v, last, sn, t_max):
     return nv.query(o, d, v, last=last, sn=sn, t_max=t_max)
 
 
-def _query_pass(nv, o, d, v, last, t_max, pass_tab):
-    return nv.query(o, d, v, last=last, t_max=t_max, pass_tab=pass_tab)
+def _query_vertex(nv, o, d, v, last, t_max, vertex_tab):
+    return nv.query(o, d, v, last=last, t_max=t_max, vertex_tab=vertex_tab)
 
 
 def locate(nav, X, by_layout=False):
@@ -211,16 +234,16 @@ def locate(nav, X, by_layout=False):
     return per_ray(_locate, nav, np.asarray(X, np.float32).reshape(-1, 3), by_layout=by_layout)
 
 
-def query(nav, X, D, vol, last=-1, t_max=1e3, sn=None, pass_tab=None, by_layout=False):
+def query(nav, X, D, vol, last=-1, t_max=1e3, sn=None, vertex_tab=None, by_layout=False):
     """Return ``nav.query`` per ray (a dict of arrays): X, D (n, 3) or (3,); vol, last (n,) or one; sn (n, 3), (3,)."""
     X, D = np.asarray(X, np.float32).reshape(-1, 3), np.asarray(D, np.float32).reshape(-1, 3)
     n = max(len(X), len(D), np.size(vol), np.size(last), 0 if sn is None else np.size(sn) // 3)
     rows = [np.broadcast_to(X, (n, 3)), np.broadcast_to(D, (n, 3)), np.broadcast_to(np.asarray(vol, np.int32), (n,)),
             np.broadcast_to(np.asarray(last, np.int32), (n,))]  # fmt: skip
     tm = np.float32(t_max)
-    if pass_tab is not None:
+    if vertex_tab is not None:
         assert sn is None
-        return per_ray(_query_pass, nav, *rows, shared=(tm, np.asarray(pass_tab, bool)), by_layout=by_layout)
+        return per_ray(_query_vertex, nav, *rows, shared=(tm, np.asarray(vertex_tab, bool)), by_layout=by_layout)
     if sn is not None:
         sn = np.broadcast_to(np.asarray(sn, np.float32).reshape(-1, 3), (n, 3))
         return per_ray(_query_sn, nav, *rows, sn, shared=(tm,), by_layout=by_layout)
@@ -243,17 +266,39 @@ def _agree(orc, r, i, o32, d, t0, tol):
     ro = orc.query(o32.astype(float), d, t0, 10.0, push=0.0, medium=int(r["cls_before"][i]))
     ok = (ro["hit"] == bool(r["hit"][i])) and (not ro["hit"] or (
         abs(ro["t"] - r["t"][i]) <= tol * (1 + abs(ro["t"])) and ro["after"][0] == r["cls_after"][i]))  # fmt: skip
-    return ok or ro["start"] != "ok", ro
+    return ok, ro
 
 
-def walk_check(sc, nav=None, n=1500, steps=4, seed=0, orc_scene=None, tol=2e-5):
-    """Random starts; each step the navigator's first visible change against the oracle's from the same point.
+def side_check(nav, X, D, r, eps_min=2e-5):
+    """Return per crossing whether vol_before == locate(x - eps d) and vol_after == locate(x + eps d) (or the
+    navigator's mesh), each None where the check does not apply: no hit, a crossing within 3 eps of the start, or
+    another surface within 2 eps of it (locate at eps / 2, eps and 2 eps disagree). eps: 8 bands at x, at least
+    eps_min."""
+    hit = r["hit"].astype(bool)
+    x = np.asarray(X, float) + np.asarray(r["t"], float)[:, None] * np.asarray(D, float)
+    eps = np.maximum(eps_min, 8 * (BAND * np.max(np.abs(x), axis=1) + 1e-9))
+    out = []
+    for sgn in (-1.0, 1.0):
+        L = np.stack([locate(nav, x + sgn * (k * eps)[:, None] * D) for k in (0.5, 1.0, 2.0)])
+        ok = hit & (np.asarray(r["t"]) > 3 * eps) & (L[0] == L[1]) & (L[1] == L[2])
+        v = np.asarray(r["vol_before" if sgn < 0 else "vol_after"])
+        same = v == L[1]
+        if sgn > 0:
+            ok &= v <= nav.n  # a mesh holds no point: its entry is not located
+        out.append(np.where(ok, same, None))
+    return out
+
+
+def walk_check(sc, nav=None, n=1500, steps=4, seed=0, orc_scene=None, tol=2e-5, sides=("vol_before", "vol_after"),
+               use_oracle=True):  # fmt: skip
+    """Random starts; each step the navigator's first visible change against the oracle's from the same point
+    (``use_oracle``), and its volumes on both sides of the crossing against locate (``side_check``, the ``sides``).
 
     Continued from the hit point by identity, transmitted (the volume after) or reflected (the volume before) at
-    random. Returns (agree, total, bad).
+    random. Returns (agree, total, bad); a side mismatch is a bad entry ("vol_before" / "vol_after", step, ray).
     """
     nav = nav_of(sc) if nav is None else nav
-    orc = oracle.Oracle(orc_scene or sc)
+    orc = oracle.Oracle(orc_scene or sc) if use_oracle else None
     O_, Dr = rays(n, seed)
     vol = locate(nav, O_)
     last = np.full(n, -1)
@@ -264,7 +309,7 @@ def walk_check(sc, nav=None, n=1500, steps=4, seed=0, orc_scene=None, tol=2e-5):
     alive = np.ones(n, bool)
     for s in range(steps):
         r = query(nav, O32, Dr, vol, last, t_max=10.0)
-        for i in np.flatnonzero(alive):
+        for i in np.flatnonzero(alive) if use_oracle else ():
             # a continued walk starts on a surface: the navigator takes everything within the band of the start as
             # the start (Geant4's kCarTolerance), so the oracle starts past that band too
             t0 = T_ORC if s == 0 else 2.0 * (BAND * float(np.max(np.abs(O32[i]))) + 1e-9)
@@ -275,8 +320,12 @@ def walk_check(sc, nav=None, n=1500, steps=4, seed=0, orc_scene=None, tol=2e-5):
                 tn = float(r["t"][i]) if r["hit"][i] else 0.0
                 to = float(ro["t"]) if ro["hit"] else 0.0
                 bad.append((s, i, O32[i].tolist(), Dr[i].tolist(), int(vol[i]), ro["t"], ro["after"][0],
-                            float(r["t"][i]), int(r["cls_after"][i]), bool(r["zero"][i]),
+                            float(r["t"][i]), int(r["cls_after"][i]), bool(r["zero"][i]), ro["start"],
                             (O32[i] + tn * Dr[i]).tolist(), (O32[i] + to * Dr[i]).tolist()))  # fmt: skip
+        for tag, chk in zip(("vol_before", "vol_after"), side_check(nav, O32, Dr, r), strict=True):
+            total += int(tag in sides and np.sum(alive & (chk != None)))  # noqa: E711 -- None: not checked
+            for i in np.flatnonzero(alive & (chk == False)) if tag in sides else ():  # noqa: E712
+                bad.append((tag, s, i, O32[i].tolist(), Dr[i].tolist(), int(vol[i]), int(r[tag][i])))
         # a walk ends where it leaves the world or enters an opaque part (a mesh: it holds no point)
         alive &= r["hit"].astype(bool) & (r["cls_after"] != 0) & (r["vol_after"] <= nav.n)
         nrm = r["normal"].astype(float)  # faces against d
@@ -286,7 +335,7 @@ def walk_check(sc, nav=None, n=1500, steps=4, seed=0, orc_scene=None, tol=2e-5):
         s_ = np.sign(np.sum(Dn * nrm, 1))
         Dn = np.where(((trans & (s_ > 0)) | (~trans & (s_ < 0)))[:, None], -Dn, Dn)  # transmit: along -nrm
         O32 = np.where(alive[:, None], (O32 + r["t"][:, None].astype(np.float32) * Dr.astype(np.float32)), O32)
-        vol = np.where(alive & trans, r["vol_after"], vol)
-        last = np.where(alive, r["item"], last)
+        vol = np.where(alive & trans, r["vol_after"], np.where(alive, r["vol_before"], vol))
+        last = np.where(alive, r["srf"], last)
         Dr = np.where(alive[:, None], Dn, Dr)
     return agree, total, bad

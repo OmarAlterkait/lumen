@@ -3,14 +3,12 @@
     ev = lumen.readout.sample(light, params, seed=1)            # ev.pe, ev.hits, ev.waveforms
 
 Photoelectron counts are Poisson in each bin of the expected density (dark included), uniform within the bin (the
-density already holds the time spread and the transit offset). ``photoelectrons`` turns given photon arrivals into
-photoelectrons instead (detection draws, then time spread, delay and offset), and ``electronics`` runs the rest:
-SPE charges; integration windows that open at a sensor's first photoelectron and last ``window`` (no dead time; the
-next photoelectron after a window opens the next); the threshold's acceptance of the window charge Q; the measured
-charge Q + noise, recorded when positive, times ``charge_scale``; the hit time = the window's first photoelectron +
-the time walk at the measured charge, recorded when inside the gate. Waveforms: each photoelectron's pulse times
-its charge and the gain, at the
-front end's samples over the gate, plus the baseline and white noise.
+density already holds the time spread and the transit offset). ``electronics`` turns given photoelectrons into hits
+and waveforms: SPE charges; integration windows that open at a sensor's first photoelectron and last ``window`` (no
+dead time; the next photoelectron after a window opens the next); the threshold's acceptance of the window charge Q;
+the measured charge Q + noise, recorded when positive, times ``charge_scale``; the hit time = the window's first
+photoelectron + the time walk at the measured charge, recorded when inside the gate. Waveforms: each photoelectron's
+pulse times its charge and the gain, at the front end's samples over the gate, plus the baseline and white noise.
 """
 
 from __future__ import annotations
@@ -20,10 +18,14 @@ from dataclasses import dataclass
 import jax
 import numpy as np
 
-from lumen.readout.detection import histograms, values
-from lumen.readout.waveform import _density
+from lumen.readout.detection import density, histograms, values
+from lumen.readout.grid import check_sensors
+from lumen.sources._base import bucket
 
-_DENSITY = jax.jit(_density)
+_DENSITY = jax.jit(lambda h, v: density(h, v, dark=True))
+# a sensor's negative expected density, as a share of its total, that is the rounding of the cubic split's signed
+# weights (cleared to 0 before the Poisson draw); more is refused
+NEGATIVE_SHARE = 1e-6
 
 
 @dataclass(frozen=True)
@@ -45,36 +47,13 @@ class SampledEvent:
 def _padded(fn, x):
     """Return fn(x) for a numpy array, padded along its first axis to a power of two (few distinct shapes compile)."""
     n = len(x)
-    m = 1 << max(int(n - 1).bit_length(), 0)
+    m = bucket(n)
     pad = np.zeros((m - n,) + x.shape[1:], x.dtype)
     return np.asarray(fn(np.concatenate([x, pad])), np.float64)[:n] if n else np.zeros(x.shape)
 
 
 def _np(v):
     return {k: _np(x) for k, x in v.items()} if isinstance(v, dict) else np.asarray(v, np.float64)
-
-
-def photoelectrons(model, v, sensor, t, rng, lam=None, theta=None):  # noqa: PLR0913
-    """Return (sensor, t) of the photoelectrons of photon arrivals (sensor ids, times in ns; numpy).
-
-    Each photon is detected with probability efficiency QE(lam) CE(theta) (lam in nm and theta in rad when given,
-    else QE and CE are not applied), then gets the time spread, the delay draw and the transit offset.
-    """
-    v = _np(v)
-    sensor, t = np.asarray(sensor), np.asarray(t, np.float64)
-    eff = np.broadcast_to(v["efficiency"], (int(sensor.max(initial=-1)) + 1,))[sensor]
-    if lam is not None:
-        qe = np.interp(lam, model.qe_knots, v["qe"]) if model.qe_knots else v["qe"][np.clip(np.searchsorted(
-            model.qe_bands, lam, side="right") - 1, 0, len(v["qe"]) - 1)]  # fmt: skip
-        eff = eff * qe
-    if theta is not None and model.ce_knots:
-        eff = eff * np.interp(theta, model.ce_knots, v["ce"])
-    keep = rng.random(len(t)) < eff
-    s, tt = sensor[keep], t[keep] + model.tts.sample(rng, v["tts"], int(keep.sum()))
-    if model.delay is not None:
-        tt = tt + model.delay.sample(rng, v["delay"], len(tt))
-    off = np.broadcast_to(v["t_offset"], (int(sensor.max(initial=-1)) + 1,))
-    return s, tt + off[s]
 
 
 def _windows(sensor, t, q, window):
@@ -96,7 +75,10 @@ def _windows(sensor, t, q, window):
 
 
 def electronics(model, v, sensor, t, rng, n_sensors: int, gate=None) -> SampledEvent:  # noqa: PLR0913
-    """Return the hits and waveforms of given photoelectrons (sensor ids, times in ns) under a model's values."""
+    """Return the hits and waveforms of given photoelectrons (sensor ids in [0, n_sensors), times ``t`` in ns) under a
+    model's values ``v`` (the group's split values, ``lumen.readout.detection.values``); ``gate`` (ns): the readout
+    gate a hit is recorded in (None: every hit, no waveform)."""  # noqa: D205, D209
+    check_sensors(sensor, n_sensors, "electronics")
     v = _np(v)
     sensor, t = np.asarray(sensor, np.int64), np.asarray(t, np.float64)
     g = model.charge.sample(rng, v["charge"], len(t))
@@ -111,8 +93,10 @@ def electronics(model, v, sensor, t, rng, n_sensors: int, gate=None) -> SampledE
         shift = _padded(lambda q: model.time_walk.at(v["time_walk"], q)[0], qm)
         sig = _padded(lambda q: model.time_walk.at(v["time_walk"], q)[1], qm)
         wt = wt + shift + rng.normal(0.0, 1.0, len(wt)) * sig
-    if gate is not None:  # a hit outside the readout gate is not recorded
-        inside = (wt >= gate[0]) & (wt <= gate[1])
+    if gate is not None:  # a window opening outside the readout gate is not recorded: the gate reads the opening
+        # photoelectron's time, as the likelihood does (hits_nll's Lambda_r: the windows opening in the gate); the
+        # time walk then moves the recorded time, which may lie just outside the gate
+        inside = (first >= gate[0]) & (first <= gate[1])
         ws, wt, qm, wn, first = ws[inside], wt[inside], qm[inside], wn[inside], first[inside]
     hits = dict(
         sensor=ws.astype(np.int64), t=wt, q=qm * float(fe["charge_scale"]), n_pe=wn.astype(np.int64), t_first=first
@@ -151,7 +135,14 @@ def sample(light, params, *, seed: int) -> SampledEvent:
     h = histograms(light)
     v = values(h, params)
     rng = np.random.default_rng(seed)
-    rho = np.clip(np.asarray(_DENSITY(h, v), np.float64), 0.0, None)
+    rho = np.asarray(_DENSITY(h, v), np.float64)
+    neg, tot = -np.minimum(rho, 0.0).sum(-1), np.abs(rho).sum(-1)
+    bad = np.flatnonzero(neg > NEGATIVE_SHARE * tot)
+    if bad.size:
+        raise ValueError(f"sample: the expected density of sensor(s) {bad[:8].tolist()} of group {h.group!r} is "
+                         f"negative beyond {NEGATIVE_SHARE:g} of its total (at most {neg[bad].max():.3g}): not a "
+                         "rounding of the time histogram's signed split")  # fmt: skip
+    rho = np.maximum(rho, 0.0)  # the split's signed weights leave negatives of rounding size
     counts = rng.poisson(rho)
     s, b = np.nonzero(counts)
     reps = counts[s, b]

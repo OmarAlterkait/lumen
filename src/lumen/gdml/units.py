@@ -1,9 +1,11 @@
 """Units in GDML: CLHEP's table (Geant4's internal units mm, ns, MeV, rad) and the exact conversion to lumen's units.
 
 ``UNITS`` maps every unit name GDML may use to its value in Geant4's internal units, as CLHEP defines it.
-``LENGTH_M`` and ``ENERGY_EV`` give the units that are exact decimal multiples of a metre and an electronvolt: a
-plain literal in one of them converts by exact decimal arithmetic (``to_metres("12.5", "mm")`` is exactly 0.0125,
-rounded once), and anything else is evaluated as Geant4 does and converted by one multiplication.
+``LENGTH_M`` and ``ENERGY_EV`` (``lumen.units``, shared with the YAML reader) give the units that are exact decimal
+multiples of a metre and an electronvolt: a plain literal in one of them converts by exact decimal arithmetic
+(``exact("12.5", LENGTH_M["mm"])`` is exactly 0.0125, rounded once), and anything else is evaluated with CLHEP's unit
+values and converted by one multiplication (Geant4's own evaluator reads some unit expressions a few 1e-7 off:
+``lumen.gdml.reader``).
 
 ``shift`` is the exporter's side of the same rule: the shortest repr of a double with its decimal point moved, exactly
 (``shift("0.0125", 3)`` is "12.5"), so that the importer's exact scaling reads the same double back.
@@ -15,21 +17,26 @@ import math
 import re
 from decimal import Decimal
 
-_E_SI = 1.602176634e-19
+from lumen.units import C_M_S, E_CHARGE_C, H_PLANCK_J_S, NUMBER, TWO_PI
+
 _EV = 1.0e-6
-_JOULE = _EV / _E_SI
+_JOULE = _EV / E_CHARGE_C
 _S = 1.0e9
 _M = 1000.0
 _KG = _JOULE * _S * _S / (_M * _M)
 _G = 1.0e-3 * _KG
 _CM = 10.0
 _PASCAL = _JOULE / (_M**3)
+# CLHEP's definitions (SystemOfUnits.h, PhysicalConstants.h), in the same arithmetic
+_PARSEC = 3.0856775807e16 * _M
+_C_LIGHT = C_M_S * _M / _S
+_H_PLANCK = H_PLANCK_J_S * _JOULE * _S
 
 UNITS = {
     "mm": 1.0, "millimeter": 1.0, "cm": 10.0, "centimeter": 10.0, "m": 1000.0,
     "meter": 1000.0, "km": 1.0e6, "kilometer": 1.0e6, "um": 1.0e-3,
     "micrometer": 1.0e-3, "nm": 1.0e-6, "nanometer": 1.0e-6,
-    "angstrom": 1.0e-7, "fermi": 1.0e-12, "pc": 3.0857e19, "parsec": 3.0857e19,
+    "angstrom": 1.0e-7, "fermi": 1.0e-12, "pc": _PARSEC, "parsec": _PARSEC,
     "mm2": 1.0, "cm2": 100.0, "m2": 1.0e6, "mm3": 1.0, "cm3": 1000.0,
     "m3": 1.0e9, "L": 1.0e6, "l": 1.0e6, "liter": 1.0e6, "dL": 1.0e5,
     "cL": 1.0e4, "mL": 1.0e3,
@@ -49,37 +56,21 @@ UNITS = {
     "atmosphere": 101325.0 * _PASCAL, "atm": 101325.0 * _PASCAL,
     "perCent": 0.01, "percent": 0.01, "perThousand": 0.001,
     "perMillion": 1.0e-6, "candela": 1.0, "cd": 1.0,
-    "pi": math.pi, "twopi": 2 * math.pi, "halfpi": math.pi / 2,
+    "pi": math.pi, "twopi": TWO_PI, "halfpi": math.pi / 2,
     "pi2": math.pi * math.pi, "e": math.e, "gamma": 0.577215664901532861,
-    "c_light": 299.792458, "h_Planck": 4.135667696e-15 * _EV * _S,
-    "hbarc": 197.3269804e-6 * 1.0e-6 * 1000.0, "hbar_Planck": 6.582119569e-22 * _S,
+    "c_light": _C_LIGHT, "h_Planck": _H_PLANCK, "hbarc": _H_PLANCK / TWO_PI * _C_LIGHT,
+    "hbar_Planck": _H_PLANCK / TWO_PI,
     "universe_mean_density": 1.0e-25 * _G / (_CM**3),
     "inch": 25.4, "in": 25.4, "ft": 304.8, "foot": 304.8,
 }  # fmt: skip
 
-LENGTH_M = {
-    "mm": "0.001", "millimeter": "0.001", "cm": "0.01", "centimeter": "0.01", "m": "1", "meter": "1",
-    "km": "1000", "kilometer": "1000", "um": "0.000001", "micrometer": "0.000001", "nm": "1e-9",
-    "nanometer": "1e-9", "angstrom": "1e-10", "fermi": "1e-15", "inch": "0.0254", "in": "0.0254", "ft": "0.3048",
-    "foot": "0.3048",
-}  # fmt: skip
-ENERGY_EV = {
-    "eV": "1", "electronvolt": "1", "meV": "0.001", "keV": "1000", "kiloelectronvolt": "1000", "MeV": "1000000",
-    "megaelectronvolt": "1000000", "GeV": "1e9", "gigaelectronvolt": "1e9", "TeV": "1e12", "PeV": "1e15",
-}  # fmt: skip
-MM_PER_M = 1000.0  # Geant4's internal length unit is the mm
-LITERAL = re.compile(r"^\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?\s*$")
-PRODUCT = re.compile(r"^\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*\*\s*([A-Za-z_][A-Za-z0-9_]*)\s*$")
+LITERAL = re.compile(rf"^\s*{NUMBER}\s*$")  # lumen.units.NUMBER, the YAML reader's too
+PRODUCT = re.compile(rf"^\s*({NUMBER})\s*\*\s*([A-Za-z_][A-Za-z0-9_]*)\s*$")
 
 
 def is_literal(text: str | None) -> bool:
     """Whether a GDML attribute is a plain decimal number (no expression)."""
     return text is not None and LITERAL.match(text) is not None
-
-
-def exact(text: str, factor: str) -> float:
-    """Return float(Decimal(text) * Decimal(factor)): one rounding."""
-    return float(Decimal(text.strip()) * Decimal(factor))
 
 
 PLAIN_LEADS = (-5, 16)  # a literal whose leading digit's exponent is in [-5, 16) is written without an exponent

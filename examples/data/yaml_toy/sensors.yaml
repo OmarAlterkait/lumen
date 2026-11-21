@@ -1,0 +1,8 @@
+# yaml_toy's sensors: what a recipe's groups say for a GDML file. The ids are numbered when it is converted.
+schema: lumen-detector-yaml/3      # every file starts with the format it is written in
+sensors:
+  - name: pmt                # parameter keys are sensors/pmt/<field>
+    rule: border_into        # counted across the Cathode borders into each PMT
+    lv: PMT
+    values: examples/data/toy_pmt.json   # a PMT value set: a JSON file (or <package>:<set>)
+    readout: {gate: [-10.0, 60.0]}  # ns after emission

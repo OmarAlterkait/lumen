@@ -23,6 +23,7 @@ SECTIONS = (
     ("Converting, loading and simulating", "lumen", ("convert", "load", "simulate")),
     ("The detector", "lumen.api.Detector", ("params", "sensor_table", "save_calibration", "with_responses", "digest")),
     ("The light", "lumen", ("Light",)),
+    ("Detectors written in YAML", "lumen.format.yaml", ("read",)),
     ("Parameters", "lumen.params.Params", ("info", "explain", "set", "scale")),
     (
         "Readout (after tracking)",
@@ -36,15 +37,36 @@ SECTIONS = (
             "expected_hits",
             "hits_nll",
             "sample",
-            "time_nodes",
+            "Truth",
+            "TruthHits",
         ),
     ),
     (
         "Sources",
         "lumen.sources",
-        ("Point", "CherenkovSegment", "ScintillationPoint", "ScintillationSegment", "Geant4Steps", "FromArrays"),
+        (
+            "Point",
+            "CherenkovSegment",
+            "ScintillationPoint",
+            "ScintillationSegment",
+            "CherenkovSteps",
+            "ScintillationSteps",
+            "FromArrays",
+        ),
     ),
-    ("Extending lumen", "lumen", ("Param", "source", "response", "medium_model", "surface_model")),
+    ("Extending lumen", "lumen", ("Param", "source", "response", "medium_model")),
+    ("Writing a recipe", "lumen", ("Recipe",)),
+    ("Sensor groups (a recipe's groups)", "lumen.format.sensorsets", ("SensorGroup", "SensorSet")),
+    (
+        "Detector file records (what a recipe's decisions read and return)",
+        "lumen.format.schema",
+        ("DetectorFile", "Volume", "Material", "Property", "OpticsModel", "Surface", "Skin", "Border"),
+    ),
+    (
+        'Detector packages (a package\'s DETECTORS and REFERENCES; lumen.convert("package:name"))',
+        "lumen.testing",
+        ("check_value_set", "check_readout_gates", "check_references_gate", "load_value_set", "histograms"),
+    ),
 )
 
 
@@ -88,12 +110,16 @@ def page() -> str:
     out.append("### `Light` fields\n")
     out.append("| Field | What |\n|---|---|")
     meaning = {"arrivals": "expected photons counted at each sensor, before its sensor model (S,)",
-               "arrivals_error": "their Monte Carlo standard error, from the replicas (S,)",
+               "arrivals_error": "their Monte Carlo standard error, from each sensor's per-photon second moment (S,)",
                "mean_arrival_time": "the arrivals-weighted mean arrival time after emission, ns (S,)",
-               "histograms": "the modelled group's histograms: wavelength, hit angle, time (None without one)",
+               "histograms": "the modelled group's histograms: wavelength, hit angle, time (None without one, or with "
+                             "several: then `groups`)",
                "health": "what happened to the light that was not counted (docs/reference/errors.md, Health)",
-               "provenance": "how the result was made: seed, samples, replicas, chunk, backend, detector, wrt",
-               "diagnostics": "what the diagnostics passed to simulate recorded (None without)"}  # fmt: skip
+               "provenance": "how the result was made: seed, samples, chunk, backend, detector, controls",
+               "diagnostics": "what simulate(..., diagnostics=) recorded, by output name (None without)",
+               "groups": "{group: histograms} of every modelled sensor group (None without); light.group(name)",
+               "truth": "the truth rows of simulate(..., truth=): one per detected photon (None without)",
+               }  # fmt: skip
     for f in dataclasses.fields(light):
         out.append(f"| `{f.name}` | {meaning[f.name]} |")
     return "\n".join(out) + "\n"

@@ -1,11 +1,11 @@
 """JAX's persistent compilation cache: a program loaded from it is bitwise the one a fresh compile gives.
 
-lumen turns the cache on by default (``lumen._env.xla_cache``: ``<LUMEN_CACHE>/xla``). That is safe only while a
-loaded program computes exactly what a fresh compile computes: on jax 0.5.3 it did not (CPU programs loaded from the
-cache missed navigator faces; docs/dev/decisions.md, 7). This test runs the photon loop on a small toy in
-three fresh processes -- (a) the cache disabled, (b) a cold compile writing a fresh cache through lumen's default,
-(c) a new process loading it -- and requires every output to be bitwise equal, so a future jax that breaks it fails
-here. The physics tier (one GPU); this file is also the driver its processes run (``python <this file> DET OUT``).
+A user turns the cache on through JAX's own variables (``JAX_COMPILATION_CACHE_DIR``; lumen sets nothing). That is
+safe only while a loaded program computes exactly what a fresh compile computes: on jax 0.5.3 it did not (CPU
+programs loaded from the cache missed navigator faces; docs/dev/decisions.md, 7). This test runs the photon loop on a
+small toy in three fresh processes -- (a) the cache disabled, (b) a cold compile writing a fresh cache, (c) a new
+process loading it -- and requires every output to be bitwise equal, so a future jax that breaks it fails here. The
+physics tier (one GPU); this file is also the driver its processes run (``python <this file> DET OUT``).
 """
 
 import os
@@ -15,9 +15,7 @@ from pathlib import Path
 
 import jax
 import numpy as np
-import pytest
 
-pytestmark = pytest.mark.skipif(jax.default_backend() != "gpu", reason="the physics tier runs on a GPU")
 N = 64
 
 
@@ -27,22 +25,23 @@ def _drive(det_path, out):
 
     import lumen
     from lumen import run as runner
-    from lumen.geometry import tracked
-    from lumen.transport import item, state
+    from lumen.build import tracked
+    from lumen.compare import photons
+    from lumen.readout import fill
+    from lumen.readout.grid import Grid
+    from lumen.record import Photons
     from lumen.transport import step as steps
 
     det = lumen.load(det_path)
     model = steps.Model(tracked.from_parts(det.parts), det.parts.optics)
-    tally = item.HistogramShape(len(det.parts.optics.sensor_pvs), (300.0, 600.0))
     d = np.random.default_rng(0).normal(size=(N, 3))
     d /= np.linalg.norm(d, axis=1, keepdims=True)
     z = jnp.zeros(N, jnp.float32)
     x = jnp.tile(jnp.asarray([0.3, 0.0, 0.0], jnp.float32), (N, 1))
-    rows = state.Emission(x, jnp.asarray(d, jnp.float32), z, z + 400.0, z + 1.0, jnp.zeros((N, 2, 3), jnp.float32),
-                          jnp.ones(N, bool))  # fmt: skip
-    ops = steps.operands(model, det.pack(det.params()), None, steps.Controls(),
-                         {"lam_edges": jnp.asarray((300.0, 600.0), jnp.float32)})  # fmt: skip
-    t = runner.run(item.photons(tally), model, ops, rows, jax.random.key_data(jax.random.PRNGKey(0)),
+    rows = Photons(x, jnp.asarray(d, jnp.float32), z, z + 400.0, z + 1.0, jnp.zeros((N, 2, 3), jnp.float32))
+    ops = steps.operands(model, det.pack(det.params()), None, steps.Controls())
+    loop = photons.loop(fill.HistogramLayout(len(det.parts.optics.sensor_pvs), Grid.bands((300.0, 600.0))))
+    t = runner.run(loop, model, ops, rows, jax.random.key_data(jax.random.PRNGKey(0)),
                    max_vertices=500, backend="auto")  # fmt: skip
     np.savez(out, **{f"out:{k}": np.asarray(v) for k, v in t.outputs.items()},
              cache=np.array(str(jax.config.jax_compilation_cache_dir)))  # fmt: skip
@@ -65,8 +64,12 @@ def test_a_program_loaded_from_the_cache_is_bitwise_a_fresh_compile(tmp_path):
     import lumen
 
     det_path = lumen.convert(write(tmp_path, _toy()), RECIPE, tmp_path / "toy.lumen")
-    cache_root = tmp_path / "lumen_cache"  # fresh: lumen's default puts the XLA cache in <LUMEN_CACHE>/xla
-    every = {"JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS": "0", "JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES": "0"}
+    cache_root = tmp_path / "lumen_cache"  # fresh
+    every = {
+        "JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS": "0",
+        "JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES": "0",
+        "JAX_COMPILATION_CACHE_DIR": str(cache_root / "xla"),
+    }
     fresh = _process(det_path, tmp_path / "a.npz", {"JAX_ENABLE_COMPILATION_CACHE": "false",
                                                     "LUMEN_CACHE": str(tmp_path / "no_cache")})  # fmt: skip
     writes = _process(det_path, tmp_path / "b.npz", {"LUMEN_CACHE": str(cache_root), **every})

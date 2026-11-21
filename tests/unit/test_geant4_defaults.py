@@ -13,11 +13,12 @@ from test_api import RECIPE, _toy
 from test_importer import write
 
 import lumen
+from lumen.compare import gradients
 from lumen.format.apply import GEANT4_DEFAULT, apply
 from lumen.format.calibrations import Table
 from lumen.gdml import exporter, importer
 from lumen.rules import optics as rules
-from lumen.validate import gradients
+from lumen.rules.optics import VALUE_RULES
 
 WIN = """  <opticalsurface name="Win" model="unified" finish="polished" type="dielectric_dielectric" value="0">
     <property name="REFLECTIVITY" ref="REF"/>
@@ -27,7 +28,10 @@ GLASS = """  <material name="Glass" state="solid"> <property name="RINDEX" ref="
     <fraction n="1.0" ref="O"/> </material>
 """
 KEY = "surfaces/Win/TRANSMITTANCE"
-ROW = ("dielectric_rt", "surface:Win")  # a polished surface without TRANSMITTANCE: DIELECTRIC_RT, T at Geant4's 0
+ROW = (
+    "dielectric_rt{eff=0}",
+    "surface:Win",
+)  # a polished surface without TRANSMITTANCE: DIELECTRIC_RT, T at Geant4's 0
 
 
 def _win_toy():
@@ -48,7 +52,7 @@ def det(tmp_path_factory):
 
 def test_params_list_the_default_with_its_source(det):
     p = det.params()
-    assert p[KEY] == 0.0 and p.info(KEY).default == "default 0, G4OpBoundaryProcess.cc:310"
+    assert p[KEY] == 0.0 and p.info(KEY).note == "default 0, G4OpBoundaryProcess.cc:310"
     assert p.explain(KEY) == "Geant4 default 0, G4OpBoundaryProcess.cc:310"
     # the unbound unified ground metal: its omitted constants are read at 0 (G4OpBoundaryProcess.cc:405-413)
     assert p["surfaces/Liner/SPECULARSPIKECONSTANT"] == 0.0 and "surfaces/Liner/TRANSMITTANCE" not in p
@@ -56,7 +60,7 @@ def test_params_list_the_default_with_its_source(det):
 
 
 def test_setting_a_default_key_adds_the_property(det):
-    df = apply(det.file, {KEY: 0.25})
+    df = apply(det.file, {KEY: 0.25}, VALUE_RULES)
     t = df.surfaces["Win"].properties["TRANSMITTANCE"]
     assert t.energy is None and float(t.value) == 0.25 and t.origin == GEANT4_DEFAULT
     assert rules.surface(df.surfaces["Win"]).params["T"] == 0.25
@@ -67,31 +71,30 @@ def test_setting_a_default_key_adds_the_property(det):
     "key,value,match",
     [
         ("surfaces/Win/EFFICIENCY", 0.1, "no property EFFICIENCY"),  # a sensor's, not a surface default
-        ("surfaces/Liner/TRANSMITTANCE", 0.1, "no property TRANSMITTANCE"),  # T on a metal: refused, not a default
-        ("materials/Water/RAYLEIGH", 1.0, "no property RAYLEIGH"),  # a material's omitted property
+        ("surfaces/Liner/TRANSMITTANCE", 0.1, "no property TRANSMITTANCE"),  # a metal without T has no straight share
+        ("materials/Water/MIEHG", 1.0, "no property MIEHG"),  # a material's omitted property
         (KEY, Table(np.array([2.0, 3.0]), np.array([0.1, 0.1])), "a number"),
     ],
 )
 def test_any_other_added_property_is_refused(det, key, value, match):
     with pytest.raises(ValueError, match=match):
-        apply(det.file, {key: value})
+        apply(det.file, {key: value}, VALUE_RULES)
 
 
 def test_the_export_writes_a_default_only_when_set(det, tmp_path):
-    plain = exporter.export(det.file, tmp_path / "a" / "x.gdml", scope="full")
-    again = exporter.export(det.file, tmp_path / "b" / "x.gdml", scope="full")
+    plain = exporter.export(det.file, tmp_path / "a" / "x.gdml")
+    again = exporter.export(det.file, tmp_path / "b" / "x.gdml")
     assert plain.sha256 == again.sha256 and b"TRANSMITTANCE" not in (tmp_path / "a" / "x.gdml").read_bytes()
-    exporter.export(apply(det.file, {KEY: 0.25}), tmp_path / "c" / "x.gdml", scope="full")
+    exporter.export(apply(det.file, {KEY: 0.25}, VALUE_RULES), tmp_path / "c" / "x.gdml")
     back = importer.read_gdml(tmp_path / "c" / "x.gdml").surfaces["Win"].properties["TRANSMITTANCE"]
     np.testing.assert_array_equal(back.value, [0.25, 0.25])  # a flat table: what G4OpBoundaryProcess reads
-    assert rules.surface(exporter.read_export(tmp_path / "c" / "x.gdml").detector_file.surfaces["Win"]).params[
-        "T"
-    ] == 0.25  # fmt: skip
+    t = rules.surface(importer.read_gdml(tmp_path / "c" / "x.gdml").surfaces["Win"]).params["T"]
+    np.testing.assert_array_equal(t[1]["value"], [0.25, 0.25])  # read back as the table it is (tables stay tables)
 
 
 def test_the_gradient_family_is_the_params_key(det):
-    fams = [f for f in gradients.families(det.parts.optics, det.pack()) if f[1][-1] == "T"]
-    assert [(f[1][1], str(det.parts.optics.rows[f[1][1]][f[2]])) for f in fams] == [ROW]
-    assert fams[0][3] == "edge"  # at 0: one-sided, inward
-    packed = det.pack(det.params().set(KEY, 0.25))
-    assert float(np.asarray(packed["surface_types"][ROW[0]]["T"])[fams[0][2]]) == 0.25
+    fams = [f for f in gradients.families(det, det.params()) if f[0] == KEY]
+    assert len(fams) == 1 and fams[0][1] == "edge"  # at 0: one-sided, inward
+    row = next(i for i, r in enumerate(det.parts.optics.rows) if (r.surface_type.name, r.origin) == ROW)
+    packed = det.pack(gradients.at(det.params(), fams[0], 0.25))
+    assert float(np.asarray(packed["surfaces"]["T"])[row]) == 0.25

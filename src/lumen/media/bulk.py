@@ -13,8 +13,10 @@ from dataclasses import dataclass
 
 import jax.numpy as jnp
 
+from lumen._core.rng import REEMIT_UNIFORMS
+from lumen.lobes import Lobe
 from lumen.media import laws, phase
-from lumen.surfaces.lobes import Lobe
+from lumen.media.emission import EmissionRecord
 
 CHANNEL_ORDER = ("rayleigh", "mie", "wls")
 
@@ -23,16 +25,24 @@ CHANNEL_ORDER = ("rayleigh", "mie", "wls")
 class Channel:
     """An event channel of a medium: rate 1 / length(lam), outgoing direction drawn from ``lobe``.
 
-    With ``reemit`` (a spectrum of ``lumen.media.spectra``) the channel is absorption by a wavelength shifter or a
-    scintillator component: the photon is re-emitted with probability ``p["yield"]`` (the event's live weight) at a
-    new wavelength from the spectrum, after a delay drawn from Exp(``p["tau"]``). Its parameters are
-    ``{"length": ..., "yield": ..., "tau": ...}``.
+    With ``emission`` (a ``lumen.media.emission.EmissionRecord``) the channel is absorption by a wavelength shifter
+    (G4OpWLS): the photon goes on as the record's emission, with expected yield ``p["yield"]`` (a weight) at a
+    wavelength from the spectrum ``p["spectrum"]`` at or below the absorbed energy, after the record's time profile
+    (``p["tau"]``). Its parameters are ``{"length": ..., "yield": ..., "tau": ..., "spectrum": {"energy", "value"}}``.
     """
 
     name: str
     lobe: Lobe
     length: laws.Law
-    reemit: object = None
+    emission: EmissionRecord | None = None
+
+    def __post_init__(self):
+        """Refuse a re-emission that draws more uniforms than the step gives it (``rng.REEMIT_UNIFORMS``)."""
+        if self.emission is not None and 1 + len(self.emission.profile.components) > REEMIT_UNIFORMS:
+            comps = self.emission.profile.components
+            raise ValueError(f"channel {self.name!r}: a re-emission draws its wavelength and one uniform per "
+                             f"time-profile component, at most {REEMIT_UNIFORMS} in all; {comps} has {len(comps)} "
+                             "components")  # fmt: skip
 
 
 @dataclass(frozen=True, eq=False)
@@ -88,13 +98,14 @@ def evaluate(medium, p, lam):
     return out
 
 
-def validate(medium, p, lam_min, lam_max):
-    """Check every law of the medium over the wavelength range [lam_min, lam_max] (nm), failing closed."""
+def validate(medium, p, domain=None):
+    """Check every law of the medium where light evaluates it (``laws.validate``: a table's knots inside the light's
+    ``domain``, and its ends), failing closed."""  # noqa: D205, D209
     if medium.index is not None:
-        laws.validate(medium.index, p["index"], lam_min, lam_max, name=f"{medium.name}.index")
+        laws.validate(medium.index, p["index"], name=f"{medium.name}.index", domain=domain)
     if medium.absorption is not None:
-        laws.validate(medium.absorption, p["absorption"], lam_min, lam_max, name=f"{medium.name}.absorption")
+        laws.validate(medium.absorption, p["absorption"], name=f"{medium.name}.absorption", domain=domain)
     for c in medium.channels:
         if c.length.out != "length":
             raise laws.LawError(f"{medium.name}.{c.name}: a channel length law must output a length")
-        laws.validate(c.length, p[c.name]["length"], lam_min, lam_max, name=f"{medium.name}.{c.name}.length")
+        laws.validate(c.length, p[c.name]["length"], name=f"{medium.name}.{c.name}.length", domain=domain)

@@ -8,13 +8,13 @@ The surface lookup's side of coincident faces is in test_surfaces.py."""
 
 import numpy as np
 from nav_toys import defn, make_scene, per_ray
-from test_surfaces import LAM, MATS, library, tree
+from test_surfaces import MATS, library, tree
 
-from lumen.build import solids
-from lumen.build import surfaces as regions
+from lumen.build import lookup as regions
+from lumen.build import tracked
 from lumen.build.tree import OUTSIDE_PV
-from lumen.geometry import tracked
-from lumen.surfaces import types as legacy
+from lumen.geometry import solids
+from lumen.surfaces import types
 
 GLASS = "glass_0/glass"
 
@@ -34,7 +34,7 @@ def shell_scene(shell):
 
 
 def shell_optics(shell):
-    """the legacy optics of the shell scene: water world, acrylic glass and shell, LAr cavity, the cathode border"""
+    """the optics of the shell scene: water world, acrylic glass and shell, LAr cavity, the cathode border"""
     i_ = _inner(shell)
     pvs = [(OUTSIDE_PV, "OutLV", "Steel", None), ("world", "WorldLV", "Water", OUTSIDE_PV),
            (GLASS, "GlassLV", "Acrylic", "world")]  # fmt: skip
@@ -45,7 +45,7 @@ def shell_optics(shell):
     bind = regions.Bindings({m: MATS[m] for m in {p[2] for p in pvs}},
                             sensors=(regions.SensorBinding("pmt", 1, pv=i_, entry="border"),),
                             borders={(b_pre, i_): "pmt"})  # fmt: skip
-    return regions.compile(library(), tree(*pvs), bind, LAM)
+    return regions.compile(library(), tree(*pvs), bind)
 
 
 def test_a_float32_thin_same_medium_shell_keeps_its_cathode():
@@ -58,7 +58,7 @@ def test_a_float32_thin_same_medium_shell_keeps_its_cathode():
     for shell in (True, False):
         o = shell_optics(shell)
         geom = tracked.from_scene(shell_scene(shell), o)
-        assert (geom.pass_tab is not None) == shell  # glass -> shell: one medium, no surface: a pass pair
+        assert (geom.vertex_tab is not None) == shell  # glass -> shell: one medium, no surface: a pass pair
         r = per_ray(lambda nav, d, geom=geom: geom.query(None, x0, d, 0, 10.0, vol=-1), geom.nav, Dr)
         inner = o.class_of[_inner(shell)]
         ok = r["hit"] & (r["cls_after"] == inner) & (r["vol_after"] == geom.nav.n - 1)
@@ -67,5 +67,5 @@ def test_a_float32_thin_same_medium_shell_keeps_its_cathode():
                                    atol=1e-4)  # fmt: skip
         # the pair the navigator reports (glass -> cavity: the 1 um shell is merged into the crossing) resolves to
         # the cathode: the compiler takes a coincident crossing past a pass pair to the border
-        kinds[shell] = {o.surface_types[int(k)] for k in o.type_of[r["cls_before"], r["cls_after"]]}
-    assert kinds[True] == kinds[False] == {legacy.PHOTOCATHODE}, kinds
+        kinds[shell] = {o.rows[int(k)].surface_type for k in o.row_of[r["cls_before"], r["cls_after"]]}
+    assert kinds[True] == kinds[False] == {types.PHOTOCATHODE}, kinds

@@ -1,0 +1,69 @@
+# GitHub runs what needs no GPU: lint, the unit tier (sharded, without the tests marked slow) and the photon loop's
+# CPU target. The physics tier, the slow tests, the examples and the families' MC gates run on a GPU: tools/ci/gpu.sh.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - run: python -m pip install "ruff>=0.8,<0.9" "mypy>=1.13,<2" "pre-commit>=4,<5"
+      - run: ruff format --check . && ruff check .
+      - run: mypy
+      - name: no site paths or Slurm accounts (style rule 9)
+        run: pre-commit run no-site-paths --all-files
+
+  unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.13"]
+        shard: [0, 1, 2, 3]
+    env:
+      JAX_PLATFORMS: cpu
+      LUMEN_CACHE: ${{ github.workspace }}/.cache/lumen
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # the version comes from the tags (hatch-vcs)
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: python -m pip install -e ".[test]"
+      - name: unit tests, shard ${{ matrix.shard }} of 4 (every fourth file)
+        run: |
+          files=$(ls tests/unit/test_*.py | awk -v s=${{ matrix.shard }} 'NR % 4 == s')
+          python -m pytest $files -n 4 -m "not slow" -q -p no:cacheprovider
+
+  cpu-target:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      JAX_PLATFORMS: cpu
+      LUMEN_CACHE: ${{ github.workspace }}/.cache/lumen
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: g++ with OpenMP (the CPU target's compiler)
+        run: g++ --version && echo 'int main() { return 0; }' | g++ -fopenmp -x c++ - -o /dev/null
+      - run: python -m pip install -e ".[test]"
+      - run: python -m pytest tests/physics/test_cpu_target.py -q -p no:cacheprovider

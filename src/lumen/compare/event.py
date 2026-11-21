@@ -1,0 +1,189 @@
+"""One Geant4 event through lumen: its charged steps as light sources, its hits as the reference.
+
+    ev = event.extract(run_dir, "mu_ev0.npz", chunk=0, event=0)     # once: one event of a g4ref gun run's chunk files
+    ev = event.read("mu_ev0.npz")                                   # steps (m, ns, eV), hits, sensors
+    light = event.simulate(det, ev, samples=1 << 18, seed=0)        # every light of every material, summed
+    res = event.compare(det, ev, samples=1 << 18, seed=0)           # per sensor: lumen and Geant4 counts; times
+
+Each material and light (Cherenkov, scintillation) with Geant4 photons in the event is one step source (the
+true step length) and one run; materials the detector has no optics for are left out (``Event.outside`` counts their
+Geant4 photons). A Geant4 hit is a photon its sensor absorbed: lumen's count of a deposit is the charge check's
+(``charge.response`` "absorbed": the deposit is the physical absorbed share, counted as it is; only a sensor model's
+readout divides by a cathode's A_n). The comparison's statistics are the charge check's (``charge.compare_band``).
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import json
+from dataclasses import dataclass
+from pathlib import Path
+
+import jax
+import jax.numpy as jnp
+import numpy as np
+
+import lumen
+from lumen import sources
+from lumen.compare import charge, photons
+from lumen.tools import stats
+from lumen.units import EV_PER_MEV
+
+LIGHTS = ("cherenkov", "scintillation")
+MM = 1e-3  # m per mm: g4ref writes mm, MeV
+STEP_FIELDS = ("start", "end", "t_start", "t_end", "beta_start", "beta_end", "charge", "edep", "step_length")
+
+
+@dataclass(frozen=True)
+class Event:
+    """One Geant4 event: its steps, the materials they are in, its hits and the reference's sensors.
+
+    ``steps``: {start, end (n, 3) m; t_start, t_end ns; beta_start, beta_end; charge e; edep eV; step_length m;
+    material (index into ``materials``); pdg; photons {"cherenkov", "scintillation"}: Geant4's photons per step}.
+    ``hits``: {sensor (index into ``sensors``), t ns, energy eV, origin (2 Cherenkov, 3 scintillation)}.
+    ``sensors``: {centre (S, 3) m, name}. ``meta``: what made it (the GDML, seed, particle, ...).
+    """
+
+    steps: dict
+    materials: tuple
+    hits: dict
+    sensors: dict
+    meta: dict
+
+    def outside(self, params) -> dict:
+        """Return {(light, material): Geant4 photons} of the lights lumen has no source for in ``params``."""
+        return {k: n for k, (m, n) in self._parts(params, LIGHTS, keep=False).items()}
+
+    def sources(self, params, lights=LIGHTS) -> dict:
+        """Return {(light, material): its step source} of every light in ``lights`` the event has photons of."""
+        out = {}
+        for (light, mat), (sel, _) in self._parts(params, lights).items():
+            kw = {k: np.asarray(self.steps[k][sel], np.float32) for k in ("start", "end", "t_start", "t_end",
+                                                                           "step_length")}  # fmt: skip
+            if light == "cherenkov":
+                kw |= {k: np.asarray(self.steps[k][sel], np.float32) for k in ("beta_start", "beta_end", "charge")}
+                out[(light, mat)] = sources.CherenkovSteps(mat, **kw)
+            else:  # the file's edep is in eV
+                edep = np.asarray(self.steps["edep"][sel], np.float64) / EV_PER_MEV
+                out[(light, mat)] = sources.ScintillationSteps.of(params, mat, edep=edep.astype(np.float32), **kw)
+        return out
+
+    def _parts(self, params, lights, keep=True):
+        names = {k.split("/")[1] for k in params if k.startswith("materials/") and k.endswith("/RINDEX")}
+        bare = {n.split("0x")[0]: n for n in names}  # a GDML's 0x suffixes: lumen keeps them, Geant4 strips them
+        out = {}
+        for i, m in enumerate(self.materials):
+            sel = self.steps["material"] == i
+            mat = m if m in names else bare.get(m, m)
+            for light in lights:
+                n = int(self.steps["photons"][light][sel].sum())
+                if n == 0:
+                    continue
+                ok = mat in names and (light == "cherenkov" or f"materials/{mat}/SCINTILLATIONYIELD" in params)
+                if ok == keep:
+                    out[(light, mat)] = (sel, n)
+        return out
+
+
+def extract(run_dir, out, *, chunk: int = 0, event: int = 0, meta: dict | None = None) -> Event:
+    """Write one event of a g4ref gun run (``chunk<k>_{steps,hits}.npy``, ``_sensors.csv``, ``_materials.csv``) to
+    ``out`` (npz, lumen's units) and return it; ``meta`` joins the run's summary (``chunk<k>_summary.txt``)."""  # noqa: D205, D209
+    d, c = Path(run_dir), f"chunk{chunk}"
+    st = np.load(d / f"{c}_steps.npy", mmap_mode="r")
+    st = np.asarray(st[np.asarray(st["evt"]) == event])
+    h = np.load(d / f"{c}_hits.npy", mmap_mode="r")
+    h = np.asarray(h[np.asarray(h["evt"]) == event])
+    rows = [r.split(",") for r in (d / f"{c}_sensors.csv").read_text().splitlines()[1:]]
+    mats = [r.split(",")[1] for r in (d / f"{c}_materials.csv").read_text().splitlines()[1:]]
+    summary = dict(r.split(" ", 1) for r in (d / f"{c}_summary.txt").read_text().splitlines()[:12] if " " in r)
+    info = {k: summary[k] for k in ("geant4", "gdml", "seed", "sens_regex") if k in summary}
+    info |= dict(chunk=chunk, event=event) | (meta or {})
+    info["gdml"] = Path(info.get("gdml", "")).name
+    xyz = lambda s: np.stack([st[f"x{s}"], st[f"y{s}"], st[f"z{s}"]], 1) * MM  # noqa: E731
+    arrays = dict(start=xyz(0), end=xyz(1), t_start=st["t0"], t_end=st["t1"], beta_start=st["b0"],
+                  beta_end=st["b1"], charge=st["q"], edep=st["edep"].astype(np.float64) * 1e6,
+                  step_length=st["len"] * MM, material=st["mat"], pdg=st["pdg"], n_cherenkov=st["nc"],
+                  n_scintillation=st["ns"], hit_sensor=h["sensor"], hit_t=h["t"], hit_energy=h["E"],
+                  hit_origin=h["origin"], sensor_centre=np.array([[float(v) for v in r[3:6]] for r in rows]) * MM,
+                  sensor_name=np.array([r[1] for r in rows]), materials=np.array(mats),
+                  meta=json.dumps(info))  # fmt: skip
+    np.savez_compressed(out, **arrays)
+    return read(out)
+
+
+def read(path) -> Event:
+    """Return the Event written by ``extract``."""
+    with np.load(path) as z:
+        a = {k: z[k] for k in z.files}
+    steps = {k: a[k] for k in (*STEP_FIELDS, "material", "pdg")}
+    steps["photons"] = {"cherenkov": a["n_cherenkov"], "scintillation": a["n_scintillation"]}
+    hits = dict(sensor=a["hit_sensor"], t=a["hit_t"], energy=a["hit_energy"], origin=a["hit_origin"])
+    return Event(steps, tuple(str(m) for m in a["materials"]), hits,
+                 dict(centre=a["sensor_centre"], name=a["sensor_name"]), json.loads(str(a["meta"])))  # fmt: skip
+
+
+def simulate(det, ev: Event, params=None, *, lights=LIGHTS, samples: int, seed: int, **kw):
+    """Return the Light of the event's steps (``lumen.simulate`` of each source, summed); ``kw``: ``simulate``'s."""
+    p = det.params() if params is None else params
+    runs = [lumen.simulate(det, s, p, samples=samples, seed=seed + 7919 * i, **kw)
+            for i, s in enumerate(ev.sources(p, lights).values())]  # fmt: skip
+    if not runs:
+        raise ValueError(f"event: no light of {lights} lumen can emit (outside: {ev.outside(p)})")
+    return add(*runs)
+
+
+def add(*lights):
+    """Return the sum of independent Lights of one detector (arrivals, histograms, health; errors in quadrature)."""
+    first = lights[0]
+    total = sum(x.arrivals for x in lights)
+    tsum = sum(jnp.nan_to_num(x.mean_arrival_time) * x.arrivals for x in lights)
+    plus = lambda *a: sum(a)  # noqa: E731
+    groups = None
+    if first.groups is not None:  # the cells and their moments add; the pe errors in quadrature
+        groups = {k: dataclasses.replace(jax.tree_util.tree_map(plus, *(x.groups[k] for x in lights)),
+                                         pe_error=jnp.sqrt(sum(x.groups[k].pe_error ** 2 for x in lights)))
+                  for k in first.groups}  # fmt: skip
+    return type(first)(arrivals=total, arrivals_error=jnp.sqrt(sum(x.arrivals_error**2 for x in lights)),
+                       mean_arrival_time=jnp.where(total > 0, tsum / jnp.where(total > 0, total, 1.0), jnp.nan),
+                       health=jax.tree_util.tree_map(plus, *(x.health for x in lights)), provenance=first.provenance,
+                       groups=groups)  # fmt: skip
+
+
+def compare(det, ev: Event, params=None, *, lights=LIGHTS, samples: int, seed: int,  # noqa: PLR0913
+            dt: float = 1.0, nt: int = 700, tol_mm: float = 5.0, backend: str = "auto") -> dict:  # fmt: skip
+    """Return lumen against the event's Geant4 hits: per sensor (the photon loop's order) "lumen" (expected
+    hits) and "geant4" (hits), the pooled arrival times on ``nt`` nodes of ``dt`` ns ("t", "times_lumen",
+    "times_geant4"), "light" (the summed Light) and the charge check's statistics ("summary": ratio, err, z, chi2,
+    ndf, null, times). One exact run per source of ``samples`` photons (``lumen.simulate`` with the diagnostic, on
+    ``backend``)."""  # noqa: D205, D209
+    p = det.params() if params is None else params
+    s = photons.setup(det)
+    k = charge.response(dict(name="event"), det)  # the reference's count of a deposit: the charge check's rule
+    diag = photons.Detected(s.n_sensors, s.lam_edges, (0,) * s.n_sensors, nt, dt)
+    q, q2, qv, h, runs = 0.0, 0.0, 0.0, 0.0, []
+    for i, src in enumerate(ev.sources(p, lights).values()):
+        light = lumen.simulate(det, src, p, samples=samples, chunk=samples, seed=seed + 7919 * i, backend=backend,
+                               speed="exact", diagnostics=(diag,))  # fmt: skip
+        r = photons.detected(light, diag)
+        # per sensor the count, its moment and variance (the sources are independent runs: their sums and variances add)
+        q, q2, qv = q + r["Q"][:, 0] * k, q2 + r["Q2"][:, 0] * k**2, qv + r["Q_var"][:, 0] * k**2
+        h, runs = h + r["H"][0, 0], runs + [light]
+    if not runs:
+        raise ValueError(f"event: no light of {lights} lumen can emit (outside: {ev.outside(p)})")
+    centres = photons.sensor_centres(s) * 1e3
+    lumen_of_ref, can = charge.match(dict(centres=ev.sensors["centre"] * 1e3), centres, tol_mm)
+    origin = {"cherenkov": 2, "scintillation": 3}
+    mine = np.isin(ev.hits["origin"], [origin[x] for x in lights])
+    n = np.bincount(lumen_of_ref[ev.hits["sensor"][mine]], minlength=s.n_sensors).astype(np.float64)
+    tot = float(np.sum(qv))  # the total's variance: the sensors' (a photon's deposits in two sensors not correlated)
+    r = dict(charge=q[:, None], Q2=q2[:, None], charge_var=qv[:, None], total_var=np.array([tot]), H=h[None, None],
+             photons=1.0)  # the run's light as is: photons 1  # fmt: skip
+    first = ev.steps["start"][0] * 1e3
+    # one event in one band: one test (charge.check counts its sources x bands)
+    ctx = dict(can=can, types=np.zeros(s.n_sensors, int), dist=np.linalg.norm(centres - first, axis=1), launched=1.0,
+               distance_groups=6, p_group=np.ones(1), t_ref=ev.hits["t"][mine], dt=dt, tests=1)  # fmt: skip
+    summary = charge.compare_band(r, 0, n, np.ones(s.n_sensors), ctx)
+    mu = np.bincount(can, weights=q, minlength=s.n_sensors)
+    times_g4 = stats.node_split(ev.hits["t"][mine], dt, nt)[0]
+    return dict(lumen=mu, geant4=n, t=dt * np.arange(nt), times_lumen=h, times_geant4=times_g4, light=add(*runs),
+                summary=summary)  # fmt: skip

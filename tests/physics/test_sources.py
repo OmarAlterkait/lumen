@@ -2,15 +2,11 @@
 
 - the arrivals per emitted photon against the closed form (1/2) int exp(-r(mu) / L) dmu of a source at z0 on the
   axis (every photon detected with weight exp(-r / L));
-- the source-position derivative through ``wrt=("source/position",)`` (the moving-source method) against its quadrature,
-  per replica of the charge histogram;
-- the run is the same in any chunks; a beam's position is refused;
-- the Point's rows moved by the source's own position parameter are the moving-source test's rows moved by dz.
+- the run is the same in any chunks; a source-position derivative is refused (not in this version);
 """
 
 import dataclasses
 import json
-import math
 
 import jax
 import jax.numpy as jnp
@@ -21,9 +17,9 @@ from toys import GPU, A
 import lumen
 from lumen import sources
 from lumen.build import build
+from lumen.tools.stats import z_limit
 
 F32 = jnp.float32
-Z_MAX = 4.5
 L_ABS, Z0 = 2.0, 0.3
 
 
@@ -38,21 +34,21 @@ def on_axis(z0, length, n=400):
 
 @pytest.fixture(scope="module")
 def pmt_sphere(toy, tmp_path_factory):
-    """The sphere toy with its sensor read by lumen:pmt at identity (QE 1 over the band, efficiency 1)."""
+    """The sphere toy with its sensor read by lumen:sensor at identity (QE 1 at every wavelength, efficiency 1)."""
     det0 = toy("sphere", r=0.0, absorption=L_ABS).det
     vs = tmp_path_factory.mktemp("values") / "identity.json"
     vs.write_text(json.dumps(dict(
-        schema="lumen-pmt-values/1", model="lumen:pmt", model_version=1, name="identity", version=1, readout="pe",
+        schema="lumen-sensor-values/1", model="lumen:sensor", name="identity", readout="pe",
         provenance=dict(source="tests/physics/test_sources.py", status="measured"),
-        qe=dict(band_edges_nm=[300.0, 600.0], values=[1.0]), ce=None, efficiency=1.0, t_offset_ns=0.0, tts=None,
+        qe=dict(band_edges_nm=[], values=[1.0]), ce=None, efficiency=1.0, t_offset_ns=0.0, tts=None,
         charge=None, gain=1.0, threshold=None, dark_rate_hz=0.0,
         frontend=dict(sampling_ns=1.0, unit="pe", window_ns=0.0, charge_step_pe=0.25, charge_max_pe=4.0))))  # fmt: skip
     g0 = next(g for g in det0.sensor_set.groups if g.rule == "border_into")
-    g = dataclasses.replace(g0, model="lumen:pmt", defaults=str(vs))
+    g = dataclasses.replace(g0, values=str(vs), settings={})  # the model's own efficiency
     sset = dataclasses.replace(det0.sensor_set, groups=tuple(g if x is g0 else x for x in det0.sensor_set.groups))
     parts = build.build(det0.file, sset)
     params = build.parameters(det0.file, sset, parts)
-    return lumen.Detector(det0.name, det0.path, det0.file, sset, parts, det0.sensors, det0.calibration, params)
+    return lumen.Detector(det0.name, det0.path, det0.file, sset, parts, det0._columns, det0.calibration, params)
 
 
 def point(z):
@@ -60,133 +56,86 @@ def point(z):
 
 
 def test_a_point_through_simulate_closed_form_and_chunks(pmt_sphere):
-    """The closed form, and the same run in chunks. Each chunk's fixed-point sum (GPU) comes back as float32, and the
-    chunks add in float32: chunking changes only that rounding (the order of photons within a chunk changes no bit).
-    It was bitwise here only while these weights (n_photons = 1, w = 2^-16) kept every sum exact in float32;
-    simulate now rescales such weights to ~1, where float32 rounds, as it always did for weights of order 1."""
+    """The closed form, and the same run in chunks. Each chunk's exact sum comes back as float32, and the chunks add in
+    float32: chunking changes only that rounding (the order of photons within a chunk changes no bit)."""
     n = 1 << 16
-    light = lumen.simulate(pmt_sphere, point(Z0), samples=n, seed=3, replicas=16)
+    light = lumen.simulate(pmt_sphere, point(Z0), samples=n, seed=3)
     q, err = float(np.asarray(light.arrivals, np.float64).sum()), float(np.asarray(light.arrivals_error).sum())
-    assert abs(q - on_axis(Z0, L_ABS)[0]) < Z_MAX * err, (q, err)
-    chunked = lumen.simulate(pmt_sphere, point(Z0), samples=n, seed=3, replicas=16, chunk=1 << 13)
+    assert abs(q - on_axis(Z0, L_ABS)[0]) < z_limit() * err, (q, err)  # the error from the photons' moments
+    chunked = lumen.simulate(pmt_sphere, point(Z0), samples=n, seed=3, chunk=1 << 13)
     rtol = 1e-6 if GPU else 1e-5  # GPU: exact sums per chunk, float32 between chunks; CPU: float32 sums throughout
     np.testing.assert_allclose(np.asarray(chunked.arrivals), np.asarray(light.arrivals), rtol=rtol)
+    # a chunk that does not divide the samples: a photon's records are in one launch, so its moment is the same and
+    # the error bars do not depend on the chunk size (beyond the launches' float32 sum)
+    ragged = lumen.simulate(pmt_sphere, point(Z0), samples=n, seed=3, chunk=5000)
+    np.testing.assert_allclose(np.asarray(ragged.arrivals), np.asarray(light.arrivals), rtol=rtol)
+    np.testing.assert_allclose(np.asarray(ragged.arrivals_error), np.asarray(light.arrivals_error), rtol=1e-4)
 
 
-def test_the_source_position_derivative_through_simulate(pmt_sphere):
-    k = 16
+def test_a_source_position_derivative_is_refused_through_simulate(pmt_sphere):
+    """A tangent on a position (a field or its ``source/position`` key; isotropic or a beam): one refusal."""
 
-    def charge(z):  # per replica, per emitted photon (each replica holds 1/k of the photons)
-        light = lumen.simulate(pmt_sphere, point(z), samples=k * 8192, seed=5, replicas=k, wrt=("source/position",))
-        return light.histograms.charge.sum((1, 2, 3)) * k
+    def arrivals(z, direction=None):
+        src = sources.Point(jnp.stack([F32(0.0), F32(0.0), z]), lam=400.0, direction=direction)
+        return lumen.simulate(pmt_sphere, src, samples=1024, seed=1).arrivals.sum()
 
-    q, dq = jax.jvp(charge, (F32(Z0),), (F32(1.0),))
-    dq = np.asarray(dq, np.float64)
-    want = on_axis(Z0, L_ABS)[1]
-    assert abs((dq.mean() - want) / (dq.std(ddof=1) / math.sqrt(k))) < Z_MAX, (dq.mean(), want)
-    beam = sources.Point((0.0, 0.0, Z0), lam=400.0, direction=(0.0, 0.0, 1.0))
-    with pytest.raises(sources.GradientNotAvailable):
-        lumen.simulate(pmt_sphere, beam, samples=1024, seed=1, replicas=2, wrt=("source/position",))
+    def by_key(z):
+        src = sources.Point((0.0, 0.0, Z0), lam=400.0)
+        p = src.parameters(pmt_sphere.params()).set("source/position", jnp.stack([F32(0.0), F32(0.0), z]))
+        return lumen.simulate(pmt_sphere, src, p, samples=1024, seed=1).arrivals.sum()
 
-
-def test_the_points_rows_move_with_its_position_parameter():
-    n = 512
-    src = sources.Point((0.0, 0.0, Z0), n_photons=float(n), lam=400.0)
-    key = jax.random.PRNGKey(0)
-
-    def moved(dz):  # the moving-source test's rows: the photons' x + dz along z
-        r = src.emit(None, key, n)
-        return r._replace(x=r.x + jnp.asarray([0.0, 0.0, 1.0], F32) * dz)
-
-    def through(dz):  # the same move as the source's own parameter
-        return src.emit(
-            {"source/position": jnp.asarray([0.0, 0.0, Z0], F32) + jnp.asarray([0.0, 0.0, 1.0], F32) * dz}, key, n
-        )
-
-    a, b = (jax.jvp(f, (F32(0.0),), (F32(1.0),)) for f in (moved, through))
-    for u, v in zip(jax.tree_util.tree_leaves(a), jax.tree_util.tree_leaves(b), strict=True):
-        assert np.asarray(u).tobytes() == np.asarray(v).tobytes()
+    for f in (arrivals, lambda z: arrivals(z, (0.0, 0.0, 1.0)), by_key):
+        with pytest.raises(sources.GradientNotAvailable, match="moves where the light starts"):
+            jax.jvp(f, (F32(Z0),), (F32(1.0),))
 
 
-def test_simulate_reports_and_refuses_dropped_exact_emits(pmt_sphere, monkeypatch):
-    from lumen import api
+def test_simulate_reports_the_exact_sums_nonfinite_bins(pmt_sphere, monkeypatch):
+    """A bin of the exact sums is exact or NaN; tallymap's count of the NaN ones is ``health.nonfinite``."""
     from lumen import run as runner
 
     light = lumen.simulate(pmt_sphere, point(Z0), samples=1 << 12, seed=3)
-    assert int(light.health["overflow"]) == 0
-    real = runner.run
-    monkeypatch.setattr(runner, "run", lambda *a, **k: real(*a, **k)._replace(overflow=jnp.int32(7)))
-    with pytest.raises(api.SumOverflow, match="7 emit"):
-        lumen.simulate(pmt_sphere, point(Z0), samples=1 << 12, seed=3)
+    assert int(light.health.nonfinite) == 0
+    real = runner.trace
+    monkeypatch.setattr(runner, "trace", lambda *a, **k: real(*a, **k)._replace(overflow=jnp.int32(7)))
+    assert int(lumen.simulate(pmt_sphere, point(Z0), samples=1 << 12, seed=3).health.nonfinite) == 7
 
 
 def test_a_detector_without_a_sensor_model_simulates_arrivals_only(toy):
     """No group with a sensor model (counting sensors only, as SBND's and MicroBooNE's shipped recipes): simulate
     gives the arrivals, their error, mean time and health, and no histograms."""
     det = toy("sphere", r=0.0, absorption=L_ABS).det
-    light = lumen.simulate(det, point(Z0), samples=1 << 14, seed=3, replicas=4)
+    light = lumen.simulate(det, point(Z0), samples=1 << 14, seed=3)
     q = float(np.asarray(light.arrivals, np.float64).sum())
-    assert light.histograms is None and q > 0.0 and np.isfinite(np.asarray(light.mean_arrival_time)).all()
-    assert abs(q - on_axis(Z0, L_ABS)[0]) < Z_MAX * float(np.asarray(light.arrivals_error).sum())
+    assert light.groups is None and q > 0.0 and np.isfinite(np.asarray(light.mean_arrival_time)).all()
+    assert abs(q - on_axis(Z0, L_ABS)[0]) < z_limit() * float(np.asarray(light.arrivals_error).sum())
 
 
-def test_the_hit_angle_is_smooth_in_a_source_at_the_detector_centre(pmt_sphere, tmp_path):
-    """A CE table read at the crossing point (the sensor's frame): a source at the ball's centre has a finite
-    position derivative, equal to the one 1 um away on the same photons (WCSim's start point: ~1e15 per m there)."""
-    vs = tmp_path / "ce.json"
-    d = json.loads(json.dumps(dict(
-        schema="lumen-pmt-values/1", model="lumen:pmt", model_version=1, name="ce", version=1, readout="pe",
-        provenance=dict(source="tests/physics/test_sources.py", status="measured"),
-        qe=dict(band_edges_nm=[300.0, 600.0], values=[1.0]),
-        ce=dict(theta_deg=[0, 10, 20, 30, 40, 50, 60, 70, 80, 90], values=[1, 1, .99, .95, .9, .85, .8, .69, .35, .13]),
-        efficiency=1.0, t_offset_ns=0.0, tts=None, charge=None, gain=1.0, threshold=None, dark_rate_hz=0.0,
-        frontend=dict(sampling_ns=1.0, unit="pe", window_ns=0.0, charge_step_pe=0.25, charge_max_pe=4.0))))  # fmt: skip
-    vs.write_text(json.dumps(d))
-    g0 = next(g for g in pmt_sphere.sensor_set.groups if g.model == "lumen:pmt")
-    sset = dataclasses.replace(
-        pmt_sphere.sensor_set,
-        groups=tuple(dataclasses.replace(g0, defaults=str(vs)) if x is g0 else x for x in pmt_sphere.sensor_set.groups),
-    )
-    parts = build.build(pmt_sphere.file, sset)
-    det = lumen.Detector(pmt_sphere.name, pmt_sphere.path, pmt_sphere.file, sset, parts, pmt_sphere.sensors,
-                         pmt_sphere.calibration, build.parameters(pmt_sphere.file, sset, parts))  # fmt: skip
-    p0 = det.params()
-
-    def pe(z):
-        light = lumen.simulate(det, point(z), samples=1 << 14, seed=7, wrt=("source/position",))
-        return lumen.readout.pe(light, p0).sum()
-
-    v, d0 = jax.jvp(pe, (F32(0.0),), (F32(1.0),))
-    _, d1 = jax.jvp(pe, (F32(1e-6),), (F32(1.0),))
-    assert np.isfinite(float(d0)) and abs(float(d0) - float(d1)) <= 1e-3 * float(v), (v, d0, d1)  # per m
-
-
-def test_a_callable_source_refuses_a_derivative_that_moves_its_photons(pmt_sphere):
-    """A callable source closing over a traced position has no density for its photons' positions: simulate refuses
-    the derivative (it was silently ~140x too small, the solid-angle term missing)."""
+def test_photons_given_as_arrays_refuse_a_derivative_that_moves_them(pmt_sphere):
+    """Photons given as arrays (not drawn from a density) with a traced position: simulate refuses the derivative (it
+    was silently ~140x too small, the solid-angle term missing); a bare function is no source."""
     base = point(Z0).emit(None, jax.random.PRNGKey(0), 4096, 0, 4096)
 
     def run(z):
-        rows = lambda first, count: base._replace(x=base.x.at[:, 2].set(z))  # noqa: E731
-        return lumen.simulate(pmt_sphere, rows, samples=4096, seed=1).arrivals.sum()
+        x = base.x.at[:, 2].set(z)
+        src = sources.FromArrays(x, base.d, base.t, base.lam, base.w)
+        return lumen.simulate(pmt_sphere, src, samples=4096, seed=1).arrivals.sum()
 
     assert float(run(F32(Z0))) > 0.0
-    with pytest.raises(sources.GradientNotAvailable, match="subclass lumen.sources.Source"):
+    with pytest.raises(sources.GradientNotAvailable, match="moves where the light starts"):  # a tangent on its position
         jax.jvp(run, (F32(Z0),), (F32(1.0),))
+    with pytest.raises(TypeError, match="not a lumen.sources.Source"):
+        lumen.simulate(pmt_sphere, lambda first, count: base, samples=4096, seed=1)
 
 
 def test_weights_of_a_source_normalised_to_one_photon_are_unbiased(pmt_sphere):
-    """n_photons = 1 (w = 1 / samples) and n_photons = samples (w = 1) agree within the Monte Carlo error, and the
-    health and overflow scale with them (the photon loop's roulette and fixed-point sums act on absolute weights)."""
+    """n_photons = 1 (w = 1 / samples) and n_photons = samples (w = 1) on the same seed give the same light scaled by
+    samples, a power of two (exact in float32), and the health scales with them: the photon loop's roulette is
+    relative to a photon's start weight, so every decision is the same, and the sums are exact."""
     n = 1 << 16
-    one = lumen.simulate(pmt_sphere, sources.Point((0.0, 0.0, Z0), n_photons=1.0, lam=400.0), samples=n, seed=3,
-                         replicas=16)  # fmt: skip
-    full = lumen.simulate(pmt_sphere, sources.Point((0.0, 0.0, Z0), n_photons=float(n), lam=400.0), samples=n,
-                          seed=3, replicas=16)  # fmt: skip
-    a1, an = float(np.asarray(one.arrivals).sum()), float(np.asarray(full.arrivals).sum()) / n
-    e = float(np.asarray(full.arrivals_error).sum()) / n
-    assert abs(a1 - an) < Z_MAX * e, (a1, an, e)
-    assert int(one.health["overflow"]) == 0 and int(full.health["overflow"]) == 0
-    assert float(np.asarray(one.health["lost"]).sum()) * n == pytest.approx(
-        float(np.asarray(full.health["lost"]).sum()), abs=1e-3
+    one = lumen.simulate(pmt_sphere, sources.Point((0.0, 0.0, Z0), n_photons=1.0, lam=400.0), samples=n, seed=3)
+    full = lumen.simulate(pmt_sphere, sources.Point((0.0, 0.0, Z0), n_photons=float(n), lam=400.0), samples=n, seed=3)
+    np.testing.assert_allclose(np.asarray(one.arrivals) * n, np.asarray(full.arrivals), rtol=1e-6)
+    assert int(one.health.nonfinite) == 0 and int(full.health.nonfinite) == 0
+    assert float(np.asarray(one.health.lost).sum()) * n == pytest.approx(
+        float(np.asarray(full.health.lost).sum()), abs=1e-3
     )

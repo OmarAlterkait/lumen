@@ -2,7 +2,7 @@
 
 A source says where the light starts, in which direction, when and at what wavelength. `lumen.simulate(det, source,
 ...)` takes any of the sources below. Every field is a parameter under `source/<field>`, so you can set it through
-`params` or differentiate with respect to it (`wrt=["source/position"]`). Units are m, ns and nm.
+`params` or differentiate with respect to it (trace it: a tangent on `source/position`). Units are m, ns and nm.
 
 `n_photons` (or the physics of the source: a track's length, a deposited energy) is how much light the source emits.
 `samples` in `simulate` is how many Monte Carlo photons stand for it; the results are expectations, so doubling
@@ -32,18 +32,18 @@ print(light.arrivals.shape, float(light.arrivals.sum()))
 ```
 
 A spectrum instead of one wavelength: `spectrum=` a table of photon energies (eV) and intensities, as
-`lumen.format.calibrations.Table(energy, value)`. The position derivative (`wrt=["source/position"]`) needs the
-directions to be drawn at random, which an isotropic `Point` does and a beam does not.
+`lumen.format.calibrations.Table(energy, value)`. The position has no derivative in this version: a tangent on
+`source/position` is refused ([known limits](../explanation/known-limits.md#derivatives-in-the-source-position)).
 
 ## Charged particles: `CherenkovSegment`, `ScintillationPoint`, `ScintillationSegment`
 
 `CherenkovSegment(material, start, direction, length, beta, charge, ...)` is the Cherenkov light of a straight
-charged segment in a material, with the material's RINDEX read from the detector. Its light covers
-`[lam_min, lam_max]` (nm):
+charged segment in a material, with the material's RINDEX read from the detector. Its light covers the wavelengths of
+the material's RINDEX table, as in Geant4 (G4Cerenkov emits over the table's energies):
 
 ```python
 mu = lumen.sources.CherenkovSegment("Water", start=(0.0, 0.0, -0.3), direction=(0.0, 0.0, 1.0), length=0.5,
-                                    beta=0.99, lam_min=300.0, lam_max=600.0)
+                                    beta=0.99)
 light = lumen.simulate(det, mu, samples=2**16, seed=0)
 print(float(light.arrivals.sum()))
 ```
@@ -52,27 +52,29 @@ print(float(light.arrivals.sum()))
 energy deposit (MeV), reading the material's yield, spectra and time constants from the detector's parameters; the
 toy tank's water does not scintillate, so they need a detector with a scintillator.
 
-## A Geant4 step dump: `Geant4Steps`
+## A Geant4 step dump: `CherenkovSteps`, `ScintillationSteps`
 
-`Geant4Steps.of(params, material, light, start=, end=, t_start=, t_end=, beta_start=, beta_end=, charge=, edep=)` turns
-the charged steps of a Geant4 run (arrays of shape (n, 3) for positions in m, (n,) for the rest) into their Cherenkov
-(`light="cherenkov"`) or scintillation (`light="scintillation"`) light:
+`CherenkovSteps(material, start=, end=, t_start=, t_end=, beta_start=, beta_end=, charge=)` turns the charged steps of
+a Geant4 run (arrays of shape (n, 3) for positions in m, (n,) for the rest) into their Cherenkov light;
+`ScintillationSteps.of(params, material, start=, end=, t_start=, t_end=, edep=)` into their scintillation, the energy
+deposited `edep` in MeV:
 
 ```python
 n = 4
 start = np.array([[0.0, 0.0, -0.3 + 0.1 * i] for i in range(n)])
-steps = lumen.sources.Geant4Steps.of(det.params(), "Water", "cherenkov", start=start, end=start + [0.0, 0.0, 0.1],
+steps = lumen.sources.CherenkovSteps("Water", start=start, end=start + [0.0, 0.0, 0.1],
                                      t_start=np.arange(n) * 0.34, t_end=np.arange(n) * 0.34 + 0.34,
-                                     beta_start=np.full(n, 0.99), beta_end=np.full(n, 0.99),
-                                     charge=np.ones(n), edep=np.full(n, 2e7), lam_min=300.0, lam_max=600.0)
+                                     beta_start=np.full(n, 0.99), beta_end=np.full(n, 0.99), charge=np.ones(n))
 light = lumen.simulate(det, steps, samples=2**16, seed=0)
 print(float(light.arrivals.sum()))
 ```
 
 ## Photons you already have: `FromArrays`
 
-`FromArrays(x, d, t, lam, w)` traces a list of photons as given: positions (N, 3) m, unit directions (N, 3), times
-(N,) ns, wavelengths (N,) nm and weights (N,). Photon i of the run is row i, so pass `samples=N`:
+`FromArrays(position, direction, time, lam, weight)` traces a list of photons as given: positions (N, 3) m, unit
+directions (N, 3), times (N,) ns, wavelengths (N,) nm and weights (N,). Photon i of the run is row i, and each row is
+traced once, so the list has no sample count of its own: leave `samples` out. Every per-row field has the same N rows
+(a field given once is every row's); a list with columns of different lengths is refused.
 
 ```python
 N = 4096
@@ -80,13 +82,18 @@ rng = np.random.default_rng(0)
 d = rng.normal(size=(N, 3)); d /= np.linalg.norm(d, axis=1, keepdims=True)
 photons = lumen.sources.FromArrays(np.zeros((N, 3)) + [0.0, 0.0, 0.1], d, np.zeros(N), np.full(N, 400.0),
                                    np.full(N, 2e5 / N))
-light = lumen.simulate(det, photons, samples=N, seed=0)
+light = lumen.simulate(det, photons, seed=0)
 print(float(light.arrivals.sum()))
 ```
 
-A derivative that moves such photons needs to know how their directions were drawn: pass `drawn=True` and the
-gradient of the directions' log density, `dlogp=` (N, 3); for isotropic directions that is
-`dlogp=jnp.zeros((N, 3))`. Otherwise `simulate` raises `GradientNotAvailable`.
+A tangent on their positions, directions or wavelengths moves where the light starts: `simulate` raises
+`GradientNotAvailable` (no source-position derivative in this version). Their weights can carry a derivative.
+
+**Give the photons equal weights.** Every photon is followed with the same effort, so a list whose weights are spread
+spends most of it on photons that carry little light, and its noise is set by the few heavy ones. Resample such a list
+with probability proportional to the weight, each drawn photon at the mean weight (or split heavy photons into rows
+of equal weight). On lists spread over three decades, or with 1 % of the rows 100 times brighter, that was 1.6 to 51
+times more efficient at equal run time. The same holds for a `@lumen.source` function.
 
 ## A source of your own
 

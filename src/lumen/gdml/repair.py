@@ -1,27 +1,23 @@
-"""The reference side of the GDML repairs: a Geant4-loadable copy of a GDML file, the repairs as text edits.
+"""GDML repairs: a copy of a GDML file that stock Geant4 and lumen both read, the repairs as text edits.
 
     text, lines = repair(src_text)            # every repair; or: python -m lumen.gdml.repair SRC DST [REPAIR ...]
 
-A Geant4 reference input made from a GDML gets exactly the repairs lumen's reader applies, always, to the defects it
-finds (``lumen.gdml.reader.REPAIRS``; stock Geant4 10.7.4 and 11.2.2 refuse each defect, tests/data/gdml_repairs).
-Each repair edits only its own defect, so applying them all to a clean file changes nothing. Written apart from
-lumen's reader (the standard library only, no other lumen import) and checked against it: lumen reads SRC and DST to
-the same detector file (tests/unit/test_gdml_repairs.py). Every byte outside the edited elements is kept (geometry
-untouched). It lives in the package so that ``lumen.validate.geometry`` can make its Geant4 input;
-``python -m lumen.gdml.repair`` is its command line.
+lumen's reader refuses what Geant4 refuses (``lumen.gdml.reader``; stock Geant4 10.7.4 and 11.2.2 refuse each case
+below, tests/data/gdml_repairs) and repairs nothing. This is the one place a repair is made: run it explicitly, keep
+the repaired copy (the detector file records its name and sha256 as its source), and give the same copy to a Geant4
+reference. Each repair edits only its own defect, so applying them all to a clean file changes nothing; every byte
+outside the edited elements is kept (geometry untouched). Written with the standard library only (and the lexical
+rules it shares, lumen.gdml.lexical).
 
     denormal                each nonzero number literal below the smallest normal double (strtod's ERANGE), in an
                             attribute Geant4 evaluates or an <expression>, is written 0
     matrix_tail             a <matrix> whose value count, as Geant4 counts it (values that end in whitespace or are
                             empty have one more value, 0), is not a multiple of its coldim loses the unpaired tail
-    non_finite              an inf / -inf <matrix> value is written 1e30 / -1e30
+    non_finite              an inf / -inf <matrix> value is written +-HUGE (lumen.units.HUGE, 1e30)
     identical_redefinition  a constant, variable, quantity, expression or matrix defined again identically: the later
                             definitions are deleted (the first kept)
     constant_property       a <property> whose ref names a define that is not a <matrix> is deleted
     undefined_matrix_property  a <property> whose ref names no define is deleted
-    constant_surface_table  an opticalsurface <property> of a key G4OpBoundaryProcess reads only as a table
-                            (REFLECTIVITY, TRANSMITTANCE, EFFICIENCY, the unified constants) naming a coldim 1 matrix is
-                            deleted: Geant4 stores it as a constant property it never reads, so its default applies
 
 Prints one line per edit.
 """
@@ -31,21 +27,17 @@ import sys
 import xml.etree.ElementTree as ET
 from decimal import Decimal
 
-REPAIRS = (
-    "denormal",
-    "matrix_tail",
-    "non_finite",
-    "identical_redefinition",
-    "constant_property",
-    "undefined_matrix_property",
-    "constant_surface_table",
-)
-TABLE_ONLY_SURFACE_KEYS = ("REFLECTIVITY", "TRANSMITTANCE", "EFFICIENCY", "SPECULARLOBECONSTANT",
-                           "SPECULARSPIKECONSTANT", "BACKSCATTERCONSTANT")  # fmt: skip
-TINY = sys.float_info.min
-SKIP = {"name", "ref", "formula", "state", "surfaceproperty", "auxtype", "auxvalue", "auxunit", "version"}
-NUMBER = re.compile(r"(?<![\w.])(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?(?![\w.])")
-BIG_EXPONENT = re.compile(r"\d[eE][-+]?\d{3}")  # an out-of-range literal has one (or > 300 digits)
+from lumen.gdml.lexical import BIG_EXPONENT, LONG_LITERAL, NUMBER, SKIP_LITERALS, TINY
+from lumen.units import HUGE
+
+REPAIRS = {
+    "denormal": "denormal literals written 0",
+    "matrix_tail": "the unpaired tail of the matrix dropped",
+    "non_finite": "inf written +-1e30",
+    "identical_redefinition": "the repeated definition deleted",
+    "constant_property": "the property deleted",
+    "undefined_matrix_property": "the property deleted",
+}
 COMMENT = re.compile(r"<!--.*?-->|<!\[CDATA\[.*?\]\]>|<\?.*?\?>", re.S)
 START = re.compile(r"<([A-Za-z_][\w:.-]*)([^<>]*)>")
 ATTR = re.compile(r"""([\w:.-]+)(\s*=\s*)(["'])(.*?)\3""", re.S)
@@ -92,7 +84,7 @@ def _denormals(text, out):
 
         def attr(a):
             k, v = a.group(1), a.group(4)
-            if k in SKIP or ":" in k or not (len(v) > 300 or BIG_EXPONENT.search(v)):
+            if k in SKIP_LITERALS or ":" in k or not (len(v) > LONG_LITERAL or BIG_EXPONENT.search(v)):
                 return a.group(0)
             return k + a.group(2) + a.group(3) + NUMBER.sub(lambda x: zero(x, where), v) + a.group(3)
 
@@ -112,15 +104,22 @@ def _matrix_values(el, piece, repairs, out):
     """Return the matrix element's text with its values attribute repaired (or unchanged)."""
     raw, nm = el.get("values") or "", el.get("name")
     real, phantom = raw.split(), not raw or raw[-1].isspace()
-    cd, n, before = int(round(float(el.get("coldim", "1")))), len(real) + phantom, (real, phantom)
+    try:
+        cd = int(round(float(el.get("coldim", "1"))))
+    except ValueError:
+        raise ValueError(
+            f"matrix {nm!r}: coldim {el.get('coldim')!r} is no number literal: write it as one to " "repair this matrix"
+        ) from None
+    n, before = len(real) + phantom, (real, phantom)
     toks = real
     if "matrix_tail" in repairs and n % cd:
         toks, phantom = (real + ["0"] * phantom)[: n - n % cd], False
         out.append(f"matrix {nm!r}: {n} values for coldim {cd}, the unpaired tail ({n % cd}) dropped")
     inf = [k for k, t in enumerate(toks) if t.lower().lstrip("+-") in ("inf", "infinity")]
     if "non_finite" in repairs and inf:
-        toks = [("-1e30" if t[0] == "-" else "1e30") if k in inf else t for k, t in enumerate(toks)]
-        out.append(f"matrix {nm!r}: {len(inf)} non-finite value(s) written +-1e30")
+        big = f"{HUGE:.0e}".replace("e+", "e")  # "1e30"
+        toks = [("-" + big if t[0] == "-" else big) if k in inf else t for k, t in enumerate(toks)]
+        out.append(f"matrix {nm!r}: {len(inf)} non-finite value(s) written +-{big}")
     if (toks, phantom) == before:
         return piece
     new = " ".join(toks) + (" " if phantom else "")
@@ -128,28 +127,21 @@ def _matrix_values(el, piece, repairs, out):
                   count=1, flags=re.S)  # fmt: skip
 
 
-def _property_repair(el, kind, coldim, on_surface, repairs):
-    """Return the line of a <property> the repairs delete (its ref names no matrix, or a constant on a surface)."""
+def _property_repair(el, kind, repairs):
+    """Return the line of a <property> the repairs delete (its ref names no matrix)."""
     nm, ref = el.get("name"), el.get("ref")
     if kind != "matrix" and ("undefined_matrix_property" if kind is None else "constant_property") in repairs:
         return f"property {nm} -> {kind or 'nothing'} {ref!r} deleted"
-    if (kind == "matrix" and on_surface and "constant_surface_table" in repairs and coldim.get(ref) == 1
-            and nm.split("0x")[0] in TABLE_ONLY_SURFACE_KEYS):  # fmt: skip
-        return f"surface property {nm} -> the constant matrix {ref!r} deleted"
     return None
 
 
-def _facts(root):
-    """Return (each define's first kind, each matrix's first coldim, the ids of the opticalsurfaces' properties)."""
+def _kinds(root):
+    """Return each define's first kind."""
     kinds: dict = {}
-    coldim: dict = {}
     for el in root.iter():
         if _tag(el) in DEFINES:
             kinds.setdefault(el.get("name"), _tag(el))
-        if _tag(el) == "matrix":
-            coldim.setdefault(el.get("name"), int(round(float(el.get("coldim", "1")))))
-    on_surface = {id(p) for s in root.iter() if _tag(s) == "opticalsurface" for p in s if _tag(p) == "property"}
-    return kinds, coldim, on_surface
+    return kinds
 
 
 def repair(text, repairs=REPAIRS):
@@ -161,7 +153,7 @@ def repair(text, repairs=REPAIRS):
     if "denormal" in repairs:
         text = _denormals(text, out)
     root = ET.fromstring(text.encode("utf-8"))
-    kinds, coldim, on_surface = _facts(root)
+    kinds = _kinds(root)
     els = [el for el in root.iter() if _tag(el) in ("constant", "variable", "quantity", "expression", "matrix",
                                                     "property")]  # fmt: skip
     matches = list(ELEMENT.finditer(_mask(text)))
@@ -172,7 +164,7 @@ def repair(text, repairs=REPAIRS):
     for el, m in zip(els, matches, strict=True):
         piece, tg, nm = text[m.start() : m.end()], _tag(el), el.get("name")
         if tg == "property":
-            line = _property_repair(el, kinds.get(el.get("ref")), coldim, id(el) in on_surface, repairs)
+            line = _property_repair(el, kinds.get(el.get("ref")), repairs)
             if line:
                 edits.append((m.start(), m.end(), ""))
                 out.append(line)

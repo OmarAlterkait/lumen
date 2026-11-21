@@ -1,4 +1,4 @@
-"""The host CSG model (lumen.build.solids): Geant4's solids against their defining inequalities (float64 point
+"""The host CSG model (lumen.geometry.solids): Geant4's solids against their defining inequalities (float64 point
 membership), exact boxes, the box proofs, flattening, the shared-plane rewrite and the polygon helpers.
 
 The float32 ray kernels are tested with the navigator; these test the host model those kernels are built from."""
@@ -9,7 +9,8 @@ import helpers
 import numpy as np
 import pytest
 
-from lumen.build import solids
+from lumen.geometry import solids
+from lumen.units import TWO_PI
 
 RNG = np.random.default_rng(7)
 
@@ -57,9 +58,9 @@ def test_box_tube_and_cut_tube():
     lo, hi = np.array([0.0, -0.3, -1.0]), np.array([0.0, 0.0, 1.0])
     nl, nh = lo / np.linalg.norm(lo), hi / np.linalg.norm(hi)
     _check(
-        solids.g4_cuttube(0.0, 0.1, 0.4, 0.0, solids.TWOPI, lo, hi),
+        solids.g4_cuttube(0.0, 0.1, 0.4, 0.0, TWO_PI, lo, hi),
         lambda x: (_rho(x) <= 0.1) & ((x - [0, 0, -0.2]) @ nl <= 0) & ((x - [0, 0, 0.2]) @ nh <= 0),
-        *solids.node_bbox(solids.g4_cuttube(0.0, 0.1, 0.4, 0.0, solids.TWOPI, lo, hi)),
+        *solids.node_bbox(solids.g4_cuttube(0.0, 0.1, 0.4, 0.0, TWO_PI, lo, hi)),
     )
 
 
@@ -95,7 +96,7 @@ def test_polycone_and_polyhedra():
         rmin = np.interp(z, [-0.2, 0.0, 0.1, 0.2], [0.0, 0.0, 0.02, 0.04])
         return (z >= -0.2) & (z <= 0.2) & (r <= rmax) & (r >= rmin)
 
-    _check(solids.g4_polycone(0.0, solids.TWOPI, planes), want_cone, (-0.3, -0.3, -0.2), (0.3, 0.3, 0.2))
+    _check(solids.g4_polycone(0.0, TWO_PI, planes), want_cone, (-0.3, -0.3, -0.2), (0.3, 0.3, 0.2))
     n = 6
 
     def want_hedra(x):  # apothems: the distance to the nearest side
@@ -105,7 +106,7 @@ def test_polycone_and_polyhedra():
         return (np.abs(x[:, 2]) <= 0.1) & (a <= 0.2) & (a >= 0.05)
 
     _check(
-        solids.g4_polyhedra(0.0, solids.TWOPI, n, [(0.05, 0.2, -0.1), (0.05, 0.2, 0.1)]),
+        solids.g4_polyhedra(0.0, TWO_PI, n, [(0.05, 0.2, -0.1), (0.05, 0.2, 0.1)]),
         want_hedra,
         (-0.25, -0.25, -0.1),
         (0.25, 0.25, 0.1),
@@ -210,16 +211,15 @@ def _in_triangle(p, a, b, c):
     return ((d1 >= 0) & (d2 >= 0) & (d3 >= 0)) | ((d1 <= 0) & (d2 <= 0) & (d3 <= 0))
 
 
-def test_flatten_transforms_and_polarity():
+def test_flatten_transforms():
     rz = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
     node = solids.Op(
         "sub",
         solids.Xf(rz, [0.5, 0, 0], solids.g4_box(0.4, 0.2, 0.2)),
         solids.Xf(np.eye(3), [0.5, 0, 0], solids.g4_orb(0.05)),
     )
-    polarity = []
-    expr, leaves = solids.flatten(node, polarity=polarity)
-    assert expr == ("sub", 0, 1) and polarity == [1, -1]
+    expr, leaves = solids.flatten(node)
+    assert expr == ("sub", 0, 1)
     x = np.array([[0.5, 0.15, 0.0], [0.65, 0.0, 0.0], [0.5, 0.0, 0.0]])
     assert _inside(node, x).tolist() == [True, False, False]  # rotated: the box's long side along y; the hole
     with pytest.raises(ValueError, match="unknown operation"):

@@ -1,91 +1,97 @@
 """Pack a ``Params`` (GDML names) into the engine's arrays: the surface lookup's per-type rows and the media.
 
-The values are applied to the detector file and its sensor set (``lumen.format.apply``); the surfaces and media are
-rebuilt from them and packed, on the host. ``simulate`` passes the packed arrays to the photon loop as operands.
+    packed = pack(det, params)
 
-A ``Params`` holding traced values (``jax.jvp``, ``jax.grad``, ``jax.jit`` over parameters) packs differentiably: the
-rest is packed on the host as above, with each traced key at the detector's own value, and every packed value read
-from a traced key directly (``Source`` column "energy", "value", "constant", "setting" or "default", the value equal to
-the key's) moves with it, ``named + (traced - its host value)``: exact in value where they are equal, its derivative the
-key's. A table's knot energies keep their host values. A traced key the engine reads through a conversion ("derived":
-e.g. the Rayleigh length from RINDEX) raises ``GradientNotAvailable``; a key the photon loop does not read (a sensor
-model's value, applied after tracking) passes through to the readout.
+A gather: at load each leaf of the surface lookup's named parameters (``lumen.build.lookup.named_params``) is mapped
+once at the build (``leaf_map``, from ``Parts.key_rows``) to
+
+- the value of the key it reads directly (``Source`` column "value", "constant", "setting" or "default"), for a key
+  of the detector's parameters: ``pack`` reads it from ``params``;
+- a JAX function of a key's value (column "derived": a Rayleigh table from RINDEX, ``Source.derive``);
+- otherwise a constant of the build: a table's knot energies (structure, as its knot count: a key's must be the
+  detector's, ``lumen.build.values``), a value the model never reads (folded into its type), a setting that is no
+  parameter.
+
+So nothing is rebuilt at pack: the same arrays whether a value is the detector's, a calibration's, a new concrete
+one or a traced one (``jax.jit``, ``jax.vmap``, ``jax.grad``), bit for bit: a concrete
+value is cast on the host as at load (``lookup.pack``), a traced one with jnp, and the knot energies are the build's.
+The structure (which surface types, rows, knot counts and knots, channels) is the load's: a value that would
+contradict it is refused or counted by the value checks (``lumen.build.values``), never re-decided. A derivative is
+refused only where its method is not available in this version (``lumen.params.PENDING``), when it is traced (a
+``custom_jvp`` whose rule raises for a tangent that is not a symbolic zero). A key the photon loop does not read (a
+sensor model's value, applied after tracking) passes through to the readout.
 """
 
 from __future__ import annotations
 
-import jax
 import numpy as np
 
-from lumen.build import build, surfaces
-from lumen.build import library as optics_library
-from lumen.format.apply import apply, sensor_set
+from lumen._core.errors import refusing
+from lumen._core.safe import traced
+from lumen.build import lookup
+from lumen.build.library import DIRECT
 from lumen.format.calibrations import Table
 
-DIRECT = ("energy", "value", "constant", "setting", "default")  # a packed value that is the key's value itself
+
+def leaf_map(optics, library, key_rows) -> tuple[dict, tuple, dict]:
+    """Return (the build's named parameters, ((path, key, column, derive), ...) of every leaf read from a key, {key:
+    the knot energies the build packs, float64}); a table's knot energies are structure, the build's
+    (``lumen.build.values``)."""  # noqa: D205, D209
+    base = lookup.named_params(optics, library)
+    reads, knots = [], {}
+    for path, src in key_rows.items():
+        if src.key is None or not _has(base, path):
+            continue
+        if src.column == "energy":
+            leaf = base
+            for k in path:
+                leaf = leaf[k]
+            knots.setdefault(src.key, np.asarray(leaf, np.float64))
+        elif src.column in DIRECT or (src.column == "derived" and src.derive is not None):
+            reads.append((path, src.key, src.column, src.derive))
+    return base, tuple(reads), knots
 
 
-def named(detector, params) -> dict:
-    """Return the surface lookup's named parameters for ``params``."""
-    df, sset = apply(build.bound(detector.file), params), sensor_set(detector.sensor_set, params)
-    parts = detector.parts
-    _, library, _, _ = optics_library.library_and_bindings(df, parts.base_tree, parts.instances, sset)
-    return surfaces.named_params(parts.optics, library)
-
-
-def _traced(v) -> bool:
-    return any(isinstance(x, jax.core.Tracer) for x in jax.tree_util.tree_leaves(v))
-
-
-def _leaf(v, column):
-    return v.energy if column == "energy" else v.value if isinstance(v, Table) else v
-
-
-def _get(tree, path):
+def _has(tree, path) -> bool:
     for k in path:
+        if not isinstance(tree, dict) or k not in tree:
+            return False
         tree = tree[k]
-    return tree
+    return True
 
 
 def _put(tree, path, v):
     return v if not path else {**tree, path[0]: _put(tree[path[0]], path[1:], v)}
 
 
-def host_params(detector, params):
-    """Return (the traced keys, ``params`` with each traced key at the detector's own value)."""
-    from lumen.params import Params
+def _leaf(v):
+    return v.value if isinstance(v, Table) else v
 
-    p0 = detector.params()
-    hot = {k for k in params if _traced(params[k])}
-    # the detector's own values are unchecked; a key it does not have (a source's) is never packed: kept as given
-    values = {k: (p0[k] if k in hot and k in p0 else params[k]) for k in params}
-    return hot, Params(values, params._spec, params._layers)
+
+def named(detector, params) -> dict:
+    """Return the surface lookup's named parameters for ``params``: the build's, each leaf read from a key gathered."""
+    out, guarded = detector.parts.named, {}
+    for path, key, column, derive in detector.parts.reads:
+        if key not in params:  # a key no Params holds (a setting that is no parameter): the build's value
+            continue
+        if key not in guarded:
+            guarded[key] = _guarded(params, key)
+        v = guarded[key]
+        out = _put(out, path, derive(v) if column == "derived" else _leaf(v))
+    return out
 
 
 def pack(detector, params) -> dict:
-    """Return the engine's packed parameter arrays (the surface lookup's rows) for ``params`` (traced: module docs)."""
-    if not _traced(params):
-        return surfaces.pack(detector.parts.optics, named(detector, params))
-    from lumen.sources import GradientNotAvailable
+    """Return the engine's packed parameter arrays (the surface lookup's rows) for ``params`` (the module docstring)."""
+    return lookup.pack(detector.parts.optics, named(detector, params))
 
-    hot, host = host_params(detector, params)
-    unavailable = sorted(k for k in hot if k in params._spec and not params.info(k).available)
-    if unavailable:
-        method = params.info(unavailable[0]).method
-        raise GradientNotAvailable(f"{unavailable}: calibrated by value, but the derivative's method ({method}) is not "
-                                   "available in this version")  # fmt: skip
-    live = named(detector, host)
-    for (section, entry, *leaf), src in detector.parts.sources.items():
-        if src.key not in hot or src.column == "energy":  # a table's knot energies stay the host's (no derivative)
-            continue
-        if src.column not in DIRECT:
-            raise GradientNotAvailable(f"{src.key}: the engine reads it through a conversion ({src.column}: "
-                                       f"{src.note}), so its derivative is not available")  # fmt: skip
-        path = (section, entry, *leaf)
-        base = _get(live, path)
-        if not np.array_equal(np.asarray(base, np.float32), np.asarray(_leaf(host[src.key], src.column), np.float32)):
-            raise GradientNotAvailable(f"{src.key}: the engine's value is not the key's value ({src.column}), so its "
-                                       "derivative is not available")  # fmt: skip
-        delta = _leaf(params[src.key], src.column) - _leaf(host[src.key], src.column)
-        live = _put(live, path, np.asarray(base, np.float32) + delta)
-    return surfaces.pack(detector.parts.optics, live)
+
+def _guarded(params, key):
+    """Return a key's value, a traced one's derivative refused where there is none: a method not available in this
+    version (``lumen.params.PENDING``)."""  # noqa: D205, D209
+    v = params[key]
+    info = params.info(key) if key in params._spec else None
+    if info is not None and not info.available and traced(v):
+        v = refusing(f"{key}: calibrated by value, but the derivative's method ({info.method}) is not available in "
+                     "this version")(v)  # fmt: skip
+    return v

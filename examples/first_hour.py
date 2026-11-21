@@ -34,7 +34,7 @@ section("1. The shipped toy and its sensors")
 print(f"lumen {lumen.__version__}, jax {jax.__version__}, backend {jax.default_backend()}")
 det = detector()
 print(det)
-for i, path in enumerate(det.sensors["ids"]):
+for i, path in enumerate(det.sensor_table().name):
     print(f"  sensor {i}: {path}")
 p0 = det.params()
 print(f"{len(p0)} parameters, for example:")
@@ -52,7 +52,7 @@ print(" id  arrivals   error    mean time (ns)   expected PE")
 for i in range(len(pe)):
     print(f"{i:3d} {float(light.arrivals[i]):9.2f} {float(light.arrivals_error[i]):7.2f} "
           f"{float(light.mean_arrival_time[i]):12.3f} {float(pe[i]):14.1f}")
-print("health (photons):", {k: float(np.sum(v)) for k, v in light.health.items()})
+print("health (photons):", {k: float(np.sum(v)) for k, v in light.health._asdict().items()})
 
 # choosing the photon count: the error falls as 1/sqrt(samples)
 quick = lumen.simulate(det, src, samples=2**16, seed=0)
@@ -100,45 +100,40 @@ if plt is not None:
     print("wrote", OUT / "hitmap.png")
 
 # ----------------------------------------------------------------------------- 4. derivatives and a small fit
-section("4a. Derivative with respect to the source position")
+section("4a. An optical value: its derivative through simulate")
+KEY_A = "materials/Water/ABSLENGTH"
 
 
-def expected_pe_at(z, seed=0):
-    """Return the expected PE per PMT for a source at (0, 0, z); the moving-source method needs wrt."""
+def total_pe(s, seed=0, reference=None):
+    """Return the total expected PE with the water's absorption length times s (its tangent names the key)."""
+    p = p0.scale(KEY_A, s)                                    # every knot of the table times s
+    light = lumen.simulate(det, src, p, samples=2**18, seed=seed, reference=reference)
+    return lumen.readout.pe(light, p).sum()
+
+
+value, slope = jax.jvp(total_pe, (1.0,), (1.0,))
+print(f"total PE {float(value):.2f}; d/d(ABSLENGTH scale): {float(slope):.4f}")
+
+# check: the derivative against a central finite difference with every random choice held at the nominal values
+# (reference=p0: the light at a seed is then smooth in the value), per seed
+for seed in range(4):
+    ad = float(jax.jvp(lambda s, k=seed: total_pe(s, k), (1.0,), (1.0,))[1])
+    fd = [float(total_pe(1.0 + h, seed, p0) - total_pe(1.0 - h, seed, p0)) / (2 * h) for h in (1 / 16, 1 / 64)]
+    print(f"seed {seed}: derivative {ad:.4f}; finite difference at h = 1/16 {fd[0]:.4f} ({fd[0] / ad - 1:+.1e}), "
+          f"at h = 1/64 {fd[1]:.4f} ({fd[1] / ad - 1:+.1e})")
+
+# the source position: its derivative is not in this version (a tangent on it is refused)
+def arrivals_at(z):
     s = lumen.sources.Point(position=jnp.stack([0.0, 0.0, z]), lam=400.0, n_photons=2e5)
-    light = lumen.simulate(det, s, samples=2**18, seed=seed, wrt=["source/position"])
-    return lumen.readout.pe(light, p0)
+    return lumen.simulate(det, s, samples=2**10, seed=0).arrivals
 
 
-mu, dmu = jax.jvp(expected_pe_at, (jnp.float32(0.1),), (jnp.float32(1.0),))
-print(" id   PE     dPE/dz (1/m)")
-for i in range(len(mu)):
-    print(f"{i:3d} {float(mu[i]):8.1f} {float(dmu[i]):12.1f}")
+try:
+    jax.jvp(arrivals_at, (jnp.float32(0.1),), (jnp.float32(1.0),))
+except lumen.sources.GradientNotAvailable as e:
+    print("source position:", str(e).splitlines()[0][:110])
 
-# check: the derivative against a central finite difference (h = 2 cm), each on the same random numbers, 8 seeds
-h, ad, fd = 0.02, [], []
-for seed in range(8):
-    ad.append(jax.jvp(lambda z, s=seed: expected_pe_at(z, s), (jnp.float32(0.1),), (jnp.float32(1.0),))[1])
-    fd.append((expected_pe_at(jnp.float32(0.1 + h), seed) - expected_pe_at(jnp.float32(0.1 - h), seed)) / (2 * h))
-ad, fd = np.asarray(ad, np.float64), np.asarray(fd, np.float64)
-for i in (0, 1):
-    print(f"PMT {i}: derivative {ad[:, i].mean():8.1f} +- {ad[:, i].std(ddof=1) / 8**0.5:5.1f}   "
-          f"finite difference {fd[:, i].mean():8.1f} +- {fd[:, i].std(ddof=1) / 8**0.5:5.1f}   (1/m, 8 seeds)")
-
-section("4b. Fit the source height to a simulated event")
-truth = lumen.sources.Point(position=(0.0, 0.0, 0.1), lam=400.0, n_photons=2e5)
-event = lumen.readout.sample(lumen.simulate(det, truth, samples=2**20, seed=7), p0, seed=1)
-n_obs = jnp.asarray(event.pe, jnp.float32)
-print("observed PE:", np.asarray(n_obs).astype(int).tolist())
-z = jnp.float32(0.0)
-for it in range(5):                                       # Fisher scoring on the Poisson likelihood
-    mu, dmu = jax.jvp(expected_pe_at, (z,), (jnp.float32(1.0),))
-    z = z + jnp.sum((n_obs - mu) * dmu / mu) / jnp.sum(dmu**2 / mu)
-    print(f"  iteration {it}: z = {float(z):+.5f} m")
-sigma = 1.0 / jnp.sqrt(jnp.sum(dmu**2 / mu))
-print(f"fitted z = {float(z):+.4f} +- {float(sigma):.4f} m (truth +0.1000)")
-
-section("4c. Sensor values: derivative after tracking, and a calibration")
+section("4b. Sensor values: derivative after tracking, and a calibration")
 KEY = "sensors/pmt/efficiency"
 true_eff = jnp.asarray([0.97, 0.92, 1.0, 0.88, 0.95, 0.9, 0.85, 0.99], jnp.float32)
 n_events = 20                                             # 20 flashes of the same source, summed per PMT
@@ -168,20 +163,6 @@ print("wrote", path)
 det2 = detector(calibration=name)
 print(f"reloaded with calibration {det2.calibration}: efficiency from '{det2.params().explain(KEY)}':",
       np.round(np.asarray(det2.params()[KEY]), 3).tolist())
-
-section("4d. An optical value: its derivative through simulate")
-KEY_A = "materials/Water/ABSLENGTH"
-
-
-def total_pe(s):
-    p = p0.scale(KEY_A, s)                                    # every knot of the table times s
-    return lumen.readout.pe(lumen.simulate(det, src, p, samples=2**18, seed=0, wrt=[KEY_A]), p).sum()
-
-
-value, slope = jax.jvp(total_pe, (1.0,), (1.0,))
-h = 1.0 / 16
-fd = (total_pe(1.0 + h) - total_pe(1.0 - h)) / (2 * h)       # the same photons on both sides
-print(f"total PE {float(value):.2f}; d/d(ABSLENGTH scale): {float(slope):.4f} (finite difference {float(fd):.4f})")
 
 # ------------------------------------------------------------------------------------------------- 5. waveform
 section("5. A waveform")

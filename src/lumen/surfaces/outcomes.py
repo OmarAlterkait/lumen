@@ -1,6 +1,8 @@
-"""The ten surface outcomes, and the deterministic ones' direction and Jones maps, defined once.
+"""The six continuing surface outcomes, and the deterministic ones' direction and Jones maps, defined once.
 
-Every surface model produces probabilities over the same fixed outcomes, with these indices:
+Every surface model produces its continuing shares over the same fixed outcomes, with these indices (the loss is 1 -
+their sum), and its detected share, a scalar deposit, separately (a model may deposit a share and let the photon go
+on):
 
 ===========  =========  ==========  ===================================================
 index        drawn by   photon on   direction
@@ -11,41 +13,24 @@ SPECULAR     map        near side   the mirror direction
 BACKSCATTER  map        near side   reversed (Geant4 unified BACKSCATTERCONSTANT)
 GLOSSY       lobe       near side   the surface's facet lobe (Geant4 unified or GLISUR)
 DIFFUSE      lobe       near side   Lambertian reflection
-DIFFUSE_T    lobe       far side    Lambertian transmission (diffusers)
-DETECT       terminal   -           the light is detected at the sensor
-ABSORB       terminal   -           the light is absorbed
-REEMIT       lobe       near side   wavelength-shifted re-emission
 ===========  =========  ==========  ===================================================
 
-The photon step, and the moving-source method's direction of a path segment, use these maps and never a copy. A
+The photon step uses these maps and never a copy. A
 drawn outcome keeps the incoming direction here: its lobe draws the new one.
 """
 
-import jax
 import jax.numpy as jnp
 
 from lumen._core import frames
 from lumen._core.safe import safe_sqrt, unit
 from lumen.surfaces import polar
 
-STRAIGHT, REFRACT, SPECULAR, BACKSCATTER, GLOSSY, DIFFUSE, DIFFUSE_T, DETECT, ABSORB, REEMIT = range(10)
-N_OUTCOMES = 10
-NAMES = (
-    "straight",
-    "refract",
-    "specular",
-    "backscatter",
-    "glossy",
-    "diffuse",
-    "diffuse_t",
-    "detect",
-    "absorb",
-    "reemit",
-)
+STRAIGHT, REFRACT, SPECULAR, BACKSCATTER, GLOSSY, DIFFUSE = range(6)
+N_OUTCOMES = 6
+NAMES = ("straight", "refract", "specular", "backscatter", "glossy", "diffuse")
 INDEX = {name: i for i, name in enumerate(NAMES)}
-DELTA = (True, True, True, True, False, False, False, False, False, False)  # direction by a deterministic map
-FAR_SIDE = (True, True, False, False, False, False, True, False, False, False)  # the photon ends beyond the surface
-TERMINAL = (False, False, False, False, False, False, False, True, True, False)
+DELTA = (True, True, True, True, False, False)  # direction by a deterministic map
+FAR_SIDE = (True, True, False, False, False, False)  # the photon ends beyond the surface
 
 
 def refract(wi, n, eta):
@@ -74,11 +59,6 @@ def direction_rules(wi, n, eta):
     rules[SPECULAR] = lambda: frames.reflect(wi, n)
     rules[BACKSCATTER] = lambda: -wi
     return rules
-
-
-def direction(outcome, wi, n, eta):
-    """Return the direction after an outcome (a traced index)."""
-    return jax.lax.switch(outcome, [lambda _, f=f: f() for f in direction_rules(wi, n, eta)], None)
 
 
 def jones_rules(components, amplitudes, s_axis, field, wo):
