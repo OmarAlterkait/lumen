@@ -161,6 +161,8 @@ class SolidMapper:
 
     def __init__(self, df):
         self.df = df
+        self._spines: dict = {}
+        self._parts: dict = {}
 
     def solid(self, name):
         """Return the CSG tree (or Mesh) of a solid."""
@@ -196,26 +198,41 @@ class SolidMapper:
         out = []
 
         def sub(nm, lin, t, path):
-            s = self.df.solids[nm]
             if match(nm, lin, t):
                 out.append((path, nm, lin, t, True))
-            elif s.type in ("union", "multiUnion"):
-                for k, (r, tr) in enumerate(zip(s.refs, s.transforms, strict=True)):
-                    m, tt = boolean_pose(tr)
+            elif self.df.solids[nm].type in ("union", "multiUnion"):
+                for k, (r, m, tt) in enumerate(self._union_parts(nm)):
                     sub(r, lin @ m, lin @ tt + t, path + (k,))
             else:
                 out.append((path, nm, lin, t, False))
 
-        def spine(nm, lin, t, path):
-            s = self.df.solids[nm]
-            if s.type != "subtraction":
-                return
-            (m1, t1), (m2, t2) = (boolean_pose(tr) for tr in s.transforms)
-            spine(s.refs[0], lin @ m1, lin @ t1 + t, path + (0,))
-            sub(s.refs[1], lin @ m2, lin @ t2 + t, path + (1,))
-
-        spine(name, np.eye(3), np.zeros(3), ())
+        for ref, lin, t, path in self._subtrahends(name):
+            sub(ref, lin, t, path)
         return out
+
+    def _subtrahends(self, name):
+        """Return the subtrahends ``(ref, L, t, path)`` of a subtraction spine, innermost first, in its frame."""
+        if name not in self._spines:
+            out = []
+
+            def spine(nm, lin, t, path):
+                s = self.df.solids[nm]
+                if s.type != "subtraction":
+                    return
+                (m1, t1), (m2, t2) = (boolean_pose(tr) for tr in s.transforms)
+                spine(s.refs[0], lin @ m1, lin @ t1 + t, path + (0,))
+                out.append((s.refs[1], lin @ m2, lin @ t2 + t, path + (1,)))
+
+            spine(name, np.eye(3), np.zeros(3), ())
+            self._spines[name] = tuple(out)
+        return self._spines[name]
+
+    def _union_parts(self, name):
+        """Return the parts ``(ref, L, t)`` of a union or multi-union, in its frame."""
+        if name not in self._parts:
+            s = self.df.solids[name]
+            self._parts[name] = tuple((r, *boolean_pose(tr)) for r, tr in zip(s.refs, s.transforms, strict=True))
+        return self._parts[name]
 
     def solid_without(self, name, drop):
         """Return ``solid(name)`` with the hole parts whose paths (``holes``) are in ``drop`` left out.
@@ -392,6 +409,9 @@ class _Lowering:
         self.mats, self.defs = {}, {}
         self.hole_fillers = set()
         self._pose = {}
+        self._boxes: dict = {}
+        self._hole_boxes: dict = {}
+        self._misses: dict = {}
 
     # ---- helpers
     def mid(self, name):
@@ -439,21 +459,23 @@ class _Lowering:
         Exact, whatever the holes are (a sheet cut into pieces that each subtract one multi-union of every sensor: a
         narrow piece holds a few of them and misses the rest).
         """
-        box = so.sector_bbox(self.mp.solid(cs))  # a subtraction's box is its minuend's
+        if cs not in self._boxes:
+            self._boxes[cs] = so.sector_bbox(self.mp.solid(cs))  # a subtraction's box is its minuend's
+        box = self._boxes[cs]
         if box is None:
             return frozenset()
         lo, hi = box
-        cache, out = {}, set()
+        out = set()
         for path, ref, lin, t, matched in hs:
             if matched:
                 continue
-            if ref not in cache:
-                cache[ref] = so.node_bbox(self.mp.solid(ref))
-            b = cache[ref]
-            if b is None:
-                continue
-            w = so.corners(*b) @ np.asarray(lin).T + t
-            if np.any(w.max(0) < lo) or np.any(w.min(0) > hi):
+            if (cs, path) not in self._misses:
+                if ref not in self._hole_boxes:
+                    self._hole_boxes[ref] = so.node_bbox(self.mp.solid(ref))
+                b = self._hole_boxes[ref]
+                w = None if b is None else so.corners(*b) @ np.asarray(lin).T + t
+                self._misses[cs, path] = w is not None and bool(np.any(w.max(0) < lo) or np.any(w.min(0) > hi))
+            if self._misses[cs, path]:
                 out.add(path)
         return frozenset(out)
 
