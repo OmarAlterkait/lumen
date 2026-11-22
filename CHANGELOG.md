@@ -46,11 +46,15 @@ now, and what to do.
 
 ### Faster
 
-- **Loading a detector of many bordered cells**: a border's touching instances were found by scanning every instance
-  of its two physvols, for each border, so a detector with one placement in every cell and a border per cell (a
-  SuperFGD block: each cube's core inside its coating) loaded in a time quadratic in its cells. They are now reached
-  from the physvol with fewer instances, through the other's instances by mother: linear in the cells, the same
-  borders read. A 24 x 16 x 24 SuperFGD block loads in 10 s (was 230 s).
+- **Loading a detector of many placements**: a block of cells, a placement in each and a border per cell (a SuperFGD:
+  each cube's core inside its drilled coating, fibers through the cubes), loaded in a time quadratic in its cells.
+  A border's touching instances were found by scanning every instance of its two physvols, for each border: they are
+  now reached from the physvol with fewer instances, through the other's instances by mother. The sibling sweep met
+  every box beside a box along its axis (a whole layer of cubes, and every cube for a fiber along it): it now runs
+  within tiles across that axis. A drilled solid's hole plan was redone for each placement: it is found once per
+  solid. Loading is linear in the placements, and builds the same detector files, parts and navigator arrays. The
+  full SuperFGD (192 x 56 x 192 cubes and their 58k fibers, 4.5 million volumes) converts in 18 min, loads in 6 min
+  and builds its navigator in 4 min, in 21 GB of memory; a 24 x 16 x 24 block loads in 5 s (was 230 s).
 
 ## 0.2.1 (2026-11-23)
 

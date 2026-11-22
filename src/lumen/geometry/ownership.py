@@ -42,6 +42,9 @@ from lumen.rules import navigation as rules
 from lumen.rules.tolerances import CONVEX_TOL, FLOAT64_TINY, PIECES, POSE_ULPS, SAME_POSE, SPLITS
 
 PROOF_BATCH = 256  # pairs proved together (their pieces: at most PIECES each)
+TILE_EXTENT = 2.0  # the side of a sibling sweep's tiles across its axis, in median box extents
+MAX_TILES = 256  # ... and at most this many tiles along each of those axes
+TILE_COPIES = 8  # ... coarser while a box is in more of them than this, on average
 
 
 def _is_mesh(node):
@@ -358,19 +361,57 @@ def _world_boxes(u):
 
 
 def _sweep(lo, hi):
-    """Return the index pairs of boxes [lo, hi] overlapping on every axis (open)."""
+    """Return the index pairs of boxes [lo, hi] overlapping on every axis (open), each once and in the sweep's order.
+
+    A pair is (i, j) with i before j in the order of their low faces along the sweep axis (the axis of least relative
+    extent; ties by index), the pairs in that order. The sweep runs within tiles across that axis: a box is in each
+    tile it covers, and a pair is kept in the tile of its common box's low corner. A box long across the tiles meets
+    the boxes of its tiles only, not every box beside it along the axis (a fiber through a block of cubes). The tiles
+    coarsen while the boxes are in more than ``TILE_COPIES`` tiles each on average (plates across a block).
+    """
+    n = len(lo)
+    empty = np.zeros((0, 2), np.int64)
+    if n < 2:
+        return empty
     ext = (hi - lo).mean(0) / np.maximum(hi.max(0) - lo.min(0), FLOAT64_TINY)
     ax = int(np.argmin(ext))
     o = np.argsort(lo[:, ax], kind="stable")
-    end = np.searchsorted(lo[o, ax], hi[o, ax], side="left")
-    cnt = np.maximum(end - np.arange(len(o)) - 1, 0)
-    if not cnt.sum():
-        return np.zeros((0, 2), np.int64)
-    ii = np.repeat(np.arange(len(o)), cnt)
-    jj = ii + 1 + (np.arange(cnt.sum()) - np.repeat(np.cumsum(cnt) - cnt, cnt))
-    a, b = o[ii], o[jj]
+    rank = np.empty(n, np.int64)
+    rank[o] = np.arange(n)
+    u, w = (k for k in range(3) if k != ax)
+    origin = lo.min(0)
+    size = np.maximum(TILE_EXTENT * np.median(hi - lo, axis=0), (hi.max(0) - origin) / MAX_TILES)
+    size = np.where(size > 0, size, 1.0)
+    while True:
+        t0 = np.floor((lo - origin) / size).astype(np.int64)
+        t1 = np.floor((hi - origin) / size).astype(np.int64)
+        cu, cw = t1[:, u] - t0[:, u] + 1, t1[:, w] - t0[:, w] + 1
+        cnt = cu * cw
+        if cnt.sum() <= TILE_COPIES * n:
+            break
+        size = 2 * size
+    nw = int(t1[:, w].max()) + 1
+    box = np.repeat(np.arange(n), cnt)
+    k = np.arange(len(box)) - np.repeat(np.cumsum(cnt) - cnt, cnt)
+    tile = (t0[box, u] + k % cu[box]) * nw + t0[box, w] + k // cu[box]
+    s = np.lexsort((rank[box], tile))
+    tile, box = tile[s], box[s]
+    key = tile * (n + 1) + rank[box]
+    below = np.searchsorted(lo[o, ax], hi[box, ax], side="left")  # the ranks whose low face is below this high face
+    end = np.searchsorted(key, tile * (n + 1) + below, side="left")
+    c = np.maximum(end - np.arange(len(box)) - 1, 0)
+    if not c.sum():
+        return empty
+    ii = np.repeat(np.arange(len(box)), c)
+    jj = ii + 1 + (np.arange(c.sum()) - np.repeat(np.cumsum(c) - c, c))
+    a, b, tq = box[ii], box[jj], tile[ii]
     keep = np.all((lo[a] < hi[b]) & (lo[b] < hi[a]), 1)
-    return np.stack([a[keep], b[keep]], 1)
+    a, b, tq = a[keep], b[keep], tq[keep]
+    corner = np.floor((np.maximum(lo[a], lo[b]) - origin) / size).astype(np.int64)
+    home = corner[:, u] * nw + corner[:, w] == tq
+    a, b = a[home], b[home]
+    order = np.lexsort((rank[b], rank[a]))
+    return np.stack([a[order], b[order]], 1)
 
 
 def _obb_depth(c1, h1, R1, c2, h2, R2):  # noqa: N803 -- R the boxes' rotations

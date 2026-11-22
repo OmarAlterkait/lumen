@@ -123,7 +123,8 @@ geometry/navigator_build.py | morton | 3 | 1 | structural | the 3 components of 
 geometry/navigator_build.py | _mesh_chunks | 3 | 2 | structural | the 3 components of a vector (a shape)
 geometry/navigator_build.py | _entries | 3 | 1 | structural | the 3 components of a vector (a shape)
 geometry/navigator_build.py | _srf_layout | 4 | 3 | structural | 4 surface codes per face (the code layout, geometry/surface_id.py)
-geometry/ownership.py | <module> | 256 | 1 | choice | stated in place: pairs proved together (their pieces: at most PIECES each)
+geometry/ownership.py | <module> | 256 | 2 | choice | stated in place: pairs proved together (their pieces: at most PIECES each); a sibling sweep's tiles along each axis at most
+geometry/ownership.py | <module> | 8 | 1 | choice | stated in place: a sibling sweep's tiles coarsen while a box is in more of them than this, on average
 geometry/scene.py | <module> | -3 | 1 | structural | a sentinel code (an identity, not a quantity)
 geometry/solids.py | <module> | 1e-09 | 1 | published | G4Cons.cc: a zero rmin at one end becomes 1e3 kRadTolerance = 1e-6 mm (since geom-solids-csg-V02-00-02; cited in place)
 geometry/solids.py | g4_orb | 3 | 2 | structural | the 3 components of a vector (a shape)
