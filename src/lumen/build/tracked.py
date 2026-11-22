@@ -114,16 +114,17 @@ class TrackedGeometry:
         return navigate.surface_at(self.nav, q, x, d)
 
 
-def classes(nav, scene, optics):
+def classes(nav, scene, optics, T=None):  # noqa: N803 -- T: the scene's instances
     """Return (class per volume, per mesh, the outside's, per volume its PV) of the optics on the scene's volumes.
 
-    ``nav``: the navigator whose volumes must be these, in this order, by instance path (None: not checked).
+    ``nav``: the navigator whose volumes must be these, in this order, by instance path (None: not checked). ``T``:
+    the scene's ``instances``, when known.
 
     A split union's piece (``Definition.piece_of``) takes its original placement's class: the PV of the union's
     instance (the piece's parent in ``scene.instances``). Fails closed when the scene's PVs are not exactly the
     optics' (another loader's naming, a dropped volume).
     """
-    T, pvs = sc.instances(scene), []
+    T, pvs = sc.instances(scene) if T is None else T, []
     for i, dname in enumerate(T.defn):
         d = scene.definitions[dname]
         if d.member is None:
@@ -157,7 +158,8 @@ def from_scene(scene, optics, cache=False):
     ``interchangeable``), no sensor and not of a self pair's class, bounds nothing a photon sees and is no candidate
     (``lumen.geometry.navigator_build``, transparent volumes).
     """
-    vol_cls, mesh_cls, out_cls, vols = classes(None, scene, optics)
+    T = sc.instances(scene)
+    vol_cls, mesh_cls, out_cls, vols = classes(None, scene, optics, T)
     sensor_index = dict(optics.sensor_index)
     sens = [i for i, p in enumerate(vols) if p in sensor_index]
     vtx = vertices(optics)
@@ -167,7 +169,7 @@ def from_scene(scene, optics, cache=False):
     cl = navigator_build.Classes(tuple(int(c) for c in vol_cls), tuple(int(c) for c in mesh_cls), int(out_cls),
                                  tuple(kept), interchangeable(optics, vtx))  # fmt: skip
     nav = navigate.Navigator.from_scene(scene, cache=cache, classes=cl)
-    classes(nav, scene, optics)
+    classes(nav, scene, optics, T)
     sensor = np.full(nav.n + 1 + nav.n_mesh, -1, np.int32)
     for i in sens:
         sensor[i] = sensor_index[vols[i]]

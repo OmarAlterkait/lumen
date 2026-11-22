@@ -173,10 +173,11 @@ def scene_digest(scene) -> str:
     return d.h.hexdigest()
 
 
-def key(scene, options) -> str:
-    """Return the cache key of the navigator's arrays of a scene built with ``options``."""
+def key(scene, options, digest=None) -> str:
+    """Return the cache key of the navigator's arrays of a scene built with ``options`` (``digest``: the scene's
+    ``scene_digest``, when known)."""  # noqa: D205, D209
     h = hashlib.sha256()
-    h.update(scene_digest(scene).encode())
+    h.update((digest or scene_digest(scene)).encode())
     h.update(json.dumps(options, sort_keys=True).encode())
     h.update(code_digest(NAV_CODE).encode())
     return h.hexdigest()
@@ -244,11 +245,12 @@ def nav_arrays(scene, **options):
     part, read from or stored in its own entry (``own-<key>``: the scene and the code only), so builds of one scene
     for other classes or settings (the conversion's placement check, then the first load) resolve it once.
     """  # noqa: D205
-    k = key(scene, options)
+    digest = scene_digest(scene)
+    k = key(scene, options, digest)
     path = _env.cache_dir() / "build" / f"{KIND}-{k}"
     if (path / "meta.json").is_file():
         return _load(path), k
-    own_path = _env.cache_dir() / "build" / f"{OWN}-{key(scene, {})}"
+    own_path = _env.cache_dir() / "build" / f"{OWN}-{key(scene, {}, digest)}"
     own = _load(own_path) if (own_path / "meta.json").is_file() else None
     stage = navigator_build.prepare(scene, own)
     if own is None:
