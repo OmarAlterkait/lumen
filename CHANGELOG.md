@@ -13,6 +13,14 @@ now, and what to do.
   against wavelength (`--range` shades the light's). Every drawn solid is compared with the solid lumen traces. It
   needs the `view` extra (`manifold3d`); three.js r128 ships with it (docs/howto/viewer.md).
 
+### Faster
+
+- **Loading a detector of many bordered cells**: a border's touching instances were found by scanning every instance
+  of its two physvols, for each border, so a detector with one placement in every cell and a border per cell (a
+  SuperFGD block: each cube's core inside its coating) loaded in a time quadratic in its cells. They are now reached
+  from the physvol with fewer instances, through the other's instances by mother: linear in the cells, the same
+  borders read. A 24 x 16 x 24 SuperFGD block loads in 10 s (was 230 s).
+
 ## 0.2.1 (2026-11-23)
 
 ### Results that change
