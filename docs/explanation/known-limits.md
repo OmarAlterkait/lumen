@@ -198,7 +198,7 @@ and NEXT-100 agrees with nexus to 0.4 %.
 **The limit.** In float32, a volume a few bands thick at the scale of the photons' paths (4 bands: 3.8 um per metre
 of start coordinate plus path) is not tracked for every photon. Load a detector with such coatings in float64
 (`lumen.load(..., precision="float64")`): its band is its 1 nm floor at any detector scale, so volumes down to tens of
-nm are tracked, at about +20 to 27 % time on an A100 and 3.4 times on an RTX 2080 Ti (docs/dev/decisions.md, 29). The
+nm are tracked, at about +20 % time on an A100 and 3.4 times on an RTX 2080 Ti (docs/dev/decisions.md, 29). The
 conversion still refuses a WLS box thinner than float32's band where it sits (decision 9).
 
 ## The hit likelihood's no-record integral
