@@ -128,29 +128,33 @@ def relation(tree, pre: str, post: str) -> str | None:
     return "sibling" if siblings(tree, pre, post) else None
 
 
-def _touching(tree, xs, ys):
-    """Return the PVs of xs with a neighbour (``relation``) among ys: one pass over each, no pair enumerated."""
-    yset = set(ys)
-    by_mother: dict = {}
+def _touching(tree, a: str, b: str) -> tuple:
+    """Return the world instances of physvol a with a neighbour (``relation``) among those of physvol b, in the
+    canonical order. Linear in the fewer of the two: the other's instances are reached by mother
+    (``Tree.instances_by_mother``), no pair enumerated."""  # noqa: D205, D209
+    xs, ys = tree.instances_of.get(a, ()), tree.instances_of.get(b, ())
+    if not xs or not ys:
+        return ()
+    by_name = tree.by_name
+    if len(xs) <= len(ys):
+        y_by = tree.instances_by_mother[b]
+        out = []
+        for x in xs:
+            m = by_name[x].mother
+            sib = 0 if m is None else len(y_by.get(m, ())) - (a == b)  # x is one of b's instances when a is b
+            if sib > 0 or x in y_by or (m is not None and tree.physvol(m) == b):
+                out.append(x)
+        return tuple(out)
+    x_by = tree.instances_by_mother[a]
+    found = set()
     for y in ys:
-        m = tree.by_name[y].mother
-        by_mother[m] = by_mother.get(m, 0) + 1
-    out = []
-    for x in xs:
-        m = tree.by_name[x].mother
-        sib = 0 if m is None else by_mother.get(m, 0) - (x in yset)
-        if sib > 0 or by_mother.get(x, 0) > 0 or m in yset:
-            out.append(x)
-    return tuple(out)
-
-
-def _depths(tree) -> dict:
-    """Return each PV's depth in the tree (the root's 0)."""
-    depth = {}
-    for n in tree.order:  # mothers first
-        m = tree.by_name[n].mother
-        depth[n] = 0 if m is None else depth[m] + 1
-    return depth
+        m = by_name[y].mother
+        found.update(x_by.get(y, ()))  # a's instances inside y
+        if m is not None:
+            if tree.physvol(m) == a:  # y inside an instance of a
+                found.add(m)
+            found.update(x for x in x_by.get(m, ()) if x != y)  # a's instances beside y
+    return tuple(sorted(found, key=tree.rank.__getitem__))
 
 
 def _nearest(tree, depth, xs, ys) -> set:
@@ -186,15 +190,15 @@ def nearest_instances(tree, a: str, b: str) -> frozenset:
     physical volumes): it holds between each instance of one and the instances of the other nearest it.
     """
     xs, ys = tree.instances_of.get(a, ()), tree.instances_of.get(b, ())
-    depth = _depths(tree)
+    depth = tree.depth
     return frozenset(_nearest(tree, depth, xs, ys) | {(x, y) for y, x in _nearest(tree, depth, ys, xs)})
 
 
 def border_instances(tree, a: str, b: str):
     """Return the world instances of a border's physvols a -> b that touch: (a's with a neighbour among b's, b's with
-    one among a's). Linear in the instances: a border names a physvol pair, never its instance pairs."""  # noqa: D205, D209
-    xs, ys = tree.instances_of.get(a, ()), tree.instances_of.get(b, ())
-    return _touching(tree, xs, ys), _touching(tree, ys, xs)
+    one among a's). Linear in the fewer instances of the two: a border names a physvol pair, never its instance
+    pairs."""  # noqa: D205, D209
+    return _touching(tree, a, b), _touching(tree, b, a)
 
 
 # --------------------------------------------------------------------------------------------------------- bindings

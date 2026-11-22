@@ -136,6 +136,31 @@ class Tree:
                 out.setdefault(p, []).append(n)
         return {k: tuple(v) for k, v in out.items()}
 
+    @cached_property
+    def instances_by_mother(self) -> dict:
+        """Return per physvol name its world instances by their mother PV (each in the canonical order)."""
+        out: dict = {}
+        for p, names in self.instances_of.items():
+            by: dict = {}
+            for n in names:
+                by.setdefault(self.by_name[n].mother, []).append(n)
+            out[p] = {m: tuple(v) for m, v in by.items()}
+        return out
+
+    @cached_property
+    def rank(self) -> dict:
+        """Return each PV's index in the canonical order."""
+        return {n: i for i, n in enumerate(self.order)}
+
+    @cached_property
+    def depth(self) -> dict:
+        """Return each PV's depth in the tree (the world PV's 0)."""
+        depth: dict = {}
+        for n in self.order:  # mothers first
+            m = self.by_name[n].mother
+            depth[n] = 0 if m is None else depth[m] + 1
+        return depth
+
 
 def _by_name(pvs):
     by = {}
