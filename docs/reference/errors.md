@@ -488,6 +488,7 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `charge entry <spec>: response 'qe' needs a sensor model with a detection on group <name>` | `ValueError` | `lumen.compare.charge` |
 | `charge entry <spec>: response <kind> is not one of <RESPONSES>` | `ValueError` | `lumen.compare.charge` |
 | `sensor match: <sum> reference sensors farther than <tol_mm> mm from any lumen sensor (largest <max> mm)` | `ValueError` | `lumen.compare.charge` |
+| `compare_events: no events` | `ValueError` | `lumen.compare.event` |
 | `event: no light of <lights> lumen can emit (outside: <outside>)` | `ValueError` | `lumen.compare.event` |
 | `<csv>: <rows> answers for <points> points (probed on other points?)` | `RuntimeError` | `lumen.compare.geometry` |
 | `<gdml> is not the GDML <path> was converted from (<want>)` | `ValueError` | `lumen.compare.geometry` |
@@ -850,6 +851,11 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `<what> keys <unknown> are not keys of the space` | `ValueError` | `lumen.tools.fit` |
 | `<what>: <sum> cells have counts where the model expects none (mu = 0, n > 0): the data are impossible at the start values` | `ValueError` | `lumen.tools.fit` |
 | `fisher: <sum> cells with mu = 0 have a nonzero derivative: their information J^2 / mu is infinite` | `ValueError` | `lumen.tools.fit` |
+| `layout: kind <kind> is not 'auto' or one of <KINDS>` | `ValueError` | `lumen.tools.layout` |
+| `layout: positions must be (S, 3), got <shape>` | `ValueError` | `lumen.tools.layout` |
+| `layout: the sensors do not lie in planes` | `ValueError` | `lumen.tools.layout` |
+| `layout: the sensors do not lie on a cylinder` | `ValueError` | `lumen.tools.layout` |
+| `display: <shape> values for <xy> sensors` | `ValueError` | `lumen.tools.plot` |
 | `profile: <key> is not a single-number key of the space` | `ValueError` | `lumen.tools.scan` |
 | `scan: <k> is not a single-number key of the space` | `ValueError` | `lumen.tools.scan` |
 | `scan: one or two axes` | `ValueError` | `lumen.tools.scan` |

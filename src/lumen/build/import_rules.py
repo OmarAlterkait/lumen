@@ -236,9 +236,37 @@ def check_scintillation(old: dict, new: dict, what: str) -> None:
         raise AssertionError(f"{what}: Geant4-10 keys left after the translation")
 
 
+def _same_light_both(props: dict, what: str):
+    """Return, for a material with both releases' scintillation keys that give the same light (lumen's export writes
+    both: ``lumen.rules.keys.geant4_10_scintillation``), the rule dropping the Geant4-10 keys; else None (one set, or
+    two readings: ``refuse_geant4_10`` refuses it)."""  # noqa: D205, D209
+    old = sorted(k for k in props if k in keys.G4_10_KEYS)
+    if not old or not any(k in G4_11_SCINTILLATION for k in props):
+        return None
+    ten = {k: v for k, v in props.items() if k in keys.G4_10_KEYS or k == "SCINTILLATIONYIELD"}
+    eleven = {k: v for k, v in props.items() if k not in keys.G4_10_KEYS}
+    try:
+        refuse_geant4_10(ten, what)
+        check_scintillation(ten, eleven, what)
+    except (TranslationRefused, AssertionError):
+        return None
+
+    def drop(m):
+        rec = dict(translation="geant4_10_scintillation", material=m.name, old=old, new=[], unread_by_geant4_10=[],
+                   reference="Geant4 10.7.4 G4Scintillation::PostStepDoIt (lumen.build.import_rules.geant4_10_light)",
+                   check="the Geant4-10 keys give the Geant4-11 keys' light: dropped")  # fmt: skip
+        return (dataclasses.replace(m, properties=eleven), rec,
+                f"{what}: Geant4-10 scintillation keys {old} beside Geant4 11's, the same light; dropped")
+
+    return drop
+
+
 def geant4_10_scintillation(name: str, m: schema.Material):
     """Return (material, translation record or None, report line or None) for a material's Geant4-10 keys."""
     what = f"material {name!r}"
+    both = _same_light_both(m.properties, what)
+    if both is not None:
+        return both(m)
     refuse_geant4_10(m.properties, what)
     props, note = keys.geant4_11_scintillation(m.properties)
     if note is None:

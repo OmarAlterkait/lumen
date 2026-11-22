@@ -24,7 +24,11 @@ RECIPE = Recipe(
 def _toy():
     start = GDML.index('  <bordersurface name="B1"')
     end = GDML.index("</bordersurface>") + len("</bordersurface>\n")
-    return GDML[:start] + GDML[end:]  # counting sensors take no border surface
+    text = GDML[:start] + GDML[end:]  # counting sensors take no border surface
+    # the world of steel (no RINDEX): Geant4 ends a photon leaving the tank, so the tank is the closed detector volume
+    # (lumen.build.binding.detector_volume_closed); in the importer's water world it would grow to the world
+    world = '<volume name="WorldLV"> <materialref ref="{}"/>'
+    return text.replace(world.format("Water"), world.format("Steel"))
 
 
 @pytest.fixture(scope="module")

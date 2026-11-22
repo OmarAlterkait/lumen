@@ -361,6 +361,39 @@ def test_the_outside_carries_the_skin_of_the_volume_geant4_enters(tmp_path, x_mm
     assert (binding.outside_volume(df), binding.outside_skin(df)) == want
 
 
+CLOSED = [(100, "DetLV", 0), (130, "WorldLV", 2), (None, "WorldLV", 2)]
+
+
+@pytest.mark.parametrize("x_mm,want,steps", CLOSED)
+def test_the_detector_volume_grows_while_light_leaves_it_into_a_volume_with_rindex(tmp_path, x_mm, want, steps):
+    """Geant4 transports a photon on into a volume with RINDEX: the detector volume grows to it (DetLV in the Hall's
+    liquid, then the world's); into the steel membrane holding it (no RINDEX: NoRINDEX) it stays."""
+    from optics_toy import read_toy as read
+
+    mem = "" if x_mm is None else (f'<physvol name="mem"> <volumeref ref="MemLV"/> <position name="q" x="{x_mm}" '
+                                   'y="0" z="0" unit="mm"/> </physvol>')  # fmt: skip
+    df = dataclasses.replace(read(_Factory(tmp_path), OUTSIDE_GDML.replace("MEMBRANE", mem)), detector_volume="DetLV")
+    closed, report = binding.detector_volume_closed(df)
+    assert (closed, len(report)) == (want, steps)
+    assert all("with RINDEX" in r for r in report)
+
+
+def test_a_volume_absorbing_light_at_entry_closes_the_detector(tmp_path):
+    """The Hall's material with RINDEX but an ABSLENGTH of 1e-11 m (ANNIE's steel): the detector volume grows to the
+    Hall, for the reflection at its face, and stops there (no light crosses it into the world's liquid)."""
+    from optics_toy import read_toy as read
+
+    absorbing = ('<matrix name="ABS" coldim="2" values="2.0*eV 1e-8*mm 4.5*eV 1e-8*mm"/> </define>')
+    hall = '<material name="Abs" state="solid"> <property name="RINDEX" ref="RIX"/> <property name="ABSLENGTH" ' \
+           'ref="ABS"/> <D value="7.9"/> <fraction n="1" ref="O"/> </material>\n  <material name="Steel"'  # fmt: skip
+    text = (OUTSIDE_GDML.replace("MEMBRANE", "").replace("</define>", absorbing, 1)
+            .replace('<material name="Steel"', hall, 1)
+            .replace('<volume name="HallLV"> <materialref ref="Liq"/>', '<volume name="HallLV"> <materialref ref="Abs"/>'))  # fmt: skip
+    df = dataclasses.replace(read(_Factory(tmp_path), text), detector_volume="DetLV")
+    closed, report = binding.detector_volume_closed(df)
+    assert closed == "HallLV" and len(report) == 1 and "absorbs it at entry" in report[0]
+
+
 class _Factory:
     def __init__(self, d):
         self.d = d

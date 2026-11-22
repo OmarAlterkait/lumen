@@ -136,3 +136,28 @@ def test_an_untranslatable_gdml_set_is_refused_at_conversion(tmp_path):
     assert any("FASTCOMPONENT" in m.properties for m in df.materials.values())
     with pytest.raises(translate.TranslationRefused, match=r"add \['SLOWTIMECONSTANT'\]"):
         translate.apply(df)
+
+
+def test_the_exporters_geant4_10_keys_invert_the_import_translation():
+    """keys.geant4_10_scintillation (the exporter's keys for Geant4 10.7) gives back the Geant4-10 set the import
+    translated: the same spectra, time constants and YIELDRATIO."""
+    old = g10()
+    eleven, _ = keys.geant4_11_scintillation(old)
+    ten, note = keys.geant4_10_scintillation(eleven)
+    assert note is not None and set(ten) == set(old) - {"SCINTILLATIONYIELD"}
+    for k, p in ten.items():
+        np.testing.assert_allclose(p.value, old[k].value, rtol=1e-12, err_msg=k)
+
+
+def test_both_releases_keys_giving_the_same_light_read_as_geant4_11s():
+    """A material with both key sets (lumen's export) is read as its Geant4-11 keys, the 10 keys dropped and recorded;
+    two sets giving different light are refused as before."""
+    eleven, _ = keys.geant4_11_scintillation(g10())
+    ten, _ = keys.geant4_10_scintillation(eleven)
+    m = Material("M", state="liquid", composition=None, temperature_k=None, pressure_pa=None,
+                 properties=dict(eleven, **ten))  # fmt: skip
+    out, rec, line = translate.geant4_10_scintillation("M", m)
+    assert set(out.properties) == set(eleven) and rec["old"] == sorted(ten) and "the same light" in line
+    other = dict(eleven, **ten) | {"YIELDRATIO": one("YIELDRATIO", 0.5)}
+    with pytest.raises(translate.TranslationRefused):
+        translate.geant4_10_scintillation("M", dataclasses.replace(m, properties=other))

@@ -294,6 +294,11 @@ records which sensor volumes they reach; lumen's validation uses it for every Ge
 tools/g4ref/build.sh /path/to/g4ref
 ```
 
+By default g4ref corrects two points where Geant4 10.7's own processes are wrong. It computes the mean number of
+Cherenkov photons per step exactly (`--cerenkov-count exact`); stock 10.7 assumes RINDEX rises with energy, which
+argon's does not. It also splits a step's scintillation photons between the fast and slow components binomially
+(`--scint-split binomial`). lumen does both the same way. `--geant4-stock` gives Geant4 10.7's own behaviour.
+
 **Charge.** Run g4ref and lumen on the same source, and compare the photons each sensor counts. With
 `--wcsim-hits`, g4ref counts a photon absorbed on its way into a sensor volume, which is what lumen's `border_into`
 rule with a value set counts as arrivals:
