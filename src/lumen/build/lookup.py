@@ -197,8 +197,11 @@ def nearest_instances(tree, a: str, b: str) -> frozenset:
 def border_instances(tree, a: str, b: str):
     """Return the world instances of a border's physvols a -> b that touch: (a's with a neighbour among b's, b's with
     one among a's). Linear in the fewer instances of the two: a border names a physvol pair, never its instance
-    pairs."""  # noqa: D205, D209
-    return _touching(tree, a, b), _touching(tree, b, a)
+    pairs. Found once per tree (a Tree does not change)."""  # noqa: D205, D209
+    held = tree.__dict__.setdefault("_border_instances", {})
+    if (a, b) not in held:
+        held[a, b] = (_touching(tree, a, b), _touching(tree, b, a))
+    return held[a, b]
 
 
 # --------------------------------------------------------------------------------------------------------- bindings
