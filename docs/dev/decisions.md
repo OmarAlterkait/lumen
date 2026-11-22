@@ -339,8 +339,9 @@ coatings of 2.5 to 8 bands at 0.5 to 5 m were entered in 65 % of the configurati
 away; tightening the on-face tolerances moved that threshold, did not remove the path dependence, and stepped over
 more coatings at grazing angles. NEXT-100's TPB (2 to 5.4 um) left its S2 light 8 % low at the PMTs and 10 % at the
 SiPMs against nexus. In float64 every configuration is right and NEXT-100 agrees with nexus to 0.4 % (stage 3), at
-+20 % (S1) and +27 % (S2) time against a float32 that tracks those coatings on an A100, 3.4 times on an RTX 2080 Ti
-(float64 at 1/32 of float32's rate). JAX's 64-bit mode alone leaves a float32 run bit for bit.
++20 % (S1) and +19 % (S2) time against a float32 that tracks those coatings on an A100 (14.3 s and 13.8 s against 11.9 s
+and 11.6 s), 3.4 times float32's S2 time on an RTX 2080 Ti (float64 at 1/32 of float32's rate). JAX's 64-bit mode alone
+leaves a float32 run bit for bit.
 **Where.** `rules/navigation.py` (`Precision`, `band`), `geometry/navigator_build.py`, `geometry/csg_build.py`,
 `geometry/ownership.py`, `geometry/cache.py`, `geometry/navigate.py`, `geometry/csg.py`, `transport/step.py`,
 `transport/state.py`, `api.py` (`load`); `tests/unit/test_precision.py`.

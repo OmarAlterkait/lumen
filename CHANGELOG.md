@@ -19,10 +19,10 @@ now, and what to do.
   float32, and float32 stays the default. float32's tolerance at a decision is the band of the photon's ray, its
   start's coordinates plus the distance travelled, so a coating a few um thick at metres from the origin was stepped
   over or mis-tracked by photons that came from far: NEXT-100's TPB left its S2 light 8 % low at the PMTs and 10 % at
-  the SiPMs against nexus. In float64 NEXT-100 agrees with nexus to 0.4 %, at +20 % (S1) and +27 % (S2) time on an
-  A100 and 3.4 times on an RTX 2080 Ti. float64 needs JAX's 64-bit mode (`JAX_ENABLE_X64=1`), and `load` refuses it
-  otherwise; with the mode on, float32 runs are unchanged. The build cache keys a navigator by its precision
-  (docs/dev/decisions.md, 29).
+  the SiPMs against nexus. In float64 NEXT-100 agrees with nexus to 0.4 %, at +20 % (S1) and +19 % (S2) time on an
+  A100 against a float32 that tracks those coatings, and 3.4 times float32's S2 time on an RTX 2080 Ti. float64 needs
+  JAX's 64-bit mode (`JAX_ENABLE_X64=1`), and `load` refuses it otherwise; with the mode on, float32 runs are unchanged.
+  The build cache keys a navigator by its precision (docs/dev/decisions.md, 29).
 - **Skin sensors**: a `border_into` group's volume that no border sensor enters and whose own skin detects has that
   skin as its sensor, met where Geant4 picks it (entering from the volume's mother, or from a volume without a skin);
   leaving through it detects with the surface's EFFICIENCY, credited to the volume left. nexus's photocathodes and
