@@ -14,17 +14,22 @@ positive wherever such a live density can be positive and the reference is not: 
 facet (``lumen.surfaces.facets.covered``; c the shell), a bulk lobe's choice (``lumen.lobes.Lobe.defensive``: Mie's two
 lobes), a scintillation component and a spectrum interval (``lumen.sources``, ``lumen.media.spectra.covered``). When
 such a parameter is keyed (decided by structure, never by a value or a tangent: ``edge_rows``; a source's and a
-spectrum's shares are always parameters) the part is drawn from (1 - e) p_ref + e c, e = ``DEFENSIVE_SHARE``, and
-from p_ref where nothing is covered at the reference (e is not paid). The live weight multiplies p_live / q; the
-reference weight carries q / q (the density drawn from over itself): the roulette keeps a photon with probability wr /
-eps and divides its derivative by it, so a reference weight carrying p_ref / q (0 at a covered draw) would end the
-photons that carry the derivative (measured: x51 the variance, gradfam_p3.md section 7).
+spectrum's shares are always parameters) the part is drawn from (1 - e) p_ref + e c over the event's whole
+distribution (a surface's absorption included), e = ``DEFENSIVE_SHARE``, and from p_ref where nothing is covered at the
+reference (e is not paid). The live weight multiplies p_live / q; the reference weight carries the total of the weights
+drawn from (a surface's continuing share, the covering share e / (1 - e) included): the roulette keeps a photon with
+probability wr / eps and divides its derivative by it, so a reference weight carrying p_ref / q (0 at a covered draw)
+would end the photons that carry the derivative (measured: x51 the variance, gradfam_p3.md section 7). The covering
+share is of the whole distribution, not of its continuing part: at a surface that absorbs every photon at the
+reference (S = 0) a share of S would leave the reference weight unchanged, and a photon of weight 0 in a cavity of such
+surfaces (a PMT's inside, every wall absorbing) would never meet the roulette (millions of steps).
 
 **No photon is ended for carrying weight 0.** After a covered draw of live probability 0 the photon goes on with
 weight 0 in value and its derivative's weight; a second such draw on the same path carries the second derivative (a
 path through two reflections at R = 0 goes as R^2), so ending it would drop that term (measured: 44 % of d2Q/dR2 at
 a reflectivity of 0 on the YAML toy, tests/physics/test_ghost_hessian.py). Such a photon ends as any other: absorbed,
-by the roulette, or at the step guard (``health.truncated``).
+by the roulette (its reference weight falls by e / (1 - e) at each covered draw of a surface absorbing everything at
+the reference: unbiased, the survivors carrying the rest), or at the step guard (``health.truncated``).
 """
 
 from __future__ import annotations
@@ -78,16 +83,19 @@ def lobe_role(tables, medium, channel, name):
 def defensive(p, cover, e=DEFENSIVE_SHARE):
     """Return the weights a categorical part is drawn from: the one defensive mixture.
 
-    ``p``: the reference weights (unnormalised, total S); ``cover`` (bool): the outcomes the part may propose. Every
-    covered outcome of reference weight 0 gets S e / (1 - e) / n (n of them), so that normalised they take the share e
-    of the draws whatever S (1 / n each when S is 0: nothing else can be drawn); ``p`` itself where none is covered.
+    ``p``: the reference probabilities of the part's outcomes, a share of the event's whole distribution (which sums to
+    1 with the outcomes not drawn here: a surface's absorption); ``cover`` (bool): the outcomes the part may propose.
+    Every covered outcome of reference probability 0 gets e / (1 - e) / n (n of them): the covering density takes the
+    share e of the whole distribution, whatever share of it ``p`` holds; ``p`` itself where none is covered. Where
+    ``p`` is all 0 (a surface that absorbs every photon at the reference) the draw's total is e / (1 - e), the factor
+    the reference weight takes (``lumen.transport.step``): such a photon falls below the roulette's ε as any photon
+    whose reference weight falls, and the roulette ends it or keeps it, unbiased.
     """
     p = sg(p)
     fl = cover & (p <= 0.0)
-    S = jnp.sum(p)
     n = jnp.maximum(jnp.sum(fl), 1)
-    eps = jnp.where(S > 0.0, S * e / (1.0 - e), 1.0) / n
-    return jnp.where(fl, eps.astype(p.dtype), p)
+    eps = jnp.asarray(e / (1.0 - e), p.dtype) / n
+    return jnp.where(fl, eps, p)
 
 
 def defensive_q(p, cover, e=DEFENSIVE_SHARE):
