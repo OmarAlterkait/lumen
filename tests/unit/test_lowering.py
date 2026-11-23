@@ -127,6 +127,43 @@ def test_split_unions_is_exact(tmp_path):
     assert np.any(m0 == L.media["Steel"]) and np.any(m0 == L.media["Water"])
 
 
+def test_a_split_piece_keeps_only_the_holes_that_meet_it(tmp_path):
+    """a union of 18 cubes minus a pin through each cube: each piece is its cube minus its own pin, the labels
+    unchanged"""
+    holes = "".join(
+        f'<subtraction name="h{k}"><first ref="{f"h{k - 1}" if k else "u17"}"/><second ref="pin"/>'
+        f'<position name="hp{k}" x="{30 * k}" y="0" z="0" unit="mm"/></subtraction>'
+        for k in range(18)
+    )
+    txt = fixture.GDML.replace(
+        '<box name="smallbox" x="50" y="50" z="50" lunit="mm"/>',
+        '<box name="smallbox" x="50" y="50" z="50" lunit="mm"/><box name="u0" x="20" y="20" z="20" lunit="mm"/>'
+        + UNION
+        + '<box name="pin" x="4" y="4" z="40" lunit="mm"/>'
+        + holes,
+    )
+    txt = txt.replace(
+        '<volume name="Small"><materialref ref="Steel"/><solidref ref="smallbox"/></volume>',
+        '<volume name="Small"><materialref ref="Steel"/><solidref ref="h17"/></volume>',
+    )
+    L = fixture.load(tmp_path, txt, "h.gdml")
+    S = lowering.split_unions(L.scene, 16)
+    pieces = S.definitions["Small"].placements
+    assert len(pieces) == 18
+    assert all(lowering.n_leaves(S.definitions[p.definition].member.solid) == 2 for p in pieces)
+    X = np.random.default_rng(6).uniform([0.05, -0.012, 0.48], [0.65, 0.012, 0.52], (20000, 3))
+    m0, _, _ = oracle.Oracle(L.scene).label_many(X)
+    m1, _, _ = oracle.Oracle(S).label_many(X)
+    np.testing.assert_array_equal(m0, m1)
+    steel = m0 == L.media["Steel"]
+    xr = (X[:, 0] - 0.1 + 0.015) % 0.03 - 0.015  # from the nearest cube's centre (Small at x = 0.1 m)
+    near = (X[:, 0] > 0.09) & (X[:, 0] < 0.62) & (np.abs(X[:, 2] - 0.5) < 0.009)
+    pin = near & (np.abs(xr) < 0.0019) & (np.abs(X[:, 1]) < 0.0019)
+    cube = near & (np.abs(xr) > 0.0021) & (np.abs(xr) < 0.0099) & (np.abs(X[:, 1]) < 0.0099)
+    assert np.any(pin) and not np.any(steel[pin])
+    assert np.any(cube) and np.all(steel[cube])
+
+
 def test_a_phi_cut_solid_has_its_sector_box():
     # a 0.1 rad slice of a 10 m polycone (as WCSim's extra tower): its box is the sector's, the full solid's is not
     node = solids.g4_polycone(-0.1, 0.1, [(0.0, 10.0, -1.0), (0.0, 10.0, 1.0)])
