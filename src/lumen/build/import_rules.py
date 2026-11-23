@@ -255,8 +255,11 @@ def _same_light_both(props: dict, what: str):
         rec = dict(translation="geant4_10_scintillation", material=m.name, old=old, new=[], unread_by_geant4_10=[],
                    reference="Geant4 10.7.4 G4Scintillation::PostStepDoIt (lumen.build.import_rules.geant4_10_light)",
                    check="the Geant4-10 keys give the Geant4-11 keys' light: dropped")  # fmt: skip
-        return (dataclasses.replace(m, properties=eleven), rec,
-                f"{what}: Geant4-10 scintillation keys {old} beside Geant4 11's, the same light; dropped")
+        return (
+            dataclasses.replace(m, properties=eleven),
+            rec,
+            f"{what}: Geant4-10 scintillation keys {old} beside Geant4 11's, the same light; dropped",
+        )
 
     return drop
 

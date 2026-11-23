@@ -383,12 +383,13 @@ def test_a_volume_absorbing_light_at_entry_closes_the_detector(tmp_path):
     Hall, for the reflection at its face, and stops there (no light crosses it into the world's liquid)."""
     from optics_toy import read_toy as read
 
-    absorbing = ('<matrix name="ABS" coldim="2" values="2.0*eV 1e-8*mm 4.5*eV 1e-8*mm"/> </define>')
+    absorbing = '<matrix name="ABS" coldim="2" values="2.0*eV 1e-8*mm 4.5*eV 1e-8*mm"/> </define>'
     hall = '<material name="Abs" state="solid"> <property name="RINDEX" ref="RIX"/> <property name="ABSLENGTH" ' \
            'ref="ABS"/> <D value="7.9"/> <fraction n="1" ref="O"/> </material>\n  <material name="Steel"'  # fmt: skip
     text = (OUTSIDE_GDML.replace("MEMBRANE", "").replace("</define>", absorbing, 1)
             .replace('<material name="Steel"', hall, 1)
-            .replace('<volume name="HallLV"> <materialref ref="Liq"/>', '<volume name="HallLV"> <materialref ref="Abs"/>'))  # fmt: skip
+            .replace('<volume name="HallLV"> <materialref ref="Liq"/>',
+                     '<volume name="HallLV"> <materialref ref="Abs"/>'))  # fmt: skip
     df = dataclasses.replace(read(_Factory(tmp_path), text), detector_volume="DetLV")
     closed, report = binding.detector_volume_closed(df)
     assert closed == "HallLV" and len(report) == 1 and "absorbs it at entry" in report[0]
