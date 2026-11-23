@@ -66,6 +66,13 @@ now, and what to do.
   (`Operands.emission`), and a re-emission looks them up: the same draws and weights to float32 rounding (a
   normalisation's sum is rounded in another order). NEXT-100's S1 takes 12.7 us per photon on an A100 (was 13.5) and
   its loop 0.7 kB of local memory per thread (was 4.7 kB).
+- **The navigator's BVH walk**: a node's two children were each tested when the walk reached them, the farther pushed
+  whether or not the ray met its box: 42 % of the node visits of a NEXT-100 query in its gas volume (1340 daughters)
+  were boxes the ray missed, each reading three boxes. The children are now tested at their parent and only those the
+  ray meets within the best event so far go on, the stack keeping each entry's distance to drop it once a nearer
+  event is found: the same candidates in the same order, the same outputs bit for bit (every query of the traced
+  states of NEXT-100, SK, WCTE and a tank). Per query on an A100: NEXT-100's gas volume 90 -> 79 ns (float32), SK
+  123 -> 113 ns, the tank 4.3 -> 3.4 ns.
 
 ## 0.2.1 (2026-11-23)
 
