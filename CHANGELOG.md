@@ -57,6 +57,9 @@ now, and what to do.
   leaf, whose intervals depend on the window, is still solved per window): the same intervals, the same outputs bit
   for bit. Per query on an A100: NEXT-100 61 ns (was 70, float64) and 30 ns (was 33, float32), SK 75 ns (was 104),
   WCTE 62 ns (was 96); NEXT-100's S1 takes 9.6 us per photon (was 10.5).
+- **A run's health sums**: each photon added its fates to the health's exact sums as it ended, while the other photons
+  of its warp, mid-path, waited for those adds. The loop now returns each photon's fates and a launch of their own
+  adds them: the same exact sums. Per photon on an A100: SK -16 %, WCTE -2 %.
 
 ## 0.2.1 (2026-11-23)
 
