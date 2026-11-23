@@ -73,6 +73,10 @@ now, and what to do.
   event is found: the same candidates in the same order, the same outputs bit for bit (every query of the traced
   states of NEXT-100, SK, WCTE and a tank). Per query on an A100: NEXT-100's gas volume 90 -> 79 ns (float32), SK
   123 -> 113 ns, the tank 4.3 -> 3.4 ns.
+- **The photon loop's registers**: tallymap's kernel kept 168 registers per thread, so 12 warps fit an SM of an A100;
+  lumen now asks tallymap for 8 resident blocks per SM (`lumen.run.MIN_BLOCKS`, tallymap's `min_blocks_per_sm`): 64
+  registers, the rest spilled to local memory, and the outputs the same bit for bit. Per photon on an A100: NEXT-100
+  (float64) -7.5 %, SK -20 %, WCTE -23 %, a tank -11 % (10, 12 and 16 blocks were slower).
 
 ## 0.2.1 (2026-11-23)
 

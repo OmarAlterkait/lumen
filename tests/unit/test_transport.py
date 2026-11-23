@@ -165,7 +165,8 @@ NO_ANALOG.static = Static(NO_ANALOG)  # the jits' static argument (lumen.transpo
 
 
 def test_the_runner_passes_tallymap_its_schedule(monkeypatch):
-    """lumen asks for step scheduling explicitly, so a change of tallymap's default cannot slow it silently."""
+    """lumen asks for step scheduling and its register cap explicitly, so a change of tallymap's defaults cannot slow
+    it silently."""
     from lumen import run
 
     seen = {}
@@ -179,6 +180,7 @@ def test_the_runner_passes_tallymap_its_schedule(monkeypatch):
     with pytest.raises(RuntimeError, match="stop"):
         run.run(spec, NO_ANALOG, None, _row(2), jnp.zeros(2, jnp.uint32), backend="xla")
     assert seen["schedule"] == run.SCHEDULE == "step" and seen["backend"] == "xla"
+    assert seen["min_blocks_per_sm"] == run.MIN_BLOCKS
 
 
 def test_auto_is_the_kernel_backend_without_a_gpu(monkeypatch):
