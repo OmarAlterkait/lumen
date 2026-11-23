@@ -155,6 +155,22 @@ def relation(fl, c, Q, h):  # noqa: N803 -- Q the boxes' axes
     return _expr_boxes(expr, out)
 
 
+def _sub_chain(node):
+    """Return (base, subtrahends) of a solid's top chain of subtractions ``((base - s1) - s2) - ...``, in order."""
+    subs = []
+    while isinstance(node, so.Op) and node.op == "sub":
+        subs.append(node.b)
+        node = node.a
+    return node, subs[::-1]
+
+
+def _regions(box, L, t):  # noqa: N803 -- L the rotations
+    """Return per pose the box (lo, hi (m, 3)) holding a solid's box (centre, half) placed by ``x = L[k] y + t[k]``."""
+    c, h = np.asarray(box[0], float), np.asarray(box[1], float)
+    w = np.einsum("mij,kj->mki", L, so.corners(c - h, c + h)) + t[:, None, :]
+    return w.min(1), w.max(1)
+
+
 def relate_poses(fi, bi, fo, L, t, want):  # noqa: N803 -- L the rotations
     """Return per pose whether a solid is proved apart from (``want`` "apart") or inside ("inside") another.
 
@@ -203,12 +219,66 @@ class Proofs:
     want) proved once."""  # noqa: D205, D209
 
     def __init__(self, u):
-        self.u, self.flats, self.memo = u, {}, {}
+        self.u, self.flats, self.memo, self.chains, self.nears = u, {}, {}, {}, {}
 
     def _flat(self, k):
         if k not in self.flats:
             self.flats[k] = flat(self.u.nodes[k])
         return self.flats[k]
+
+    def _chain(self, k):
+        """Return (base, subtrahends, their boxes' lo and hi (s, 3)) of solid k's top chain of subtractions; an
+        unbounded subtrahend's box is all space."""  # noqa: D205, D209
+        if k not in self.chains:
+            node = self.u.nodes[k]
+            base, subs = (node, []) if _is_mesh(node) else _sub_chain(node)
+            bb = [so.node_bbox(b) for b in subs]
+            lo = np.array([np.full(3, -np.inf) if b is None else b[0] for b in bb], float).reshape(-1, 3)
+            hi = np.array([np.full(3, np.inf) if b is None else b[1] for b in bb], float).reshape(-1, 3)
+            self.chains[k] = (base, subs, lo, hi)
+        return self.chains[k]
+
+    def _kept(self, k, lo, hi):
+        """Return per box [lo, hi] (m, 3) of solid k's frame which subtrahends of its top chain meet it (m, s)."""
+        _, _, slo, shi = self._chain(k)
+        return np.all(slo[None] <= hi[:, None], 2) & np.all(lo[:, None] <= shi[None], 2)
+
+    def _near(self, k, kept):
+        """Return solid k's ``flat`` with only the subtrahends ``kept`` (a mask) of its top chain: the solid on the
+        boxes they meet, a superset of it elsewhere."""  # noqa: D205, D209
+        if kept.all():
+            return self._flat(k)
+        key = (k, kept.tobytes())
+        if key not in self.nears:
+            node, subs, _, _ = self._chain(k)
+            for b, keep in zip(subs, kept, strict=True):
+                if keep:
+                    node = so.Op("sub", node, b)
+            self.nears[key] = flat(node)
+        return self.nears[key]
+
+    def _prove(self, a, b, L, t, want):  # noqa: N803 -- L the rotations
+        """Return per pose of solid a in solid b's frame (``x = L[k] y + t[k]``) whether a is proved apart from /
+        inside b: each solid without the subtrahends of its top chain that miss the other's box at that pose, the
+        poses keeping the same ones proved together, ``PROOF_BATCH`` at a time."""  # noqa: D205, D209
+        got = np.zeros(len(L), bool)
+        if not len(L):
+            return got
+        box_a, box_b = self.u.box[a], self.u.box[b]
+        ko = self._kept(b, *_regions(box_a, L, t))
+        if box_b is None:
+            ki = np.ones((len(L), len(self._chain(a)[1])), bool)
+        else:  # b's box in a's frame: x_a = L^T (x_b - t)
+            ki = self._kept(a, *_regions(box_b, np.transpose(L, (0, 2, 1)), -np.einsum("mji,mj->mi", L, t)))
+        rows = np.c_[ki, ko]
+        grp = np.unique(rows, axis=0, return_inverse=True)[1].ravel() if rows.shape[1] else np.zeros(len(L), int)
+        for g in range(int(grp.max()) + 1):
+            idx = np.flatnonzero(grp == g)
+            fi, fo = self._near(a, ki[idx[0]]), self._near(b, ko[idx[0]])
+            for s0 in range(0, len(idx), PROOF_BATCH):
+                js = idx[s0 : s0 + PROOF_BATCH]
+                got[js] = relate_poses(fi, box_a, fo, L[js], t[js], want)
+        return got
 
     def __call__(self, inner, outer, want):
         """Return per pair (inner[k], outer[k]) of units whether inner is proved apart from / inside outer."""
@@ -242,9 +312,7 @@ class Proofs:
             sel = todo_a[(pair[:, 0] == a) & (pair[:, 1] == b)]
             if u.box[a] is None:  # an unbounded solid: nothing is proved
                 sel = sel[:0]
-            for s0 in range(0, len(sel), PROOF_BATCH):
-                js = sel[s0 : s0 + PROOF_BATCH]
-                got[js] = relate_poses(self._flat(a), u.box[a], self._flat(b), L[first[js]], t[first[js]], want)
+            got[sel] = self._prove(a, b, L[first[sel]], t[first[sel]], want)
             for j in sel:
                 self.memo[(want, uk[j].tobytes())] = bool(got[j])
         return out | got[inv]

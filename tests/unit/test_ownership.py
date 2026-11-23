@@ -201,6 +201,29 @@ def test_a_holed_solid_ranks_after_its_fillers():
     assert sorted(map(tuple, own.pairs.tolist())) == [(0, 1), (2, 0), (2, 1)], own.pairs
 
 
+def test_a_proof_keeps_only_the_holes_near_the_other_solid():
+    """a plate with 9 holes and a pin through each, and a pin through the plate itself: the pins in the holes are
+    proved apart from the plate and the other is not, as with every hole kept, each proof keeping at most one hole"""
+    holes = [(x, y) for x in (-0.2, 0.0, 0.2) for y in (-0.2, 0.0, 0.2)]
+    plate = box(0.6, 0.6, 0.02)
+    for x, y in holes:
+        plate = solids.Op("sub", plate, solids.Xf(I3, np.array([x, y, 0.0]), box(0.04, 0.04, 0.1)))
+    pin = box(0.02, 0.02, 0.06)
+    at = [*holes, (-0.1, -0.1)]
+    n = 1 + len(at)
+    u = ownership.Units(parent=np.full(n, -1), kind=np.r_[0, np.ones(len(at), np.int64)], nodes=[plate, pin],
+                        box=((np.zeros(3), np.array([0.3, 0.3, 0.01])), (np.zeros(3), np.array([0.01, 0.01, 0.03]))),
+                        R=np.broadcast_to(I3, (n, 3, 3)), t=np.array([[0.0, 0.0, 0.0]] + [[x, y, 0.0] for x, y in at]),
+                        place=np.arange(n), forced=np.zeros((0, 2), np.int64))  # fmt: skip
+    proofs = ownership.Proofs(u)
+    got = proofs.apart(np.arange(1, n), np.zeros(n - 1, np.int64))
+    assert got.tolist() == [True] * len(holes) + [False]
+    whole = [ownership.relate_poses(ownership.flat(pin), u.box[1], ownership.flat(plate), I3[None],
+                                    np.array([[x, y, 0.0]]), "apart")[0] for x, y in at]  # fmt: skip
+    assert got.tolist() == whole
+    assert proofs.nears and all(len(fl[1]) <= 2 for fl in proofs.nears.values())
+
+
 def test_the_rule_order_is_the_placement_order_with_proved_insides_ahead():
     """a cycle of pairwise choices is no order: c inside a (c ahead), a placed before b, b before c -- the order is
     one list all the same, each proved inside ahead of its container"""
