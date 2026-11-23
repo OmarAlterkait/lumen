@@ -92,5 +92,39 @@ def test_every_sensor_is_drawn_inside_its_surface_and_the_surfaces_do_not_overla
             return in_rect or in_circle
 
         assert all(inside(q) for q in lay.shapes)
-        spans = sorted([(r[1][1], r[1][1] + r[3]) for r in rects] + [(c[1][1] - c[2], c[1][1] + c[2]) for c in circles])
-        assert all(a[1] < b[0] for a, b in zip(spans, spans[1:], strict=False))  # stacked, none over another
+        boxes = [(r[1][0], r[1][1], r[1][0] + r[2], r[1][1] + r[3]) for r in rects]
+        boxes += [(c[1][0] - c[2], c[1][1] - c[2], c[1][0] + c[2], c[1][1] + c[2]) for c in circles]
+        for i, a in enumerate(boxes):  # no surface over another (a cap's square around its disc included)
+            for b in boxes[i + 1 :]:
+                assert a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1], (a, b)
+
+
+def test_a_box_with_no_clearly_thinnest_axis_faces_no_axis():
+    assert layout._thinnest([0.3, 0.012, 0.3]) == 1  # an X-ARAPUCA window: it faces along its thin axis
+    assert layout._thinnest([0.265, 0.265, 0.265]) is None  # a PMT's cube-like box (Super-K's): its x is arbitrary
+    assert layout._thinnest([0.13, 0.12, 0.10]) is None
+
+
+def test_a_face_in_far_pieces_joins_the_walls_its_sensors_sit_on_and_a_grid_of_two_rows_is_one_face():
+    walls = _planes(xs=(-2.0, 2.0), ny=4, nz=9)  # two walls of constant x, sensors facing x
+    side = np.array([[x, y, 2.5] for x in (-2.0, 2.0) for y in (-1.0, 0.0, 1.0)])  # on the walls, facing z
+    p = np.vstack([walls, side])
+    n = np.vstack([np.tile([1.0, 0.0, 0.0], (len(walls), 1)), np.tile([0.0, 0.0, 1.0], (len(side), 1))])
+    face, info, keep = layout._faces(p, n)
+    assert [k for k, _ in info] == [0, 0] and keep.all()  # the two columns 4 m apart are no face of constant z
+    assert np.all(np.abs(p[np.arange(len(p)), 0] - np.array([info[f][1] for f in face])) < 1e-9)  # each on its wall
+    rows = np.array([[0.3 * i, 0.3 * j, 7.0] for i in range(10) for j in range(2)])  # ND-LAr's tiles: 2 x 10
+    face, info, keep = layout._faces(rows, np.tile([0.0, 0.0, 1.0], (len(rows), 1)))
+    assert info == [(2, 7.0)] and np.all(face == 0) and keep.all()
+
+
+def test_the_planes_are_along_one_axis_the_one_holding_most_sensors_then_fewest_planes():
+    g = np.array([[a, b] for a in np.linspace(-3, 3, 8) for b in np.linspace(0, 10, 20)])  # 160 sensors a wall
+    cathode = np.column_stack([np.zeros(len(g)), g])  # FD2: one plane of constant x ...
+    walls = np.vstack([np.column_stack([g[:80, 0], np.full(80, s * 7.0), g[:80, 1]]) for s in (1, -1)])  # ... 2 of y
+    p = np.vstack([cathode, walls])
+    n = np.vstack([np.tile([1.0, 0, 0], (len(cathode), 1)), np.tile([0, 1.0, 0], (len(walls), 1))])
+    face, info, keep = layout._faces(p, n)
+    assert info == [(0, 0.0)] and keep.sum() == len(cathode) and np.all(face[keep] == 0)  # a tie: the one plane
+    lay_note = layout._faces_map(p[keep], face[keep], info)[4]
+    assert "constant x" in lay_note and "constant y" not in lay_note

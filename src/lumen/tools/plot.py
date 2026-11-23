@@ -30,12 +30,21 @@ EDGE = "0.55"  # the surfaces' outlines and their labels
 FONT = 8  # the displays' text (pt)
 
 
-def _layout(det, layout):
+def _layout(det, layout, select=None):
     from lumen.tools import layout as lay
 
     if isinstance(layout, lay.Layout):
         return layout
-    return lay.of(det if hasattr(det, "sensor_table") else np.asarray(det, np.float64), layout or "auto")
+    return lay.of(det if hasattr(det, "sensor_table") else np.asarray(det, np.float64), layout or "auto",
+                  select=select)  # fmt: skip
+
+
+def _drawn(lay, values):
+    """Return the values of the sensors the layout draws: every sensor's values, or the drawn ones' already."""
+    val = np.asarray(values, np.float64)
+    if lay.index is not None and val.shape != (len(lay.xy),) and val.ndim == 1 and len(val) > lay.index.max():
+        return val[lay.index]
+    return val
 
 
 def _extent(lay, labels=True):
@@ -114,19 +123,20 @@ def _colorbar(ax, lay, norm, cm, label):
 
 def display(det, values, ax=None, *, title: str = "", label: str = "", log: bool = False,  # noqa: PLR0913 -- the plot's
             cmap: str | None = None, vmin=None, vmax=None, diverging: bool = False, layout=None,
-            colorbar=True):  # fmt: skip
+            colorbar=True, select=None):  # fmt: skip
     """Draw one value per sensor (``det.sensor_table()`` order: ``Light.arrivals``') on the detector's flat layout.
 
     Each sensor is drawn with its own outline where ``lumen.tools.layout`` puts it (a TPC's planes in true scale, a
     tank's barrel unrolled with its caps). ``layout``: a ``Layout`` or a kind ("planes", "cylinder", "sphere"); by
-    default the detector's own. Sensors without a value (NaN; or 0 and below unless ``diverging``) are grey.
+    default the detector's own. ``select``: some sensors only, in detail (``lumen.tools.layout.of``'s; ``values``
+    stays every sensor's). Sensors without a value (NaN; or 0 and below unless ``diverging``) are grey.
     ``diverging``: a colour scale centred on 0 (a difference, a pull). Returns the axes.
     """
     from matplotlib.collections import PolyCollection
 
     plt = _plt()
-    lay = _layout(det, layout)
-    val = np.asarray(values, np.float64)
+    lay = _layout(det, layout, select)
+    val = _drawn(lay, values)
     if val.shape != (len(lay.xy),):
         raise ValueError(f"display: {val.shape} values for {len(lay.xy)} sensors")
     lit = np.isfinite(val) & (True if diverging else val > 0)
@@ -152,12 +162,13 @@ def display(det, values, ax=None, *, title: str = "", label: str = "", log: bool
     return ax
 
 
-def event(det, charge, time, *, title: str = "", charge_label: str = "expected photoelectrons", layout=None):
+def event(det, charge, time, *, title: str = "", charge_label: str = "expected photoelectrons",  # noqa: PLR0913
+          layout=None, select=None):  # fmt: skip
     """Draw an event's charge (log colour) and mean arrival time (ns) per sensor on the detector's layout: side by
     side, or one above the other for a wide layout. A sensor expecting under one hit (photoelectron) shows no time.
-    Returns the figure."""  # noqa: D205, D209
+    ``select``: some sensors only, in detail (``lumen.tools.layout.of``'s). Returns the figure."""  # noqa: D205, D209
     plt = _plt()
-    lay = _layout(det, layout)
+    lay = _layout(det, layout, select)
     x0, x1, y0, y1 = _frame(lay)
     aspect = (y1 - y0) / (x1 - x0)
     stacked = aspect < 0.45  # a wide layout: one above the other
@@ -168,7 +179,7 @@ def event(det, charge, time, *, title: str = "", charge_label: str = "expected p
                                figsize=(w, (2 * ph + 0.75 if stacked else ph + 0.4)))  # fmt: skip
     fig.subplots_adjust(left=0.01, right=0.94 if stacked else 0.95, bottom=0.01, top=0.96 if stacked else 0.92,
                         wspace=0.18, hspace=0.12)  # fmt: skip
-    q, t = np.asarray(charge, np.float64), np.asarray(time, np.float64)
+    q, t = _drawn(lay, charge), _drawn(lay, time)
     head = f"{title}  " if title else ""
     display(det, q, a, title=f"{head}charge", label=charge_label, log=True, layout=lay)
     lit = q >= 1.0  # a mean time from at least one expected hit or photoelectron

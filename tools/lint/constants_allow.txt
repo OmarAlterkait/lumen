@@ -234,13 +234,14 @@ tools/fit.py | descend | 0.999 | 1 | choice | no stated reason in place
 tools/fit.py | descend | 1e-12 | 1 | choice | no stated reason in place
 tools/fit.py | coverage | 20 | 1 | choice | no stated reason in place
 tools/layout.py | <module> | 32 | 1 | structural | points on a drawn circle (presentation)
+tools/layout.py | <module> | 1e-06 | 1 | choice | stated in place: a normal along an axis to within rounding
 tools/layout.py | of | 0.45 | 1 | structural | presentation (plot limits, bins, sizes)
 tools/layout.py | _place | 0.4 | 1 | structural | presentation (plot limits, bins, sizes)
-tools/layout.py | _place | 3.0 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/layout.py | _place | 2.5 | 4 | structural | presentation (plot limits, bins, sizes)
 tools/layout.py | _planes | 4 | 1 | structural | slabs at most a quarter of the sensors: planes hold several each
 tools/layout.py | _cylinder | 3 | 2 | structural | index arithmetic over the 3 axes (modulus)
 tools/layout.py | _cylinder_map | 3 | 2 | structural | index arithmetic over the 3 axes (modulus)
-tools/layout.py | _outline_points | 8 | 1 | structural | the 8 corners of a box
+tools/layout.py | _sensor_frames | 8 | 1 | structural | the 8 corners of a box
 tools/plot.py | <module> | 0.6827 | 1 | derivable | erf(1/sqrt 2): the share of a Gaussian within 1 sigma
 tools/plot.py | <module> | 0.83 | 1 | structural | presentation (plot limits, bins, sizes)
 tools/plot.py | <module> | 0.84 | 1 | structural | presentation (plot limits, bins, sizes)

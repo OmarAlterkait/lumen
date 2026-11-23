@@ -51,3 +51,19 @@ def test_the_figure_draws(tmp_path):
         times_geant4=rng.poisson(np.exp(-np.arange(100) / 20) * 1e4),
     )
     plot.compare_events(r, title="toy").savefig(tmp_path / "e.png")
+
+
+def test_a_group_wide_shift_from_event_to_event_shows_in_its_group_not_per_sensor():
+    """An effect common to a group's sensors and varying by event (a correlated shift, 3 % per event in one half)
+    leaves the per-sensor pulls near what an exact match gives but widens that group's per-event pulls only."""
+    rng = np.random.default_rng(6)
+    true = np.exp(rng.uniform(np.log(5), np.log(300), size=(300, 200)))
+    a, va, b, vb, n = _sample(rng, true, noise=0.2)
+    half = np.arange(200) < 100
+    shift = 1 + 0.03 * rng.normal(size=(300, 1))
+    n = np.where(half, rng.poisson(true * shift), n)
+    r = event.statistics(a, va, b, vb, n, groups={"shifted": half, "plain": ~half})
+    g = {q["name"]: q for q in r["groups"]}
+    assert g["shifted"]["event_sd"] > 1.5  # seen in its group
+    assert abs(g["plain"]["event_sd"] - 1) < 3 * g["plain"]["event_sd_err"]  # and not elsewhere
+    assert abs(r["pull"].std() - r["pull_toy"].std()) < 0.1  # while per sensor it is hardly visible

@@ -2,14 +2,20 @@
 
     lay = layout.of(det)                    # or of positions (S, 3) m; kind="planes" | "cylinder" | "sphere" to force
     lay.kind, lay.xy, lay.shapes            # the layout, each sensor's display position (m), its outline there
+    lay = layout.of(det, select=layout.under(det, "volNDBucket_PV#3"))   # some sensors only: a module, in detail
+    layout.containers(det)                  # the volumes holding some of the sensors (what ``under`` can name)
 
 Three layouts, tried in this order; the only scale is the sensors' own pitch (the median distance to the nearest
 sensor), so nothing is tuned per detector:
 
-- **planes** (a TPC's light detectors, a box): along one axis the sensors fall in slabs, each thinner than the pitch
-  within it and each filling an area (a sensor more than half a pitch inside the slab's outline: a cylinder's ring of
-  sensors is a slab too, but every sensor of it is on its outline). Each plane is drawn in true scale, its longer
-  in-plane axis across, all seen from the same side and stacked by their coordinate (largest on top).
+- **planes** (a TPC's light detectors, a box): each sensor faces along a coordinate axis (its solid's thinnest axis,
+  as placed), and the sensors facing along one axis fall in faces at a few positions along it (slabs a pitch apart):
+  SBND's two planes, DUNE FD2's cathode and membrane walls, ND-LAr's light-module walls. Each face is drawn in true
+  scale, its longer in-plane axis across, all faces along one axis seen from the same side, laid out on a grid as
+  near square as the faces allow (by axis, then by coordinate, largest first). Given positions alone: along one axis
+  the sensors fall in slabs, each thinner than the pitch within it and each filling an area (a sensor more than half
+  a pitch inside the slab's outline: a cylinder's ring of sensors is a slab too, but every sensor of it is on its
+  outline).
 - **cylinder** (a water Cherenkov tank): about one axis every sensor lies within a pitch of the sensors' bounding
   cylinder (a multi-PMT module's small PMTs too), and some on its barrel. The barrel is unrolled to (R phi, height)
   with its seam in the widest gap between sensors in azimuth; each cap is a disc above or below it, touching the
@@ -20,6 +26,10 @@ Given a detector, each sensor is drawn with its own outline: its solid's box in 
 cone, sphere or ellipsoid, by the circles of its ends) placed as the sensor is, carried through the same map as the
 positions, and its convex hull taken there; a PMT is a disc of its radius, a bar or an X-ARAPUCA its rectangle, each
 turned as it is placed. Given positions alone (or on a sphere), each sensor is a disc of 0.9 pitch.
+
+``select`` (a boolean mask over the sensors, or their indices) lays out those sensors only, in detail: a large
+detector's global view and a local one (``under``: the sensors inside the volumes a pattern names). ``lay.index``
+says which sensors are drawn; ``lumen.tools.plot`` takes every sensor's value and draws those.
 """
 
 from __future__ import annotations
@@ -34,6 +44,9 @@ AXES = "xyz"
 ROUND = {"tube", "cutTube", "cone", "polycone", "sphere", "orb", "ellipsoid", "eltube", "elcone", "paraboloid",
          "hype", "torus", "genericPolycone"}  # fmt: skip  # solids whose cross-section across their z is round
 CIRCLE = 32  # points on each end circle of a round solid's outline
+ALIGNED = 1e-6  # a sensor faces along an axis when its normal's component on it is 1 to within rounding
+LINK = 2.0  # a face's sensors chain together when neighbours are within this many pitches
+FLAT = 0.5  # a solid has a facing axis when its box's thinnest half-extent is at most this share of the next
 
 
 @dataclass(frozen=True)
@@ -48,6 +61,8 @@ class Layout:
     outlines: tuple = field(default_factory=tuple)
     labels: tuple = field(default_factory=tuple)
     note: str = ""
+    index: np.ndarray | None = None  # the sensors drawn (indices into the detector's), in the order of xy
+    parts: tuple = field(default_factory=tuple)  # (name, indices into xy) of each surface: a face, the barrel, a cap
 
     @property
     def size(self) -> float:
@@ -64,34 +79,28 @@ def pitch(p) -> float:
     return float(np.median(d[:, 1]))
 
 
-def of(det_or_positions, kind: str = "auto") -> Layout:
-    """Return the layout of a detector's sensors (with their outlines), or of positions (S, 3) m (discs)."""
+def of(det_or_positions, kind: str = "auto", *, select=None) -> Layout:
+    """Return the layout of a detector's sensors (with their outlines), or of positions (S, 3) m (discs).
+
+    ``select``: a boolean mask over the sensors or their indices: lay those out only.
+    """
     det = det_or_positions if hasattr(det_or_positions, "sensor_table") else None
-    p = np.asarray(det.sensor_table().position if det is not None else det_or_positions, np.float64)
-    if p.ndim != 2 or p.shape[1] != 3 or len(p) == 0:
-        raise ValueError(f"layout: positions must be (S, 3), got {p.shape}")
+    p_all = np.asarray(det.sensor_table().position if det is not None else det_or_positions, np.float64)
+    if p_all.ndim != 2 or p_all.shape[1] != 3 or len(p_all) == 0:
+        raise ValueError(f"layout: positions must be (S, 3), got {p_all.shape}")
     if kind not in ("auto", *KINDS):
         raise ValueError(f"layout: kind {kind!r} is not 'auto' or one of {KINDS}")
-    centres = _module_centres(det, p) if det is not None else p
-    made = None
-    if kind in ("auto", "planes"):
-        pl = _planes(p)
-        if pl is not None:
-            made = _planes_map(p, *pl)
-        elif kind == "planes":
-            raise ValueError("layout: the sensors do not lie in planes")
-    if made is None and kind in ("auto", "cylinder"):
-        cy = _cylinder(p)
-        if cy is not None:
-            made = _cylinder_map(p, *cy, centres)
-        elif kind == "cylinder":
-            raise ValueError("layout: the sensors do not lie on a cylinder")
-    if made is None:
-        made = _sphere_map(p)
-    name, to_xy, part, texts, note = made
+    index = _selection(select, len(p_all))
+    p = p_all[index]
+    pts, normals = _sensor_frames(det, index) if det is not None else (None, None)
+    centres = _module_centres(det, p_all)[index] if det is not None else p
+    (name, to_xy, part, texts, note), keep = _made(kind, p, normals, centres)
+    if not keep.all():  # planes along the best axis only: the sensors facing another axis are not drawn
+        note += f"; {int((~keep).sum())} sensors on walls of another axis not drawn"
+        index, p = index[keep], p[keep]
+        pts = None if pts is None else pts[keep]
     xy = to_xy(p, np.arange(len(p)))
-    pts = _outline_points(det) if det is not None and name != "sphere" else None
-    if pts is None:
+    if pts is None or name == "sphere":
         d = 0.45 * (pitch(xy) or pitch(p) or 1.0)
         a = np.linspace(0, 2 * np.pi, CIRCLE, endpoint=False)
         disc = d * np.column_stack([np.cos(a), np.sin(a)])
@@ -100,7 +109,78 @@ def of(det_or_positions, kind: str = "auto") -> Layout:
         m = pts.shape[1]
         flat = to_xy(pts.reshape(-1, 3), np.repeat(np.arange(len(p)), m)).reshape(len(p), m, 2)
         shapes = [_hull(q) for q in flat]
-    return _place(name, xy, shapes, part, texts, note)
+    lay = _place(name, xy, shapes, part, texts, note)
+    names = list(texts) if name == "planes" else ["barrel", "top cap", "bottom cap"] if name == "cylinder" else ["all"]
+    parts = tuple((names[j], np.flatnonzero(part == j)) for j in range(int(part.max()) + 1) if (part == j).any())
+    return Layout(lay.kind, lay.xy, lay.shapes, lay.outlines, lay.labels, lay.note, index, parts)
+
+
+def _selection(select, n: int) -> np.ndarray:
+    """Return the indices of the sensors ``select`` names (a boolean mask over the n sensors, or indices; None all)."""
+    if select is None:
+        return np.arange(n)
+    sel = np.asarray(select)
+    if sel.dtype == bool and len(sel) != n:
+        raise ValueError(f"layout: a mask of {len(sel)} over {n} sensors")
+    index = np.flatnonzero(sel) if sel.dtype == bool else np.unique(sel.astype(int))
+    if len(index) == 0:
+        raise ValueError("layout: the selection holds no sensor")
+    return index
+
+
+def _made(kind, p, normals, centres):
+    """Return (the map (name, to_xy, part, texts, note) of the first layout that fits, in the order of ``KINDS``; the
+    mask of the sensors it draws: planes are along one axis, those on walls of another are left out)."""  # noqa: D205, D209
+    every = np.ones(len(p), bool)
+    if kind in ("auto", "planes"):
+        faces = _faces(p, normals) if normals is not None else None
+        if faces is not None:
+            face, info, keep = faces
+            return _faces_map(p[keep], face[keep], info), keep
+        if normals is None and (pl := _planes(p)) is not None:
+            k, n, lab = pl
+            order = np.argsort([-p[lab == i, k].mean() for i in range(n)])  # the largest coordinate first
+            rank = np.empty(n, int)
+            rank[order] = np.arange(n)
+            return _faces_map(p, rank[lab], [(k, float(p[lab == i, k].mean())) for i in order]), every
+        if kind == "planes":
+            raise ValueError("layout: the sensors do not lie in planes")
+    if kind in ("auto", "cylinder"):
+        cy = _cylinder(p)
+        if cy is not None:
+            return _cylinder_map(p, *cy, centres), every
+        if kind == "cylinder":
+            raise ValueError("layout: the sensors do not lie on a cylinder")
+    return _sphere_map(p), every
+
+
+def under(det, *patterns) -> np.ndarray:
+    """Return the mask of the sensors inside a volume whose placement path matches one of the regular expressions."""
+    import re
+
+    mother = {x.pv: x.mother for x in det.parts.instances}
+    rx = [re.compile(q) for q in patterns]
+    out = []
+    for pv in det.sensor_table().name:
+        chain, m = [pv], mother.get(pv)
+        while m:
+            chain.append(m)
+            m = mother.get(m)
+        out.append(any(r.search(c) for r in rx for c in chain))
+    return np.array(out, bool)
+
+
+def containers(det) -> dict:
+    """Return the volumes holding some but not all of the sensors, each with its count (the names ``under`` takes)."""
+    mother = {x.pv: x.mother for x in det.parts.instances}
+    names = list(det.sensor_table().name)
+    count: dict = {}
+    for pv in names:
+        m = mother.get(pv)
+        while m:
+            count[m] = count.get(m, 0) + 1
+            m = mother.get(m)
+    return {k: v for k, v in sorted(count.items()) if 1 < v < len(names)}
 
 
 def _place(name, xy, shapes, part, texts, note) -> Layout:
@@ -114,14 +194,19 @@ def _place(name, xy, shapes, part, texts, note) -> Layout:
     shift = np.zeros((int(part.max()) + 1, 2))
     outlines, labels = [], []
     box = [np.vstack([shapes[i] for i in np.flatnonzero(part == j)]) for j in range(len(shift))]
-    if name == "planes":
-        y = 0.0
-        for j, b in enumerate(box):  # part j is the j-th plane from the top
-            lo, hi = b.min(0) - margin, b.max(0) + margin
-            shift[j, 1] = y - hi[1]
-            outlines.append(("rect", (lo[0], lo[1] + shift[j, 1]), hi[0] - lo[0], hi[1] - lo[1]))
-            labels.append((lo[0], y + 0.4 * size, texts[j]))
-            y -= hi[1] - lo[1] + 3.0 * size  # room for the next plane's label
+    if name == "planes":  # the faces on a grid as near square as they allow, each with its label above it
+        lo = np.array([b.min(0) for b in box]) - margin
+        hi = np.array([b.max(0) for b in box]) + margin
+        cw, ch = float((hi - lo)[:, 0].max()), float((hi - lo)[:, 1].max()) + 2.5 * size  # a cell: a face, its label
+        n = len(box)
+        cols = min(range(1, n + 1), key=lambda c: abs(np.log(-(-n // c) * ch / (c * cw + (c - 1) * 2 * size))))
+        for j in range(n):  # part j is the j-th face, by axis then coordinate
+            r, c = divmod(j, cols)
+            x0, top = c * (cw + 2 * size), -r * (ch + size)
+            shift[j] = (x0 - lo[j, 0], top - 2.5 * size - hi[j, 1])
+            outlines.append(("rect", (x0, top - 2.5 * size - (hi[j, 1] - lo[j, 1])), hi[j, 0] - lo[j, 0],
+                             hi[j, 1] - lo[j, 1]))  # fmt: skip
+            labels.append((x0, top - 2.5 * size + 0.4 * size, texts[j]))
     elif name == "cylinder":
         lo, hi = box[0].min(0) - margin, box[0].max(0) + margin  # part 0: the barrel
         outlines.append(("rect", (lo[0], lo[1]), hi[0] - lo[0], hi[1] - lo[1]))
@@ -197,24 +282,88 @@ def _cylinder(p):
 
 
 # ---------------------------------------------------------------------------------- the maps from world to display
-def _planes_map(p, k, n, lab):
-    o = [i for i in range(3) if i != k]
-    ext = np.ptp(p[:, o], axis=0)
-    u, v = (o[0], o[1]) if ext[0] >= ext[1] else (o[1], o[0])  # the longer in-plane axis across
-    order = np.argsort([-p[lab == i, k].mean() for i in range(n)])  # the largest coordinate on top
-    rows = np.empty(n, int)
-    rows[order] = np.arange(n)
+def _faces(p, normals):
+    """Return (each sensor's face, the faces' (axis, coordinate), the mask of the sensors on the best axis's faces)
+    when every sensor faces along a coordinate axis: the planes are along one axis, the one whose faces hold the most
+    sensors (then the fewest faces), as a TPC's light detectors are drawn."""  # noqa: D205, D209
+    ax = np.argmax(np.abs(normals), axis=1)
+    if not np.all(np.abs(normals[np.arange(len(p)), ax]) > 1.0 - ALIGNED):
+        return None
+    face = np.empty(len(p), int)
+    info = []
+    for k in sorted(set(ax.tolist()), key=lambda k: -int((ax == k).sum())):  # the axis most sensors face first
+        idx = np.flatnonzero(ax == k)
+        lab = _slabs(p[idx, k], pitch(p[idx]) if len(idx) > 1 else 1.0)
+        for i in sorted(set(lab.tolist()), key=lambda i: -p[idx[lab == i], k].mean()):  # the largest first
+            face[idx[lab == i]] = len(info)
+            info.append((k, float(p[idx[lab == i], k].mean())))
+    face, info = _onto_areas(p, face, info)
+    axes = sorted({k for k, _ in info}, key=lambda k: (-sum(int((face == f).sum()) for f, (kk, _) in enumerate(info)
+                                                            if kk == k), sum(kk == k for kk, _ in info)))  # fmt: skip
+    best = [f for f, (k, _) in enumerate(info) if k == axes[0]]
+    keep = np.isin(face, best)
+    new = np.full(len(info), -1)
+    new[best] = np.arange(len(best))
+    return np.where(keep, new[face], -1), [info[f] for f in best], keep
+
+
+def _one_piece(q, link: float) -> bool:
+    """Whether 2D points are one piece: at least 2, each chain of neighbours within ``link`` reaching every one."""
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+    from scipy.spatial import cKDTree
+
+    q = np.unique(q, axis=0)
+    if len(q) < 2:
+        return False
+    pairs = cKDTree(q).query_pairs(link, output_type="ndarray")
+    graph = coo_matrix((np.ones(len(pairs)), (pairs[:, 0], pairs[:, 1])), shape=(len(q), len(q)))
+    return connected_components(graph, directed=False)[0] == 1
+
+
+def _onto_areas(p, face, info):
+    """Return (face, info) with each sensor of a face that is not one piece (one sensor, two columns metres apart:
+    sensors whose solid is thinnest across the wall they sit on) moved to the face of another axis it lies in
+    (within a pitch of its coordinate), the faces left empty dropped. A face is one
+    piece when its sensors chain together at ``LINK`` pitches."""  # noqa: D205, D209
+    gap = pitch(p)
+    area = [_one_piece(np.delete(p[face == f], k, axis=1), LINK * gap) for f, (k, _) in enumerate(info)]
+    face = face.copy()
+    for f, (k, _) in enumerate(info):
+        if area[f]:
+            continue
+        for i in np.flatnonzero(face == f):
+            d = [(abs(p[i, kg] - cg), g) for g, (kg, cg) in enumerate(info) if area[g] and kg != k]
+            if d and min(d)[0] <= gap:
+                face[i] = min(d)[1]
+    kept = [f for f in range(len(info)) if (face == f).any()]
+    new = np.full(len(info), -1)
+    new[kept] = np.arange(len(kept))
+    return new[face], [info[f] for f in kept]
+
+
+def _faces_map(p, face, info):
+    u = np.empty(len(info), int)
+    v = np.empty(len(info), int)
+    for f, (k, _) in enumerate(info):
+        o = [i for i in range(3) if i != k]
+        ext = np.ptp(p[face == f][:, o], axis=0) if (face == f).sum() > 1 else np.ones(2)
+        u[f], v[f] = (o[0], o[1]) if ext[0] >= ext[1] else (o[1], o[0])  # the longer in-plane axis across
 
     def to_xy(x, owner):
-        return np.column_stack([x[:, u], x[:, v]])
+        f = face[owner]
+        return np.column_stack([x[np.arange(len(x)), u[f]], x[np.arange(len(x)), v[f]]])
 
-    texts = [f"{AXES[k]} = {p[lab == i, k].mean():+.2f} m" for i in order]
-    side = "+" if np.cross(np.eye(3)[u], np.eye(3)[v])[k] > 0 else "-"  # across x up points at the viewer
-    note = (
-        f"{n} plane{'s' if n > 1 else ''} of constant {AXES[k]}, seen from {side}{AXES[k]}: {AXES[u]} across, "
-        f"{AXES[v]} up"
-    )
-    return "planes", to_xy, rows[lab], texts, note
+    texts = [f"{AXES[k]} = {c:+.2f} m" for k, c in info]
+    axes = sorted({k for k, _ in info})
+    seen = []
+    for k in axes:
+        fs = [f for f, (kk, _) in enumerate(info) if kk == k]
+        side = "+" if np.cross(np.eye(3)[u[fs[0]]], np.eye(3)[v[fs[0]]])[k] > 0 else "-"  # across x up: to the viewer
+        seen.append(f"{len(fs)} of constant {AXES[k]} seen from {side}{AXES[k]} ({AXES[u[fs[0]]]} across, "
+                    f"{AXES[v[fs[0]]]} up)")  # fmt: skip
+    note = f"{len(info)} plane{'s' if len(info) > 1 else ''}: " + "; ".join(seen)
+    return "planes", to_xy, face, texts, note
 
 
 def _cylinder_map(p, k, c, centres):
@@ -301,16 +450,26 @@ def _module_centres(det, p):
 
 
 # ---------------------------------------------------------------------------------------------- the sensors' outline
-def _outline_points(det):
-    """Each sensor's outline points in the world (S, M, 3): its solid's box (round: its end circles), placed."""
+def _thinnest(half):
+    """Return a solid box's thinnest axis (its half-extents ``half``), or None when it has no clearly thinnest one
+    (``FLAT``: a PMT's cube-like box faces nowhere in particular)."""  # noqa: D205, D209
+    s = np.sort(np.asarray(half, np.float64))
+    return int(np.argmin(half)) if s[0] <= FLAT * s[1] else None
+
+
+def _sensor_frames(det, index):
+    """Return the selected sensors' outline points in the world (S, M, 3): each solid's box (round: its end circles),
+    placed; and each one's normal (S, 3): its box's thinnest axis, placed (None when some solid has no clearly
+    thinnest axis, ``FLAT``: a PMT's cube-like box faces nowhere in particular)."""  # noqa: D205, D209
     from lumen.build.lowering import SolidMapper, solid_box
 
     f = det.file
     pose = {x.pv: x for x in det.parts.instances}
-    mapper, boxes, out = SolidMapper(f), {}, []
+    names = list(det.sensor_table().name)
+    mapper, boxes, out, normals = SolidMapper(f), {}, [], []
     a = np.linspace(0, 2 * np.pi, CIRCLE, endpoint=False)
-    for pv in det.sensor_table().name:
-        x = pose[pv]
+    for i in index:
+        x = pose[names[i]]
         name = f.volumes[x.lv].solid
         if name not in boxes:
             lo, hi = (np.asarray(v, np.float64) for v in solid_box(mapper.solid(name)))
@@ -321,9 +480,13 @@ def _outline_points(det):
             else:
                 local = c + half * np.array([[i, j, kk] for i in (-1, 1) for j in (-1, 1) for kk in (-1, 1)], float)
                 local = np.vstack([local] * (2 * CIRCLE // 8))  # every sensor the same number of points
-            boxes[name] = local
-        out.append(boxes[name] @ np.asarray(x.R, np.float64).T + np.asarray(x.t, np.float64))
-    return np.stack(out)
+            boxes[name] = (local, _thinnest(half))
+        local, thin = boxes[name]
+        rot = np.asarray(x.R, np.float64)
+        out.append(local @ rot.T + np.asarray(x.t, np.float64))
+        normals.append(None if thin is None else rot[:, thin])
+    flat = all(n is not None for n in normals)
+    return np.stack(out), (np.stack(normals) if flat else None)
 
 
 def _round(f, name) -> bool:
