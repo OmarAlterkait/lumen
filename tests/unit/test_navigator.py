@@ -789,3 +789,29 @@ def test_a_slab_of_1p7_contacts_at_4m_is_crossed_face_by_face():
     t, v = per_ray(_crossing_from, nav, back, d_out, np.full(len(cos), tpb, np.int32), srf, nrm)
     assert np.all(np.abs(t - half / cos) < tol), (t, half / cos)
     assert all(int(x) in lar for x in v), v
+
+
+@pytest.mark.parametrize("name", ["bool", "wires", "nest", "coincident"])
+def test_a_scan_reads_its_leaves_once_as_it_would_compute_them_at_every_endpoint(name, toys, monkeypatch):
+    """first_change with the leaves' intervals computed once per scan (``Csg._cache``) gives, bit for bit, what
+    computing them again at every endpoint gives, on rays through every volume's solid."""
+    from lumen.geometry import csg
+
+    nav = toys(name)[1]
+    rng = np.random.default_rng(7)
+    n = 512
+    vol = rng.integers(0, nav.n, n).astype(np.int32)
+    lo, hi = np.asarray(nav.lo_w, np.float64), np.asarray(nav.hi_w, np.float64)
+    o = lo[vol] + rng.uniform(-0.2, 1.2, (n, 3)) * (hi[vol] - lo[vol])
+    d = rng.normal(size=(n, 3))
+    d /= np.linalg.norm(d, axis=1, keepdims=True)
+
+    def scan():
+        f = jax.jit(jax.vmap(lambda v, o_, d_: nav.first_change_in(v, o_, d_, nav.F(0.0), nav.F(5.0))))
+        return [np.asarray(a) for a in f(jnp.asarray(vol), jnp.asarray(o, nav.F), jnp.asarray(d, nav.F))]
+
+    cached = scan()
+    monkeypatch.setattr(csg.Csg, "_cache", lambda self, kind, o_, d_, t0: None)
+    for a, b in zip(cached, scan(), strict=True):
+        np.testing.assert_array_equal(a, b)
+    assert np.any(cached[0])  # some rays change membership

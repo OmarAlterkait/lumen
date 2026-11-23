@@ -82,6 +82,12 @@ now, and what to do.
   done now: the same volumes, the same outputs bit for bit. Per query on an A100: NEXT-100 70 ns (was 82, float64)
   and 33 ns (was 40, float32), SK 104 ns (was 112), WCTE 96 ns (was 105); NEXT-100's S1 takes 10.5 us per photon
   (was 11.6).
+- **A solid's leaves along a ray**: the scan for a solid's next membership change computed every leaf's intervals
+  along the ray again at each endpoint it passed, twice (for the next endpoint, then for the membership past it). It
+  now computes those of its first 8 leaves once per scan and reads them where the window meets the leaf's box (a torus
+  leaf, whose intervals depend on the window, is still solved per window): the same intervals, the same outputs bit
+  for bit. Per query on an A100: NEXT-100 61 ns (was 70, float64) and 30 ns (was 33, float32), SK 75 ns (was 104),
+  WCTE 62 ns (was 96); NEXT-100's S1 takes 9.6 us per photon (was 10.5).
 
 ## 0.2.1 (2026-11-23)
 
