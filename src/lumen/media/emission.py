@@ -80,6 +80,19 @@ class TimeProfile:
         return t
 
 
+class Tables(NamedTuple):
+    """What an emission reads of a record's values, none of it the photon's (``EmissionRecord.tables``): the live
+    sampler (``spectra.g4_arrays``) and density per knot interval, and the sampler drawn from (the reference under the
+    one defensive mixture, ``spectra.covered``) and its density per knot interval, each with its knots (eV)."""  # noqa: D205, D209
+
+    live: tuple
+    live_density: jax.Array
+    live_knots: jax.Array
+    drawn: tuple
+    drawn_density: jax.Array
+    drawn_knots: jax.Array
+
+
 class Emitted(NamedTuple):
     """An emission (``EmissionRecord.sample``): wavelength (nm), delay (ns) and weight, and the weight at the reference
     values (stop-gradient: what the reference weight takes)."""  # noqa: D205, D209
@@ -106,20 +119,30 @@ class EmissionRecord:
         """Show the record's name."""
         return f"EmissionRecord({self.name})"
 
-    def sample(self, live, ref, rand, lam_in) -> Emitted:
+    def tables(self, live, ref) -> Tables:
+        """Return the Tables of the record's values ``live`` and ``ref`` (the reference's stop-gradient)."""
+        spec_l, spec_r = self._spectrum(live), tuple(sg(x) for x in self._spectrum(ref))
+        return Tables(live=spectra.g4_arrays(*spec_l), live_density=spectra.interval_density(*spec_l),
+                      live_knots=spec_l[0], drawn=spectra.covered(*spec_r, DEFENSIVE_SHARE),
+                      drawn_density=spectra.covered_interval_density(*spec_r, DEFENSIVE_SHARE),
+                      drawn_knots=spec_r[0])  # fmt: skip
+
+    def sample(self, live, ref, rand, lam_in, tables=None) -> Emitted:
         """Return the Emitted of an emission from a photon absorbed at ``lam_in`` (nm).
 
         ``live``, ``ref``: the record's values (module docstring) at the live and the reference values; ``rand``:
-        (the wavelength's uniform, then one per profile component). The weight is the yield times Geant4's chance of
-        an energy below the absorbed one times the live / reference density of the drawn wavelength; the reference's
-        weight is the same function at the reference values (stop-gradient).
+        (the wavelength's uniform, then one per profile component); ``tables``: their ``tables`` (None: made here).
+        The weight is the yield times Geant4's chance of an energy below the absorbed one times the live / reference
+        density of the drawn wavelength; the reference's weight is the same function at the reference values
+        (stop-gradient).
         """
-        spec_l, spec_r = self._spectrum(live), tuple(sg(x) for x in self._spectrum(ref))
-        arr_q = spectra.covered(*spec_r, DEFENSIVE_SHARE)  # the one defensive mixture over its massless intervals
+        t = self.tables(live, ref) if tables is None else tables
+        arr_q = t.drawn  # the one defensive mixture over its massless intervals
         f_q = spectra.cumulative(arr_q, sg(lam_in)) if self.conserving else F32(1.0)
         lam = sg(spectra.sample(arr_q, rand[0] * f_q))
         energy = HC / lam
-        dens_q = sg(safe_div(spectra.covered_density(*spec_r, energy, DEFENSIVE_SHARE), f_q))
+        q = spectra.on_intervals(t.drawn_knots, t.drawn_density, energy)
+        dens_q = sg(safe_div(q, f_q))
 
         def weight(v, arrays, dens):  # the yield times the density over the one drawn from, at the values v
             if self.conserving:  # truncated at the absorbed energy (an absorbed energy below the spectrum: weight 0)
@@ -129,9 +152,9 @@ class EmissionRecord:
 
         # the reference weight: the same at the reference values with the density drawn from over itself
         ref_v = jax.tree_util.tree_map(sg, ref)
-        w_r = weight(ref_v, arr_q, spectra.covered_density(*spec_r, energy, DEFENSIVE_SHARE))
+        w_r = weight(ref_v, arr_q, q)
         return Emitted(lam=lam, delay=self.profile.sample(live, rand[1:]),
-                       w=weight(live, spectra.g4_arrays(*spec_l), spectra.density(*spec_l, energy)),
+                       w=weight(live, t.live, spectra.on_intervals(t.live_knots, t.live_density, energy)),
                        w_r=sg(w_r))  # fmt: skip
 
     @staticmethod

@@ -121,7 +121,7 @@ def channel_draw(model, ops, mi, c, d, pol, lam, rand):  # noqa: PLR0913 -- the 
                                     yield_r=F32(1.0), er=er, ei=ei,
                                     reemitted=jnp.bool_(False))  # fmt: skip
                 v, vr = pm[med.name][ch.name], jax.tree_util.tree_map(sg, pmr[med.name][ch.name])
-                e = ch.emission.sample(v, vr, rand["reemit"], lam)
+                e = ch.emission.sample(v, vr, rand["reemit"], lam, ops.emission[med.name][ch.name])
                 return BulkDraw(wo=w_c, lp=lp, lpr=lpr, lam=e.lam, delay=e.delay, yield_w=e.w,
                                 yield_r=e.w_r, er=er, ei=ei, reemitted=jnp.bool_(True))  # fmt: skip
 

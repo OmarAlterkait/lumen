@@ -29,6 +29,12 @@ now, and what to do.
   holed solid (NEXT-100's 60 PMTs against the plate's 180-leaf disc). A piece now keeps only the holes whose box meets
   its own, and a proof only those meeting the other solid's box at that pose: the same solids and the same ownership.
   NEXT-100 converts in 73 s and builds its float64 navigator in 66 s (were 18 min each).
+- **Re-emission spectra**: a wavelength shift rebuilt its spectrum's sampler and densities from the spectrum table at
+  every re-emission, inside the photon loop (NEXT-100's TPB: 17 passes over its 119 knot intervals, held in each
+  thread's local memory). They are made once per run, outside the loop, with the step's other operands
+  (`Operands.emission`), and a re-emission looks them up: the same draws and weights to float32 rounding (a
+  normalisation's sum is rounded in another order). NEXT-100's S1 takes 12.7 us per photon on an A100 (was 13.5) and
+  its loop 0.7 kB of local memory per thread (was 4.7 kB).
 
 ## 0.2.1 (2026-11-23)
 
