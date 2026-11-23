@@ -78,6 +78,7 @@ DEPOSIT_WEIGHTS = ("q", "lost", "abandoned", "escaped", "distance_cut", "absorbe
                    "rouletted", "reweighted", "share")  # a Deposit's weights (None: off)  # fmt: skip
 RECORDS = "deposits"  # the photon loop's records output (``tallymap.Records``)
 SCHEDULE = "step"  # tallymap refills a lane per step, not per photon: 1.09-1.39x faster for lumen (L40S)
+MIN_BLOCKS = 8  # tallymap caps the loop kernel's registers so that this many blocks fit an SM (outputs unchanged)
 
 
 class RunResult(NamedTuple):
@@ -337,7 +338,7 @@ def _loop(static, ops, rows, key, first_id, n_active, analog=None):  # noqa: PLR
 
     xs = dict(row=rows, id=jnp.arange(n, dtype=jnp.int32)) | ({} if analog is None else {"k": analog})
     opts = dict(outputs=outputs, max_steps=max_vertices + 1, backend=name,
-                schedule=SCHEDULE, in_axes=(0, None))  # fmt: skip
+                schedule=SCHEDULE, min_blocks_per_sm=MIN_BLOCKS, in_axes=(0, None))  # fmt: skip
     r = tm.vmap(item, **opts)(xs, (ops, key, first_id), n_active=n_active)
     _refuse_closed_over()
     sums = {k: v for k, v in r.outputs.items() if k != RECORDS}

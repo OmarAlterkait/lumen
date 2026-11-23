@@ -178,7 +178,7 @@ rules/optics.py | <module> | 293.15 | 1 | published | G4OpRayleigh.cc water bran
 rules/optics.py | rayleigh_constant | 6.0 | 1 | structural | exact math (Rayleigh formula's 6 pi and (n2+2)/3, as G4OpRayleigh writes them)
 rules/optics.py | _rayleigh_length_f32 | 3.0 | 1 | structural | exact math (Rayleigh formula's 6 pi and (n2+2)/3, as G4OpRayleigh writes them)
 run.py | <module> | 2.4 | 1 | published | stated in place: PEAK, the one-pass Records launch's measured peak factor (review6/I7)
-run.py | <module> | 8 | 1 | structural | KEY_BYTES: two int32 (a record's slot key)
+run.py | <module> | 8 | 2 | choice | stated in place: MIN_BLOCKS, the blocks per SM the loop kernel's registers are capped for; KEY_BYTES: two int32 (a record's slot key)
 sensors/components.py | <module> | 8.0 | 1 | choice | stated in place: Gaussian widths a time kernel reaches: below 1e-15 of its mass lies beyond
 sensors/components.py | component_cdf | 1e-06 | 1 | choice | no stated reason in place
 sensors/components.py | component_sf | 1e-06 | 1 | choice | no stated reason in place
