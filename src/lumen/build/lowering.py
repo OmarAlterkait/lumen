@@ -656,10 +656,16 @@ def _sub_spine(node, lin, t):
     return _wrap(lin, t, node), []
 
 
+def _boxes_meet(a, b) -> bool:
+    """Return whether two boxes ``(lo, hi)`` share a point; an unbounded one (None) meets every box."""
+    return a is None or b is None or bool(np.all(a[0] <= b[1]) and np.all(b[0] <= a[1]))
+
+
 def decompose(node, lin=None, t=None):
     """Return the pieces of a solid's GDML-level booleans: unions split, ``(U P_i) - S`` distributed (exact).
 
-    Constructor-internal booleans (a tube's phi wedge) are never split (they carry no ``g4bool`` mark).
+    A piece keeps only the subtrahends whose box meets its own. Constructor-internal booleans (a tube's phi wedge)
+    are never split (they carry no ``g4bool`` mark).
     """
     lin = np.eye(3) if lin is None else lin
     t = np.zeros(3) if t is None else t
@@ -670,10 +676,13 @@ def decompose(node, lin=None, t=None):
             return decompose(node.a, lin, t) + decompose(node.b, lin, t)
         if node.op == "sub":
             base, subs = _sub_spine(node, lin, t)
+            boxes = [so.node_bbox(b) for b in subs]
             out = []
             for pc in decompose(base):
-                for b in subs:
-                    pc = so.Op("sub", pc, b)
+                box = so.node_bbox(pc)
+                for b, bb in zip(subs, boxes, strict=True):
+                    if _boxes_meet(box, bb):
+                        pc = so.Op("sub", pc, b)
                 out.append(pc)
             return out
     return [_wrap(lin, t, node)]

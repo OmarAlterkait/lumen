@@ -24,6 +24,9 @@ now, and what to do.
   solid. Loading is linear in the placements, and builds the same detector files, parts and navigator arrays. The
   full SuperFGD (192 x 56 x 192 cubes and their 58k fibers, 4.5 million volumes) converts in 18 min, loads in 6 min
   and builds its navigator in 4 min, in 21 GB of memory; a 24 x 16 x 24 block loads in 5 s (was 230 s).
+- **A large union with holes placed as its pieces**: each piece was the piece minus every hole of the solid (the 61
+  pieces of NEXT-100's energy-plane copper plate, 181 leaves each); it now keeps only the holes whose box meets its
+  own, the same solid. NEXT-100 converts in 9 min and builds its float64 navigator in 9 min (were 18 and 18).
 
 ## 0.2.1 (2026-11-23)
 
