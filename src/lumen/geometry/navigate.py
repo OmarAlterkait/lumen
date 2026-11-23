@@ -405,36 +405,46 @@ class Navigator:
                         lambda: self._unit_visit(ctx, jnp.minimum(i, self.n - 1), b, is_own))  # fmt: skip
         return self._unit_visit(ctx, i, b, is_own)
 
-    def _node(self, ctx, vi_, c):
-        """One step of a group's stackless BVH traversal (node -2: the volume's own solid, item 0)."""
+    def _meets(self, ctx, n_, odg, invg, best):
+        """Return (whether the ray meets node n_'s box after t_lo and within the best event so far, its entry t)."""
         D = self.dev()
-        visit = self._visit
-        node, stack, sp, best, odg, invg, gend = c
+        tin, tout = bvh.slab(D["lo"][n_], D["hi"][n_], odg, invg)
+        return (tin <= tout) & (tout >= ctx.t_lo) & (tin <= jnp.minimum(best[0], ctx.t_bound) + ctx.band), tin
+
+    def _node(self, ctx, vi_, c):
+        """One step of a group's BVH traversal from a node whose box the ray meets (node -2: the volume's own solid,
+        item 0): a leaf visits its items; an inner node goes on to the children whose boxes the ray meets, the nearer
+        first, the farther onto the stack with its entry t; then the stack's top, its entries past the best event
+        dropped. The items are visited in the order, and against the best events, of a walk that tests each node's box
+        when it reaches it."""  # noqa: D205, D209
+        D = self.dev()
+        node, stack, tins, sp, best, odg, invg, gend = c
         ps = node == -2
         nd = jnp.maximum(node, 0)
-
-        def box(n_):
-            return bvh.slab(D["lo"][n_], D["hi"][n_], odg, invg)
-
-        tin, tout = box(nd)
-        lim = jnp.minimum(best[0], ctx.t_bound) + ctx.band
-        hit = ps | ((tin <= tout) & (tout >= ctx.t_lo) & (tin <= lim))
         leaf = ps | (D["count"][nd] > 0)
-        n_ev = jnp.where(ps, 1, jnp.where(hit & leaf, D["count"][nd], 0))
-        best = lax.fori_loop(0, n_ev, lambda k, b: visit(ctx, jnp.where(ps, vi_, D["items"][D["start"][nd] + k]),
-                                                         b, ps), best)  # fmt: skip
+        n_ev = jnp.where(ps, 1, jnp.where(leaf, D["count"][nd], 0))
+        best = lax.fori_loop(0, n_ev, lambda k, b: self._visit(ctx, jnp.where(ps, vi_, D["items"][D["start"][nd] + k]),
+                                                                b, ps), best)  # fmt: skip
         last_n = jnp.maximum(gend - 1, 0)
         lc = nd + 1
         rc = D["skip"][jnp.minimum(lc, last_n)]
-        tl, _ = box(jnp.minimum(lc, last_n))
-        tr, _ = box(jnp.minimum(rc, last_n))
-        near, far = jnp.where(tl <= tr, lc, rc), jnp.where(tl <= tr, rc, lc)
-        inner = hit & ~leaf
-        stack = jnp.where(inner, stack.at[jnp.minimum(sp, STACK - 1)].set(far), stack)
-        sp = jnp.where(inner, jnp.minimum(sp + 1, STACK), sp)
-        sp2 = jnp.where(inner, sp, sp - 1)
-        nxt = jnp.where(inner, near, jnp.where(sp2 >= 0, stack[jnp.maximum(sp2, 0)], I32(-1)))
-        return jnp.where(ps, I32(-1), nxt), stack, sp2, best, odg, invg, gend
+        hl, tl = self._meets(ctx, jnp.minimum(lc, last_n), odg, invg, best)
+        hr, tr = self._meets(ctx, jnp.minimum(rc, last_n), odg, invg, best)
+        first = tl <= tr
+        near, far = jnp.where(first, lc, rc), jnp.where(first, rc, lc)
+        h_near, h_far = ~leaf & jnp.where(first, hl, hr), ~leaf & jnp.where(first, hr, hl)
+        push = h_near & h_far
+        top = jnp.minimum(sp, STACK - 1)
+        stack = jnp.where(push, stack.at[top].set(far), stack)
+        tins = jnp.where(push, tins.at[top].set(jnp.where(first, tr, tl)), tins)
+        sp = jnp.where(push, jnp.minimum(sp + 1, STACK), sp)
+        lim = jnp.minimum(best[0], ctx.t_bound) + ctx.band
+        sp_c = lax.while_loop(lambda s: (s > 0) & (tins[jnp.maximum(s - 1, 0)] > lim), lambda s: s - 1, sp)
+        down = h_near | h_far
+        popped = jnp.where(sp_c > 0, stack[jnp.maximum(sp_c - 1, 0)], I32(-1))
+        nxt = jnp.where(down, jnp.where(h_near, near, far), popped)
+        sp = jnp.where(down, sp, jnp.maximum(sp_c - 1, 0))
+        return jnp.where(ps, I32(-1), nxt), stack, tins, sp, best, odg, invg, gend
 
     def _group(self, ctx, v, vi_, g, c):
         """Traverse one frame group of v (a group index below vg0[v]: the own pseudo-group, item 0)."""
@@ -446,10 +456,11 @@ class Navigator:
         odg, ddg = Rg.T @ ctx.od, Rg.T @ ctx.dd
         invg = 1.0 / jnp.where(jnp.abs(ddg) < TINY_DIR, jnp.where(ddg < 0, -TINY_DIR, TINY_DIR), ddg)
         r0 = D["g0"][gg]
-        start = jnp.where(pg, I32(-2), jnp.where(r0 < D["g1"][gg], r0, I32(-1)))
-        c0 = (start, jnp.zeros(STACK, I32), I32(0), best, odg, invg, D["g1"][gg])
-        _, _, _, best, *_ = lax.while_loop(lambda c_: (c_[0] >= 0) | (c_[0] == -2),
-                                           lambda c_: self._node(ctx, vi_, c_), c0)  # fmt: skip
+        root = (r0 < D["g1"][gg]) & self._meets(ctx, jnp.minimum(r0, D["lo"].shape[0] - 1), odg, invg, best)[0]
+        start = jnp.where(pg, I32(-2), jnp.where(root, r0, I32(-1)))
+        c0 = (start, jnp.zeros(STACK, I32), jnp.zeros(STACK, F32), I32(0), best, odg, invg, D["g1"][gg])
+        _, _, _, _, best, *_ = lax.while_loop(lambda c_: (c_[0] >= 0) | (c_[0] == -2),
+                                              lambda c_: self._node(ctx, vi_, c_), c0)  # fmt: skip
         return best
 
     def enter(self, v, ctx, own=False, vi=None):
