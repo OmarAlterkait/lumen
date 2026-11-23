@@ -46,6 +46,11 @@ now, and what to do.
   lumen now asks tallymap for 8 resident blocks per SM (`lumen.run.MIN_BLOCKS`, tallymap's `min_blocks_per_sm`): 64
   registers, the rest spilled to local memory, and the outputs the same bit for bit. Per photon on an A100: NEXT-100
   (float64) -7.5 %, SK -20 %, WCTE -23 %, a tank -11 % (10, 12 and 16 blocks were slower).
+- **Relocation after a crossing**: going down into the daughter it had just found holding the ray, the walk tested
+  that daughter's solid again, and going up out of a volume it searched that volume's daughters first. Neither is
+  done now: the same volumes, the same outputs bit for bit. Per query on an A100: NEXT-100 70 ns (was 82, float64)
+  and 33 ns (was 40, float32), SK 104 ns (was 112), WCTE 96 ns (was 105); NEXT-100's S1 takes 10.5 us per photon
+  (was 11.6).
 
 ## 0.2.1 (2026-11-23)
 

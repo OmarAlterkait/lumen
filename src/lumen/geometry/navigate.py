@@ -255,15 +255,16 @@ class Navigator:
         D = self.dev()
         n = self.n
 
-        def body(c):
-            v_, _, k = c
+        def body(c):  # held: v_ is the daughter _find_ray found holding the ray (its own test, not repeated)
+            v_, _, k, held = c
             vi = jnp.minimum(v_, n - 1)
-            ins = (v_ >= n) | (v_ == crossed) | self.ray_holds(vi, od, dd, t)
-            f = self._find_ray(v_, od, dd, t, crossed, pad)
+            test = ~held & (v_ < n) & (v_ != crossed)
+            ins = ~test | pick(test, lambda: self.ray_holds(vi, od, dd, t), lambda: jnp.bool_(True))
+            f = pick(ins, lambda: self._find_ray(v_, od, dd, t, crossed, pad), lambda: I32(-1))
             nv = jnp.where(ins, jnp.where(f >= 0, f, v_), D["parent"][jnp.minimum(v_, D["parent"].shape[0] - 1)])
-            return nv, (f < 0) & ins, k + 1
+            return nv, (f < 0) & ins, k + 1, ins & (f >= 0)
 
-        v2, _, _ = lax.while_loop(lambda c: ~c[1], body, (v, jnp.bool_(False), I32(0)))  # up, then down: it ends
+        v2, *_ = lax.while_loop(lambda c: ~c[1], body, (v, jnp.bool_(False), I32(0), jnp.bool_(False)))  # up, then down
         return v2, v2 != v
 
     # ---------------------------------------------------------------------------------------- the daughter entry
