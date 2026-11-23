@@ -67,3 +67,20 @@ def test_a_group_wide_shift_from_event_to_event_shows_in_its_group_not_per_senso
     assert g["shifted"]["event_sd"] > 1.5  # seen in its group
     assert abs(g["plain"]["event_sd"] - 1) < 3 * g["plain"]["event_sd_err"]  # and not elsewhere
     assert abs(r["pull"].std() - r["pull_toy"].std()) < 0.1  # while per sensor it is hardly visible
+
+
+def test_a_group_dark_in_some_events_has_its_per_event_pulls_from_the_events_it_expects_light_in():
+    """A module far from the track expects no light in that event (variance 0): its per-event pulls are those of the
+    events it is lit in, never 0 / 0."""
+    rng = np.random.default_rng(7)
+    true = np.exp(rng.uniform(np.log(5), np.log(300), size=(40, 20)))
+    a, va, b, vb, n = _sample(rng, true, noise=0.2)
+    far = np.arange(20) < 5
+    dark = np.arange(40) < 10  # the first ten events light no sensor of the far module
+    for x in (a, va, b, vb, n):
+        x[np.ix_(dark, far)] = 0.0
+    g = {q["name"]: q for q in event.statistics(a, va, b, vb, n, groups={"far": far})["groups"]}["far"]
+    assert g["events"] == 30 and np.isfinite(g["event_mean"]) and np.isfinite(g["event_sd"])
+    for x in (a, va, b, vb, n):  # dark in every event: no row (it tests nothing)
+        x[:, far] = 0.0
+    assert "far" not in {q["name"] for q in event.statistics(a, va, b, vb, n, groups={"far": far})["groups"]}

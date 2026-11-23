@@ -269,11 +269,15 @@ def _groups(b, vb, sig, n, groups) -> list:
         if not m.any():
             continue
         tb, tn, ts = b[:, m].sum(1), n[:, m].sum(1), sig[:, m].sum(1)
-        z = (tn - tb) / np.sqrt(ts)
+        lit = ts > 0  # the events the group expects light in (a module far from the track expects none)
+        if not lit.any():  # dark in every event (a cryostat no track reaches): it tests nothing
+            continue
+        z = (tn[lit] - tb[lit]) / np.sqrt(ts[lit])
         k = len(z)
         out.append(dict(name=str(name), sensors=int(m.sum()), ratio=float(tn.sum() / tb.sum()),
                         err=float(np.sqrt(ts.sum()) / tb.sum()), z=float((tn.sum() - tb.sum()) / np.sqrt(ts.sum())),
-                        event_mean=float(z.mean()), event_sd=float(z.std(ddof=1)) if k > 1 else float("nan"),
+                        events=k, event_mean=float(z.mean()),
+                        event_sd=float(z.std(ddof=1)) if k > 1 else float("nan"),
                         event_sd_err=float(1 / np.sqrt(2 * (k - 1))) if k > 1 else float("nan")))  # fmt: skip
     return out
 
