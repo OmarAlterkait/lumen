@@ -74,11 +74,22 @@ def cumulative(arrays, lam):
 def density(energy, intensity, at):
     """Return the normalised density (1/eV) of Geant4's sampler of a table at photon energies ``at``: 0 outside the
     table's span (never its end values)."""  # noqa: D205, D209
+    return on_intervals(energy, interval_density(energy, intensity), at)
+
+
+def interval_density(energy, intensity):
+    """Return ``density`` on each knot interval of a table."""
     e, s = jnp.asarray(energy, F32), jnp.asarray(intensity, F32)
     tot = jnp.sum((s[1:] + s[:-1]) * (e[1:] - e[:-1]))
+    return (s[:-1] + s[1:]) / tot
+
+
+def on_intervals(energy, values, at):
+    """Return the value of the knot interval holding each photon energy ``at`` (``values`` one per interval of the
+    knots ``energy``): 0 outside the knots' span."""  # noqa: D205, D209
+    e = jnp.asarray(energy, F32)
     i = jnp.clip(jnp.searchsorted(e, at, side="right") - 1, 0, e.shape[0] - 2)
-    inside = (at >= e[0]) & (at <= e[-1])
-    return jnp.where(inside, (s[i] + s[i + 1]) / tot, 0.0)
+    return jnp.where((at >= e[0]) & (at <= e[-1]), values[i], 0.0)
 
 
 def _zero_intervals(e, s):
@@ -103,12 +114,15 @@ def covered(energy, intensity, e):
 def covered_density(energy, intensity, at, e):
     """Return the density (1/eV) ``covered`` draws from at photon energies ``at`` (``density`` where nothing is
     covered)."""  # noqa: D205, D209
+    return on_intervals(energy, covered_interval_density(energy, intensity, e), at)
+
+
+def covered_interval_density(energy, intensity, e):
+    """Return ``covered_density`` on each knot interval of a table."""
     en, s = jnp.asarray(energy, F32), jnp.asarray(intensity, F32)
-    p = density(en, s, at)
+    p = interval_density(en, s)
     zero, Z = _zero_intervals(en, s)
-    i = jnp.clip(jnp.searchsorted(en, at, side="right") - 1, 0, en.shape[0] - 2)
-    inside = (at >= en[0]) & (at <= en[-1]) & zero[i]
-    return jnp.where(Z > 0.0, (1.0 - e) * p + e * inside.astype(F32) / jnp.where(Z > 0.0, Z, 1.0), p)
+    return jnp.where(Z > 0.0, (1.0 - e) * p + e * zero.astype(F32) / jnp.where(Z > 0.0, Z, 1.0), p)
 
 
 @dataclass(frozen=True)

@@ -118,7 +118,7 @@ class Operands(NamedTuple):
     """The traced inputs of the photon loop (docs/dev/architecture.md, "Data flow and signatures"); every operand.
 
     ``nav``: the navigator's arrays (``Navigator.operands``); ``tables``: the facet tables
-    (``operands``).
+    (``operands``); ``emission``: each re-emitting channel's ``lumen.media.emission.Tables``, by medium and channel.
     """
 
     params: Any
@@ -126,6 +126,7 @@ class Operands(NamedTuple):
     controls: Controls = Controls()
     nav: Any = None
     tables: Any = None
+    emission: Any = None
 
 
 def operands(model, params, reference, controls):
@@ -147,7 +148,10 @@ def operands(model, params, reference, controls):
         reference = jax.tree_util.tree_map(sg, reference)
     c = controls if controls.max_distance is not None else controls._replace(max_distance=model.reach)
     ctl = Controls(*(jnp.asarray(v, F32) for v in c))
-    return Operands(params, reference, ctl, model.geometry.nav.operands(), model.device_tables)
+    pm, pr = params["media"], (params if reference is None else reference)["media"]
+    emission = {m.name: {ch.name: ch.emission.tables(pm[m.name][ch.name], pr[m.name][ch.name])
+                         for ch in m.channels if ch.emission is not None} for m in model.tables.media}  # fmt: skip
+    return Operands(params, reference, ctl, model.geometry.nav.operands(), model.device_tables, emission)
 
 
 def geometry(model, ops):

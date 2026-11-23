@@ -89,10 +89,12 @@ def test_the_record_draws_g4opwls_at_the_reference():
     assert float(w) == 0.0 and np.isfinite(float(lam))
 
 
-def test_the_spectrum_has_a_derivative():
+@pytest.mark.parametrize("once", [False, True])
+def test_the_spectrum_has_a_derivative(once):
     """The expected re-emitted light below a wavelength cut, E[w 1(lam > cut)] over draws at the reference, has the
     derivative in a spectrum knot that finite differences of its closed form give (the live / reference density
-    weight: the sources' rule)."""
+    weight: the sources' rule), the record's tables made at each draw or once for all of them (as the photon loop's
+    operands make them)."""
     rec = emission.EmissionRecord("w", emission.wls_profile("delta"))
     lam_in, cut, k = F32(390.0), 440.0, 2
     u = uniforms(N, 2, seed=3)
@@ -103,7 +105,8 @@ def test_the_spectrum_has_a_derivative():
     def mc(x):
         ref = {"yield": F32(1.0), "tau": F32(0.0), "spectrum": jax.tree_util.tree_map(jax.lax.stop_gradient, spec(x))}
         live = dict(ref, spectrum=spec(x))
-        lam, _, w, _ = jax.vmap(lambda r: rec.sample(live, ref, r, lam_in))(u)
+        t = rec.tables(live, ref) if once else None
+        lam, _, w, _ = jax.vmap(lambda r: rec.sample(live, ref, r, lam_in, t))(u)
         return jnp.mean(w * (lam > cut))
 
     def exact(x):  # kept(F) * mass(E < HC / cut) / F, F the mass below the absorbed energy (float64)

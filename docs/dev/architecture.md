@@ -145,7 +145,7 @@ class Params(Mapping):  set, scale, info, explain        # an immutable pytree k
 
 # model and loop (developer level)
 class Model: geometry, tables, step: StepConfig, local, analog   # reach, device_tables: cached
-class Operands(NamedTuple): params, reference, controls, nav, tables
+class Operands(NamedTuple): params, reference, controls, nav, tables, emission
 class Photons(NamedTuple): x, d, t, lam, w, pol, label   # lumen.record: sources' and the loop's one record
 def step(model, ops, ph: Photon, key) -> tuple[Photon, Deposit]
 def trace(model, ops, rows, key, *, fields, capacity=None, max_vertices, diagnostics=(), backend="auto",
