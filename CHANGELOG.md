@@ -99,6 +99,13 @@ now, and what to do.
   so the same volumes and the same outputs bit for bit. Per photon on an A100, with tallymap's step loop taking a
   warp's steps together (tallymap d1970a7): NEXT-100's S1 6.6 us (was 7.8), SK -9 %, WCTE -12 %, the others within
   2 %; with tallymap 0.8.1's loop, NEXT-100's S1 -15 % but SK, WCTE and MicroBooNE are slower (+34 %, +61 %, +38 %).
+- **A run's first launch holds the records an earlier run of its shape needed**: a run with values sized its first
+  launch at one deposit record slot per photon row, so a detector whose photons append more records than that (SK:
+  1.17 per photon) overflowed it and ran the whole photon loop again at the count's power of two, in every run. A
+  run's first launch now starts at the most slots a launch of the same detector, layout and launch size ran with
+  without overflowing (kept with the detector's parts), a shape already compiled; `records=` still comes first. The
+  outputs are the same bit for bit. Per photon on an A100 (2^20 photons, after a first run): SK 0.57 us (was 0.99),
+  the others unchanged; the first run of a shape still runs again.
 
 ## 0.2.1 (2026-11-23)
 

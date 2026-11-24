@@ -441,6 +441,10 @@ _MODELS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 # a Detector -> {(gate, events): its groups' layouts (``_group_layouts``)}: the sensor models and the groups'
 # sensor tags (a pattern match per sensor) found once, not per run
 _LAYOUTS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+# a built detector's Parts -> {(deposit fields carried, analog, speed levers, precision, launch rows): the most record
+# slots a launch of that shape ran with and did not overflow}: a run's first launch starts there, not at one slot per
+# row
+_SLOTS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
 class Health(NamedTuple):
@@ -938,7 +942,8 @@ def simulate(det, source, params=None, *, samples: int | None = None, seed: int,
     records : int, optional
         An optional override: the most deposit records a launch appends, whose power of two is each launch's slots
         (to shrink the memory a traced run takes). Without it a run with values takes its slots from its launches'
-        counts (tallymap's ``appended``, a launch past its slots run again at the count's power of two), and a run
+        counts (tallymap's ``appended``, a launch past its slots run again at the count's power of two; a run's first
+        launch at the most an earlier run's launch of its detector and size ran with, else one slot per row), and a run
         under ``jax.jit`` or ``jax.vmap`` the most slots that fit the memory left (``lumen.run.capacity``): its
         outputs are the same bitwise while nothing overflows, and a launch past its slots raises
         ``lumen.run.RecordsOverflow`` when the run executes, with the number to give.
@@ -1066,12 +1071,15 @@ def simulate(det, source, params=None, *, samples: int | None = None, seed: int,
             return _memory(layouts, derivative, rows_bytes, backend)
 
         first, cap = 0, None  # cap: a run with values, the slots its launches' counts ask for so far
+        seen = _SLOTS.setdefault(det.parts, {})
         while concrete and first < int(samples):  # with values: each launch sized from the counts (``capacity``)
             count = min(size, int(samples) - first)
             rows = first_rows if first_rows is not None else emit_rows(first, count)
             free = free_for(rows)
             room = _record_room(free, fields, derivative, r, backend)
-            start = cap if cap is not None or records is None else runner.pow2(records)  # records=: the first guess
+            shape = (local, truth is not None, on, det.precision, size)
+            # the first guess: records=, else the most slots a launch of this shape ran with in an earlier run
+            start = cap if cap is not None else runner.pow2(records) if records is not None else seen.get(shape)
             slots = runner.capacity(room, rows=size, counted=start)
             t, labels, ev_bad = launch(first, count, rows, slots, free)
             appended = int(t.count)
@@ -1090,6 +1098,7 @@ def simulate(det, source, params=None, *, samples: int | None = None, seed: int,
                 continue  # the same photons again, in launches of the size that fits
             first_rows = None
             cap = max(cap or 0, runner.pow2(appended))
+            seen[shape] = max(seen.get(shape, 0), slots)
             if truth is not None:
                 rows_of.append(tr.chunk_rows(truth, tabs, tr.detection_values(tabs[3], params), t.per_item, labels,
                                              key, first, count))  # fmt: skip
