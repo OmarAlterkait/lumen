@@ -1254,6 +1254,7 @@ struct TrackHist { long evt = -1; int id = -1; float cy = NAN, cz = NAN; int ncr
                    int nray = 0, nmie = 0; };
 static TrackHist gH;
 static int nreflPre = 0;   // gH.nrefl before this step's end-of-step reflection
+static constexpr int kMaxPhotonSteps = 1000000;   // an optical photon's steps before it is ended (fate step_cap)
 
 class Stepping : public G4UserSteppingAction {
  public:
@@ -1429,6 +1430,14 @@ class Stepping : public G4UserSteppingAction {
     std::string pn = pr ? pr->GetProcessName() : "none";
     if (pn == "OpRayleigh") { S.fates["n_rayleigh_steps"]++; gH.nray++; }
     else if (pn == "OpMieHG") gH.nmie++;
+    // A photon held by total internal reflection in a medium that barely absorbs (ANNIE's veto-PMT glass, ABSLENGTH
+    // 1e10 mm: 56 million steps, 141 km in 10 minutes) would stall its event: ended at a cap no photon that can reach
+    // a sensor comes near, and counted.
+    if (tr->GetTrackStatus() == fAlive && tr->GetCurrentStepNumber() >= kMaxPhotonSteps) {
+      tr->SetTrackStatus(fStopAndKill);
+      S.fates[who + "step_cap"]++;
+      return;
+    }
     if (tr->GetTrackStatus() == fStopAndKill) {
       std::string f;
       // OpBoundary is a forced process: a boundary step is "defined" by Transportation
