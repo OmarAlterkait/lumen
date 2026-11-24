@@ -91,6 +91,14 @@ now, and what to do.
 - **A run's health sums**: each photon added its fates to the health's exact sums as it ended, while the other photons
   of its warp, mid-path, waited for those adds. The loop now returns each photon's fates and a launch of their own
   adds them: the same exact sums. Per photon on an A100: SK -16 %, WCTE -2 %.
+- **Locating a point among a volume's daughters**: relocating after a crossing, and locating a photon's start, walked
+  the volume's BVH of daughter boxes down to every box holding the point (NEXT-100's gas volume: 1340 daughters). Each
+  volume's daughters now also have a uniform grid over their boxes (2 cells per daughter, each cell listing the
+  daughters whose box meets it once widened by the widest tolerance a relocation tests boxes with), and the point's
+  cell gives the candidates: every daughter whose box holds the point is among them and the winner is picked by rank,
+  so the same volumes and the same outputs bit for bit. Per photon on an A100, with tallymap's step loop taking a
+  warp's steps together (tallymap d1970a7): NEXT-100's S1 6.6 us (was 7.8), SK -9 %, WCTE -12 %, the others within
+  2 %; with tallymap 0.8.1's loop, NEXT-100's S1 -15 % but SK, WCTE and MicroBooNE are slower (+34 %, +61 %, +38 %).
 
 ## 0.2.1 (2026-11-23)
 

@@ -172,7 +172,10 @@ class Navigator:
     def scan(self, v, x, visit, init, done, pad=0.0):
         """Visit v's daughters whose box holds x: visit(item, acc) on the BVH leaves; stop when done(acc).
 
-        Each frame group's BVH is scanned in its frame; not the mesh group (no chunk holds a point).
+        A box is widened by pad. Each frame group's BVH is scanned in its frame; not the mesh group (no chunk holds a
+        point). A group with a point grid visits instead the daughters of x's cell whose box holds x: for a pad up to
+        the widest a relocation takes, every daughter whose box holds x is among them, as it is among the BVH's leaves
+        (visit picks by rank, not by order).
         """
         D = self.dev()
 
@@ -189,8 +192,27 @@ class Navigator:
                 nxt = jnp.where(inside & ~leaf, node + 1, D["skip"][node])
                 return jnp.where(done(acc), D["g1"][g], nxt), acc
 
-            _, acc = lax.while_loop(lambda c2: c2[0] < D["g1"][g], body, (D["g0"][g], acc))
-            return g + 1, acc
+            def walk(acc):
+                return lax.while_loop(lambda c2: c2[0] < D["g1"][g], body, (D["g0"][g], acc))[1]
+
+            def grid(acc):
+                gd = D["gg"][g]
+                ix = jnp.floor((xg - D["gorg"][g]) * D["ginv"][g]).astype(I32)
+                in_grid = jnp.all((ix >= 0) & (ix < gd[:3]))
+                ix = jnp.clip(ix, 0, gd[:3] - 1)
+                cell = jnp.clip(gd[3] + (ix[0] * gd[1] + ix[1]) * gd[2] + ix[2], 0, D["gfirst"].shape[0] - 2)
+                e0 = jnp.where(in_grid, D["gfirst"][cell], 0)
+                e1 = jnp.where(in_grid, D["gfirst"][cell + 1], 0)
+
+                def entry(c2):
+                    k, a = c2
+                    e = D["gent"][k]
+                    meets = jnp.all((D["elo"][e] - pad <= xg) & (xg <= D["ehi"][e] + pad))
+                    return k + 1, pick(meets, lambda: visit(D["eitem"][e], a), lambda: a)
+
+                return lax.while_loop(lambda c2: (c2[0] < e1) & ~done(c2[1]), entry, (e0, acc))[1]
+
+            return g + 1, pick(D["gg"][g, 0] > 0, lambda: grid(acc), lambda: walk(acc))
 
         return lax.while_loop(lambda c: (c[0] < D["vg1u"][v]) & ~done(c[1]), grp, (D["vg0"][v], init))[1]
 

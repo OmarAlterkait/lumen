@@ -29,7 +29,7 @@ from nav_toys import (
 
 from lumen.build import lowering, tracked
 from lumen.compare import oracle
-from lumen.geometry import navigate, solids
+from lumen.geometry import navigate, navigator_build, solids
 from lumen.rules import navigation
 
 
@@ -815,3 +815,74 @@ def test_a_scan_reads_its_leaves_once_as_it_would_compute_them_at_every_endpoint
     for a, b in zip(cached, scan(), strict=True):
         np.testing.assert_array_equal(a, b)
     assert np.any(cached[0])  # some rays change membership
+
+
+@pytest.mark.parametrize("name", ["wires", "nest", "overlap", "coincident"])
+def test_a_point_grid_locates_as_the_bvh_does(name, toys):
+    """Locating a point and relocating a ray read a group's point grid where it has one: the same volume as the BVH's
+    scan finds, bit for bit, on points and rays through every volume."""
+    nav = toys(name)[1]
+    no_grid = navigate.Navigator(nav.arrays)
+    no_grid.host = dict(nav.host, gg=np.zeros_like(np.asarray(nav.host["gg"])))
+    assert np.any(np.asarray(nav.host["gg"])[:, 0] > 0)
+    rng = np.random.default_rng(11)
+    n = 512
+    vol = rng.integers(0, nav.n, n).astype(np.int32)
+    lo, hi = np.asarray(nav.lo_w, np.float64), np.asarray(nav.hi_w, np.float64)
+    x = lo[vol] + rng.uniform(-0.1, 1.1, (n, 3)) * (hi[vol] - lo[vol])
+    d = rng.normal(size=(n, 3))
+    d /= np.linalg.norm(d, axis=1, keepdims=True)
+
+    def run(nv):
+        loc = jax.jit(jax.vmap(lambda p: nv.locate(p)))(jnp.asarray(x, nv.F))
+        q = jax.jit(jax.vmap(lambda p, u, v: nv.query(p, u, v, t_max=nv.F(10.0))))
+        out = q(jnp.asarray(x, nv.F), jnp.asarray(d, nv.F), loc)
+        return [np.asarray(loc)] + [np.asarray(out[k]) for k in ("t", "hit", "vol_after", "vol_before", "item")]
+
+    for a, b in zip(run(nav), run(no_grid), strict=True):
+        np.testing.assert_array_equal(a, b)
+
+
+def test_a_point_grid_scan_meets_every_box_within_its_reach():
+    """A point scan reads a group's grid for a pad up to the widest a relocation takes (``_scan_reach``). A km from
+    the origin a float32 band is as wide as the gaps of a lattice of 2 cm cubes: at pads up to that reach, the scan
+    visits every cube whose box widened by the pad holds the point, as the BVH's does."""
+    c = (np.arange(5) - 2) * 0.03
+    nav = nav_of(make_scene({
+        "world": defn("world", solids.g4_box(4000.0, 4000.0, 4000.0), 1, [("lattice", np.eye(3), (1000.0, 0, 0))]),
+        "lattice": defn("lattice", solids.g4_box(0.2, 0.2, 0.2), 2,
+                        [("cube", np.eye(3), (x, y, z)) for x in c for y in c for z in c]),
+        "cube": defn("cube", solids.g4_box(0.02, 0.02, 0.02), 3),
+    }))  # fmt: skip
+    h = {k: np.asarray(a) for k, a in nav.host.items()}
+    no_grid = navigate.Navigator(nav.arrays)
+    no_grid.host = dict(nav.host, gg=np.zeros_like(h["gg"]))
+    v = int(np.bincount(h["parent"][: nav.n]).argmax())
+    reach = navigator_build._scan_reach(np.asarray(nav.lo_w), np.asarray(nav.hi_w), navigation.FLOAT32)
+    assert h["gg"][:, 0].max() > 0 and reach > 0.01  # a pad up to the reach spans a gap
+    grp, ent = np.zeros(nav.n, np.int32), np.zeros(nav.n, np.int32)
+    for g in range(len(h["g0"])):
+        for node in range(h["g0"][g], h["g1"][g]):
+            grp[h["items"][h["start"][node] : h["start"][node] + h["count"][node]]] = g
+    ent[h["eitem"]] = np.arange(len(h["eitem"]))
+    gR, elo, ehi, grp, ent = (jnp.asarray(a) for a in (h["gR"], h["elo"], h["ehi"], grp, ent))
+    rng = np.random.default_rng(5)
+    n = 2048
+    k = rng.choice(np.flatnonzero(h["parent"][: nav.n] == v), n)
+    lo, hi = np.asarray(nav.lo_w, np.float64), np.asarray(nav.hi_w, np.float64)
+    X = jnp.asarray(lo[k] + rng.uniform(-0.5, 1.5, (n, 3)) * (hi[k] - lo[k]), nav.F)
+    P = jnp.asarray(reach * np.where(rng.random(n) < 0.5, rng.random(n), rng.choice([0.0, 1.0], n)), nav.F)
+
+    def met(nv, pads):
+        def one(x, pad):
+            def visit(i, acc):
+                xg = gR[grp[i]].T @ x
+                return acc.at[i].set(acc[i] | jnp.all((elo[ent[i]] - pad <= xg) & (xg <= ehi[ent[i]] + pad)))
+
+            return nv.scan(v, x, visit, jnp.zeros(nav.n, bool), lambda a: jnp.bool_(False), pad)
+
+        return np.asarray(jax.jit(jax.vmap(one))(X, pads))
+
+    bvh = met(no_grid, P)
+    np.testing.assert_array_equal(met(nav, P), bvh)
+    assert np.any(bvh & ~met(no_grid, jnp.zeros_like(P)))  # boxes met only through the pad

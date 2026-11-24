@@ -40,9 +40,14 @@ from lumen.geometry import bvh, ownership
 from lumen.geometry import scene as sc
 from lumen.geometry.csg_build import CsgTables, csg_tables
 from lumen.rules import navigation as rules
+from lumen.rules.choices import UNIT_TOL
 from lumen.rules.tolerances import DIVISOR_FLOOR, WORLD_BOX_PAD_ABS, WORLD_BOX_PAD_REL
 
 STACK = 32  # the traversal's stack: one entry per BVH level
+GRID_MIN = 1  # a group of at least this many daughters gets a point grid (the point scans read it, not the BVH)
+GRID_CELLS = 2.0  # a point grid's cells per daughter
+GRID_MAX = 1 << 20  # a point grid's cells at most
+GRID_ITEMS = 1 << 18  # a group of more daughters keeps its BVH alone
 MESH_CHUNK = 8  # triangles per mesh chunk (one BVH item)
 MORTON_BITS = 10  # mesh chunks: triangles ordered along a Morton curve of this many bits per axis
 SRF_LIMIT = 2**31  # surface codes are int32
@@ -363,6 +368,67 @@ def _trees(E, boxes):  # noqa: N803 -- E the daughter entries
                 depth=int(B_["n_levels"]))  # fmt: skip
 
 
+def _scan_reach(lo, hi, prec):
+    """Return the widest pad of a relocation's point scan: its step and its band, each the band at the scale of a ray
+    that starts and crosses in the box (lo, hi) of every volume (its start's largest coordinate plus the crossing's
+    distance, at most the box's diagonal over a direction's least length)."""  # noqa: D205, D209
+    a, b = lo.min(0), hi.max(0)
+    return 2 * rules.band(float(np.abs(np.r_[a, b]).max() + np.linalg.norm(b - a) / (1 - UNIT_TOL)), prec)
+
+
+def _grids(E, boxes, prec, reach):  # noqa: N803 -- E the daughter entries
+    """Return the point grids of the unit groups of GRID_MIN to GRID_ITEMS daughters: per group (dims nx, ny, nz and
+    its first cell; dims 0 for none), the grid's origin and its inverse cell size (group frame); per cell its first
+    entry (one past the last cell: the entry count); per entry the daughter's index among every group's daughters,
+    whose item and box (group frame) are stored once. A cell lists every daughter whose box, widened by ``reach``
+    and by the band of the grid's coordinates (the cell lookup's rounding), meets it: for a pad up to ``reach``, a
+    daughter whose box widened by the pad holds a point is among the point's cell's."""  # noqa: D205, D209
+    fdt = prec.np
+    blo, bhi, ge = boxes
+    G = len(E["gs"])
+    gg = np.zeros((G, 4), np.int64)
+    org, inv_c = np.zeros((G, 3)), np.ones((G, 3))
+    first, ent, off = [np.zeros(1, np.int64)], [], 0
+    for j in range(G):
+        a, b = int(ge[j]), int(ge[j + 1])
+        if E["g_mesh"][j] or not GRID_MIN <= b - a <= GRID_ITEMS:
+            continue
+        lo, hi = blo[a:b], bhi[a:b]
+        L, H = lo.min(0), hi.max(0)
+        m = reach + rules.band(float(np.abs(np.r_[L, H]).max()) + reach, prec)
+        L, H = L - m, H + m
+        ext = H - L
+        side = np.cbrt(np.prod(ext) / (GRID_CELLS * (b - a)))
+        dims = np.clip(np.ceil(ext / side), 1, 1 << 10).astype(np.int64)
+        while np.prod(dims) > GRID_MAX:
+            dims = np.maximum(dims // 2, 1)
+        inv = dims / ext
+        c0 = np.clip(np.floor((lo - m - L) * inv), 0, dims - 1).astype(np.int64)
+        c1 = np.clip(np.floor((hi + m - L) * inv), 0, dims - 1).astype(np.int64)
+        sz = c1 - c0 + 1
+        nc = np.prod(sz, axis=1)
+        e = np.repeat(np.arange(b - a), nc)
+        k = np.arange(int(nc.sum())) - np.repeat(np.cumsum(nc) - nc, nc)
+        s_ = sz[e]
+        cz = c0[e, 2] + k % s_[:, 2]
+        cy = c0[e, 1] + (k // s_[:, 2]) % s_[:, 1]
+        cx = c0[e, 0] + k // (s_[:, 2] * s_[:, 1])
+        cell = (cx * dims[1] + cy) * dims[2] + cz
+        o_ = np.lexsort((e, cell))
+        cnt = np.bincount(cell[o_], minlength=int(np.prod(dims)))
+        first.append(first[-1][-1] + np.cumsum(cnt))
+        ent.append(a + e[o_])
+        gg[j] = (*dims, off)
+        org[j], inv_c[j] = L, inv
+        off += int(np.prod(dims))
+    ents = np.concatenate(ent) if ent else np.zeros(1, np.int64)
+    return dict(gg=gg.astype(np.int32), gorg=org.astype(fdt), ginv=inv_c.astype(fdt),
+                gfirst=np.concatenate(first).astype(np.int32), gent=ents.astype(np.int32),
+                eitem=np.asarray(E["i"] if len(E["i"]) else [0]).astype(np.int32),
+                elo=(blo if len(blo) else np.zeros((1, 3))).astype(fdt),
+                ehi=(bhi if len(bhi) else np.zeros((1, 3))).astype(fdt))  # fmt: skip
+
+
 def _node(trees, k, shape, dt):
     """Return a node array of the BVHs as ``dt`` (a placeholder of ``shape`` when there are none)."""
     return np.zeros(shape, dt) if trees is None else np.asarray(trees[k]).astype(dt)
@@ -517,10 +583,12 @@ def finish(st: Stage, classes: Classes | None = None):
     clear = _transparent(n, parent, own, classes) if classes is not None else np.zeros(n, bool)
     kids, up = _dissolve(kids, parent, clear, own.clips) if clear.any() else (kids, parent)
     E = _entries(kids, n, mesh, (Rh, hb))
-    trees = _trees(E, _group_boxes(E, n, mesh, (Rh, th, cb, hb)))
+    boxes = _group_boxes(E, n, mesh, (Rh, th, cb, hb))
+    trees = _trees(E, boxes)
     # the rule's order per navigator id (volumes, the outside last, then each mesh as its unit)
     prio = np.r_[own.prio[:n], [len(own.prio)], own.prio[n:]]
     host = _host(E, trees, (V, kind, up, Rh, th, prio), mesh, int(scene.outside.medium), st.prec.np)
+    host.update(_grids(E, boxes, st.prec, _scan_reach(lo, hi, st.prec)))
     for k, m_ in enumerate(meshes):  # a mesh in a transparent volume: its exit parent is that volume's
         if m_[2] >= 0 and clear[m_[2]]:
             host["parent"][n + 1 + k] = up[m_[2]]
