@@ -190,9 +190,6 @@ def test_the_plots_draw(p0, tmp_path):
     figs.append(plot.event(pos, np.arange(50.0) + 1, np.linspace(0, 10, 50)))
     for i, f in enumerate(figs):
         f.savefig(tmp_path / f"{i}.png")
-    u, v = plot.sensor_map([[1.0, 0.0, 0.0], [0.0, 0.0, 3.0], [0.0, 0.0, -3.0], [-1.0, 0.0, 0.0]])  # long axis z
-    np.testing.assert_allclose(v, [0.0, 1.0, -1.0, 0.0], atol=1e-12)
-    np.testing.assert_allclose(u[[0, 3]], [0.0, np.pi], atol=1e-12)
 
 
 def test_a_fit_reports_convergence_a_singular_information_and_refuses_impossible_data(p0):

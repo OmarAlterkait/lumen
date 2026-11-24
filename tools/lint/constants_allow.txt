@@ -46,6 +46,13 @@ compare/event.py | compare | 7919 | 1 | choice | no stated reason in place
 compare/event.py | compare | 1000.0 | 3 | derivable | mm per m: units.MM_PER_M
 compare/event.py | compare | 3 | 1 | choice | no stated reason in place
 compare/event.py | compare | 6 | 1 | choice | no stated reason in place
+compare/event.py | compare_events | 104729 | 1 | structural | a seed stride between events (a prime: no overlap with a source's 7919)
+compare/event.py | compare_events | 7 | 1 | structural | a seed offset between an event's two halves
+compare/event.py | statistics | 0.25 | 1 | derivable | the variance of the mean of two: (1/2)^2
+compare/event.py | <module> | 5.0 | 1 | choice | BIN_EDGES: the summary's bins of expected hits (decades and halves), presentation
+compare/event.py | <module> | 20.0 | 1 | choice | BIN_EDGES: the summary's bins of expected hits (decades and halves), presentation
+compare/event.py | <module> | 100.0 | 1 | choice | BIN_EDGES: the summary's bins of expected hits (decades and halves), presentation
+compare/event.py | <module> | 1000.0 | 1 | choice | BIN_EDGES: the summary's bins of expected hits (decades and halves), presentation
 compare/geometry.py | <module> | 1e-06 | 1 | choice | stated in place: m: the surface pairs' offset along the ray
 compare/geometry.py | probe_points | 20000 | 2 | choice | no stated reason in place
 compare/geometry.py | probe_points | 3 | 1 | structural | the 3 components of a vector (a shape)
@@ -226,14 +233,44 @@ tools/fit.py | descend | 0.9 | 1 | choice | no stated reason in place
 tools/fit.py | descend | 0.999 | 1 | choice | no stated reason in place
 tools/fit.py | descend | 1e-12 | 1 | choice | no stated reason in place
 tools/fit.py | coverage | 20 | 1 | choice | no stated reason in place
+tools/layout.py | <module> | 32 | 1 | structural | points on a drawn circle (presentation)
+tools/layout.py | <module> | 1e-06 | 1 | choice | stated in place: a normal along an axis to within rounding
+tools/layout.py | of | 0.45 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/layout.py | _place | 0.4 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/layout.py | _place | 2.5 | 4 | structural | presentation (plot limits, bins, sizes)
+tools/layout.py | _planes | 4 | 1 | structural | slabs at most a quarter of the sensors: planes hold several each
+tools/layout.py | _cylinder | 3 | 2 | structural | index arithmetic over the 3 axes (modulus)
+tools/layout.py | _cylinder_map | 3 | 2 | structural | index arithmetic over the 3 axes (modulus)
+tools/layout.py | _sensor_frames | 8 | 1 | structural | the 8 corners of a box
 tools/plot.py | <module> | 0.6827 | 1 | derivable | erf(1/sqrt 2): the share of a Gaussian within 1 sigma
-tools/plot.py | sensor_map | 3 | 2 | structural | index arithmetic over the 3 axes / 4 vertices (modulus)
-tools/plot.py | display | 0.001 | 1 | structural | presentation (plot limits, bins, sizes)
-tools/plot.py | display | 40000.0 | 1 | structural | presentation (plot limits, bins, sizes)
-tools/plot.py | display | 200.0 | 1 | structural | presentation (plot limits, bins, sizes)
-tools/plot.py | display | -1.02 | 1 | structural | presentation (plot limits, bins, sizes)
-tools/plot.py | display | 1.02 | 1 | structural | presentation (plot limits, bins, sizes)
-tools/plot.py | event | 0.03 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | <module> | 0.83 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | <module> | 0.84 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | <module> | 0.86 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | <module> | 8 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | _extent | 1.6 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | _frame | 0.01 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | _scale | 0.001 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | _colorbar | 0.06 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | _colorbar | 0.12 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | _colorbar | 0.4 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | display | 5.8 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | display | 1.4 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | display | 8.0 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | display | 0.01 | 2 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | display | 0.9 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | display | 0.93 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | display | 3 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | event | 0.45 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | event | 10.0 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | event | 0.86 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | event | 0.41 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | event | 0.01 | 2 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | event | 0.94 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | event | 0.95 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | event | 0.96 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | event | 0.92 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | event | 0.18 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | event | 0.12 | 1 | structural | presentation (plot limits, bins, sizes)
 tools/plot.py | compare | 3 | 1 | structural | the 3 components of a vector (a shape)
 tools/plot.py | compare | 1.5 | 1 | structural | presentation (plot limits, bins, sizes)
 tools/plot.py | compare | 5.0 | 1 | derivable | comment names MU_MIN, which does not exist in src (compare.charge has PEARSON_MIN = 5.0): name it once and import it
@@ -242,6 +279,20 @@ tools/plot.py | compare | 5 | 2 | structural | presentation (plot limits, bins, 
 tools/plot.py | compare | 201 | 1 | structural | presentation (plot limits, bins, sizes)
 tools/plot.py | compare | 50 | 1 | structural | presentation (plot limits, bins, sizes)
 tools/plot.py | compare | 1e-30 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | compare_events | 3 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | compare_events | 0.8 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | compare_events | 1.25 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | compare_events | -5 | 6 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | compare_events | 5 | 3 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | compare_events | 201 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | compare_events | 21 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | compare_events | 7 | 3 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | compare_events | 97 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | compare_events | 1e-05 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | compare_events | 100 | 2 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | compare_events | 200.0 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | compare_events | 10000.0 | 1 | structural | presentation (plot limits, bins, sizes)
+tools/plot.py | compare_events | 1e-30 | 2 | structural | presentation (plot limits, bins, sizes)
 tools/plot.py | scan | 21 | 1 | structural | presentation (plot limits, bins, sizes)
 tools/plot.py | profile | -0.1 | 1 | structural | presentation (plot limits, bins, sizes)
 tools/plot.py | profile | 3.0 | 1 | structural | presentation (plot limits, bins, sizes)

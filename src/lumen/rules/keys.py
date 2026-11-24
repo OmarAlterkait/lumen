@@ -108,6 +108,36 @@ def geant4_11_scintillation(props: dict) -> tuple[dict, str | None]:
     return out, f"Geant4-10 scintillation keys {sorted(old)} read as Geant4 11's (components {present} as {nums})"
 
 
+def geant4_10_scintillation(props: dict) -> tuple[dict, str | None]:
+    """Return the Geant4-10 scintillation keys that give Geant4 10.7 a material's Geant4-11 light, and a note.
+
+    The inverse of ``geant4_11_scintillation``: components 1, 2 as FAST, SLOW (spectrum, time constant, rise time)
+    and, with two, YIELDRATIO = Y1 / (Y1 + Y2) (Geant4 11 shares the light by SCINTILLATIONYIELDi over their sum;
+    10.7 gives the fast component min(YIELDRATIO, 1)). Geant4 10.7's G4Scintillation reads only these (its GDML reader
+    keeps the 11 keys as inert user keys), Geant4 11's only the 11 keys (it keeps these inert): a GDML with both is
+    read alike by the two. None (no keys) for a material with no component; three components have no 10.7 form (the
+    note says so). ``props``: {key: format.schema.Property}.
+    """
+    n = len(components(lambda k: k in props))
+    if n == 0 or any(k in props for k in G4_10_KEYS):
+        return {}, None
+    if n == len(SCINTILLATION_KEYS["spectra"]):
+        return {}, "three scintillation components: Geant4 10.7 has no form for them (it emits no scintillation)"
+    out = {}
+    for i, c in enumerate(("FAST", "SLOW")[:n], 1):
+        for kind, old in (("spectra", "COMPONENT"), ("times", "TIMECONSTANT"), ("rises", "SCINTILLATIONRISETIME")):
+            v = props.get(SCINTILLATION_KEYS[kind][i - 1])
+            if v is not None:
+                out[f"{c}{old}"] = Property(f"{c}{old}", v.value, energy=v.energy, origin=v.origin, note=v.note)
+    if n == 2:
+        y1, y2 = (props.get(k) for k in SCINTILLATION_KEYS["shares"][:2])
+        if y1 is None or y2 is None or float(y1.value) + float(y2.value) <= 0.0:
+            return {}, "two scintillation components without both SCINTILLATIONYIELDi: no Geant4 10.7 form"
+        r = float(y1.value) / (float(y1.value) + float(y2.value))
+        out["YIELDRATIO"] = Property("YIELDRATIO", np.asarray(r), energy=None, origin=y1.origin, note=y1.note)
+    return out, f"Geant4-10 scintillation keys {sorted(out)} written beside Geant4 11's, for Geant4 10.7"
+
+
 # Geant4's optical-surface enums by name (G4OpticalSurface.hh, G4SurfaceProperty.hh; 10.7.4 and 11.2.2 agree), in enum
 # order: a stored number is its position (the reader names a value by it; the exporter writes it).
 # G4GDMLReadSolids::OpticalSurfaceRead accepts each name (model "dichroic" and type "x_ray" by falling through); GDML

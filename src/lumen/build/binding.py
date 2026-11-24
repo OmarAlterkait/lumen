@@ -12,6 +12,8 @@ is a sibling holding the detector volume in a hole of its solid, otherwise the m
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 
 from lumen._core.errors import LibraryError
@@ -19,7 +21,7 @@ from lumen.build import lowering
 from lumen.format import schema
 from lumen.format.check import check_bindings
 from lumen.geometry import solids as so
-from lumen.rules.tolerances import CONTACT, POSE_ATOL
+from lumen.rules.tolerances import BAND_FLOOR, CONTACT, POSE_ATOL
 
 
 def effective_skins(df) -> dict:
@@ -78,6 +80,62 @@ def outside_volume(df) -> str | None:
     sibs = [df.placements[j] for j in df.volumes[d.mother].daughters if j != i]
     enclosing = [q for q in sibs if _encloses(df, q, d)]
     return enclosing[0].volume if len(enclosing) == 1 else d.mother
+
+
+def _outside_chain(df) -> tuple[tuple[int, ...], str]:
+    """Return (the placement chain, its LV) of the volume a photon leaving the detector volume enters
+    (``outside_volume``); the world's chain is (). An assembly is no volume to Geant4: its mother's is entered."""  # noqa: D205, D209
+    chain = schema.placements_of(df, df.detector_volume)[0]
+    i, d = chain[-1], df.placements[chain[-1]]
+    sibs = [j for j in df.volumes[d.mother].daughters if j != i]
+    enclosing = [j for j in sibs if _encloses(df, df.placements[j], d)]
+    out = chain[:-1] + (enclosing[0],) if len(enclosing) == 1 else chain[:-1]
+    while out and df.volumes[df.placements[out[-1]].volume].assembly:
+        out = out[:-1]
+    return out, (df.placements[out[-1]].volume if out else df.world)
+
+
+def transporting(df, lv) -> bool:
+    """Return whether Geant4 transports an optical photon in volume ``lv``: its material has RINDEX (without, a photon
+    entering it is killed, NoRINDEX: G4OpBoundaryProcess 10.7.4)."""  # noqa: D205, D209
+    m = df.volumes[lv].material
+    return m is not None and "RINDEX" in df.materials[m].properties
+
+
+ABSORBED_AT_ENTRY = BAND_FLOOR  # m: an ABSLENGTH below the smallest band absorbs a photon on its first step in
+
+
+def absorbed_at_entry(df, lv) -> bool:
+    """Return whether volume ``lv``'s material absorbs a photon as it enters: its ABSLENGTH is below
+    ``ABSORBED_AT_ENTRY`` at every knot (ANNIE's StainlessSteel and Air, 1e-11 m); none crosses it."""  # noqa: D205, D209
+    p = df.materials[df.volumes[lv].material].properties.get("ABSLENGTH")
+    return p is not None and float(np.max(np.asarray(p.value, np.float64))) < ABSORBED_AT_ENTRY
+
+
+def detector_volume_closed(df) -> tuple[str, tuple[str, ...]]:
+    """Return (the detector volume, the report) closed as Geant4 transports light: while a photon leaving the
+    detector volume enters a volume Geant4 transports it in (``transporting``), the detector volume grows to that
+    volume. lumen absorbs a photon leaving the detector volume (after the outside's surface, ``outside_skin``); Geant4
+    absorbs it there only where it enters a volume without RINDEX, so a smaller detector volume would drop light
+    Geant4 brings back (Super-K's WCBarrel in WC's air: reflected at the water's outer face). A volume that absorbs
+    a photon as it enters (``absorbed_at_entry``) is kept, for the reflection at its face, and closes the detector: no
+    light crosses it. The world is closed."""  # noqa: D205, D209
+    report = []
+    while df.detector_volume != df.world:
+        chain, lv = _outside_chain(df)
+        if not transporting(df, lv):
+            break
+        spec = df.world if not chain else lv if len(schema.placements_of(df, lv)) == 1 else \
+            schema.placement_path(df, chain)  # fmt: skip
+        stop = absorbed_at_entry(df, lv)
+        report.append(f"detector volume {df.detector_volume} -> {spec}: a photon leaving it enters {lv} "
+                      f"({df.volumes[lv].material}, with RINDEX), where Geant4 transports it on"
+                      + (f"; {df.volumes[lv].material} absorbs it at entry (ABSLENGTH < {ABSORBED_AT_ENTRY} m): "
+                         "none crosses, the detector is closed" if stop else ""))  # fmt: skip
+        df = dataclasses.replace(df, detector_volume=spec)
+        if stop:
+            break
+    return df.detector_volume, tuple(report)
 
 
 def outside_skin(df) -> str | None:
