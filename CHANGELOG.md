@@ -5,6 +5,23 @@ now, and what to do.
 
 ## Unreleased
 
+### Results that change
+
+- **Light born in an opaque mesh is no longer emitted.** A tessellated solid holds no point, so a photon born inside one
+  bound opaque (its material absorbs within the band) started in the volume around it and reflected off its face into
+  the detector; Geant4 absorbs it where it is born. The emission properties (RINDEX, the scintillation keys) of a
+  material bound opaque are no parameters now: a Cherenkov or scintillation source in it is refused as an unknown key,
+  and `lumen.compare.event` leaves its steps out (counted in `Event.outside`). On ANNIE, whose steel frame is such a
+  mesh, lumen's light was 0.2 % high on 600 MeV muons and 0.1 % on 300 MeV electrons. A calibration that sets such a key
+  is refused: remove the key.
+- **A parameter's table is read-only.** `params[key].value[:] = x` raises; it changed the detector's own table. Use
+  `params.set` or `params.scale`.
+
+### Changed
+
+- The validation report's charge section prints every row (the per-source ratios, the per-sensor agreement and the
+  arrival times were left out).
+
 ### Added
 
 - **The GDML viewer**: `python -m lumen.viewer FILE.gdml` (or a package's `package:name`, or `--recipe FILE.py:NAME`)

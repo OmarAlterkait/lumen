@@ -2,7 +2,7 @@
 
 Keys come from the detector file and from the sensor set (each group's model fields). A file key is a parameter where
 the built optics reads it (``Parts.key_rows``: the library's one record of where each packed value comes from), or, on a
-material, where a light source reads it (``lumen.rules.keys.SOURCE_KEYS``): a key nothing reads (a surface's EFFICIENCY
+material that is not bound opaque, where a light source reads it (``lumen.rules.keys.SOURCE_KEYS``): a key nothing reads (a surface's EFFICIENCY
 where no sensor is bound, GROUPVEL) is no parameter, so no calibration can carry a value pack would refuse. Its
 derivative is available where its method is (``lumen.params.PENDING``): every read is the value itself
 (``library.DIRECT``) or a JAX function of it (a derived Rayleigh table). What each Geant4 property means is in
@@ -26,16 +26,25 @@ from lumen.rules import optics
 from lumen.rules.keys import PARAMS, SOURCE_KEYS, UNKNOWN
 from lumen.rules.optics import reads_value, value_key
 
+OPAQUE = "lumen:opaque"  # the medium no light leaves (lumen.build.library)
+
 
 def info(prop) -> Param:
     """Return a key's declaration (``lumen.rules.keys.PARAMS``; an undeclared key: any value)."""
     return PARAMS.get(prop, UNKNOWN)
 
 
+def _frozen(a):
+    """Return a read-only copy: a write to a parameter's array raises instead of changing the detector's table."""
+    a = np.array(a)
+    a.setflags(write=False)
+    return a
+
+
 def _value(p: fmt.Property):
     if p.energy is None:
         return float(np.asarray(p.value))
-    return Table(np.asarray(p.energy), np.asarray(p.value))
+    return Table(_frozen(p.energy), _frozen(p.value))
 
 
 def not_parameters(rec) -> frozenset:
@@ -63,12 +72,13 @@ def detector_values(df: fmt.DetectorFile, key_rows: dict) -> tuple[dict, dict]:
     for kind, items in (("materials", df.materials), ("surfaces", df.surfaces)):
         for name, rec in items.items():
             fixed = not_parameters(rec)
+            emits = kind == "materials" and rec.optics.name != OPAQUE  # light born in an opaque material ends there
             props = [(prop, p.energy is not None, _value(p)) for prop, p in rec.properties.items() if prop not in fixed]
             if isinstance(rec, fmt.Surface) and reads_value(rec):
                 props.append((value_key(rec), False, float(rec.value)))
             for prop, _, v in props:
                 key = f"{kind}/{name}/{prop}"
-                if key not in read and not (kind == "materials" and prop in SOURCE_KEYS):
+                if key not in read and not (emits and prop in SOURCE_KEYS):
                     continue  # nothing reads it
                 values[key], spec[key] = v, info(prop)
     return values, spec
