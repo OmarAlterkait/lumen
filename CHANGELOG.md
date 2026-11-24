@@ -17,6 +17,16 @@ now, and what to do.
 - **A parameter's table is read-only.** `params[key].value[:] = x` raises; it changed the detector's own table. Use
   `params.set` or `params.scale`.
 
+- **`lumen.tools`' fits take a model of (params, seed) and run it at two seeds.** `fit`, `descend`, `fisher`,
+  `coverage` and `profile` used one Monte Carlo run for both factors of every product, so the run's noise counted as
+  information: on Super-K with data from other seeds, 2^21 samples and an off-centre flash of 1e6 photons, the fit of
+  absorption, scattering and reflectivity stopped at ln factors -1.08, +0.08 and +0.88 from the truth (quoted 0.10,
+  0.07, 0.08) and reported convergence. They use the products of two independent runs now, so such fits are unbiased
+  within their errors, the covariance includes the Monte Carlo error, and a direction the runs do not determine is
+  reported (`rank`, infinite variance, not converged). Give `model = lambda p, seed: ...`; `seeds=(a, b)` picks the two.
+  `fit`'s `ridge` and `refresh` are gone, `jacobian` takes `seed=`, and `tol` is the Newton decrement. `fisher` may have
+  a negative eigenvalue where the data say less than the noise.
+
 ### Changed
 
 - The validation report's charge section prints every row (the per-source ratios, the per-sensor agreement and the

@@ -20,7 +20,7 @@ DIST = jnp.asarray([1.0, 2.0, 0.5, 1.5, 3.0, 2.5], jnp.float32)
 KNOT = jnp.asarray([0, 1, 0, 1, 0, 1])  # the ABSLENGTH knot each bin's path is in
 
 
-def model(p):
+def model(p, seed=0):  # no Monte Carlo: both runs are the same
     r, a = p[R].value, p[ABS].value
     return AMP * jnp.prod(r**POW, axis=1) * jnp.exp(-DIST / a[KNOT]) * (1.0 + 3.0 * p[SA] * (1.0 + POW[:, 1]))
 
@@ -105,21 +105,17 @@ def test_a_scan_gives_the_loss_its_derivatives_and_their_differences(p0):
 def test_a_fit_through_simulate_recovers_the_reflectivity(converted):  # noqa: F811
     det = lumen.load(converted)
     src = lumen.sources.Point(INSIDE, n_photons=1e4, lam=400.0)
-    s = tools.Space(det.params(), [R])
+    s = tools.Space(det.params(), factors=[R])
 
-    def light(p):
-        return lumen.simulate(det, src, p, samples=4096, seed=1, backend="xla").arrivals
+    def light(p, seed):
+        return lumen.simulate(det, src, p, samples=4096, seed=seed, backend="xla").arrivals
 
     truth = s.vector() + np.log(0.8)
-    data = np.asarray(light(s.params(truth)), np.float64)  # the same seed: the model's own expectation
+    data = np.mean([np.asarray(light(s.params(truth), 10 + i), np.float64) for i in range(4)], 0)  # other seeds
     res = tools.fit(light, s, data, steps=30)
-    # monochromatic light reads the table at 400 nm only: that value is what the data fix (the two knots are not)
-    from lumen.units import HC
-
-    energy = np.asarray(det.params()[R].energy)
-    at = lambda x: np.interp(HC / 400.0, energy, np.exp(x))  # noqa: E731
-    assert at(res.x) == pytest.approx(at(truth), rel=2e-3)
-    assert res.history[-1]["nll"] <= 1e-4 * data.sum()
+    sigma = np.sqrt(res.cov[0, 0])
+    assert res.converged and res.rank == 1, res.reason
+    assert abs(res.x[0] - truth[0]) < 4 * sigma and sigma < 0.1  # no Poisson noise in the data: well inside it
 
 
 def test_a_factor_key_is_one_number_on_its_whole_value(p0):
@@ -159,7 +155,7 @@ def test_the_profile_is_lowest_at_the_fit_and_toys_cover_the_truth(p0):
     truth = s.vector() + np.r_[0.3, -0.1]
     rng = np.random.default_rng(3)
     data = rng.poisson(50.0 * np.asarray(model(s.params(truth)), np.float64))
-    m50 = lambda p: 50.0 * model(p)  # noqa: E731 -- brighter, so the likelihood is close to Gaussian
+    m50 = lambda p, seed=0: 50.0 * model(p)  # noqa: E731 -- brighter, so the likelihood is close to Gaussian
     res = tools.fit(m50, s, data, steps=50)
     vals = res.sigma[R] * np.linspace(-2, 2, 9) + s.values(res.x)[R]
     pr = tools.profile(m50, s, data, R, vals, x0=res.x, steps=20)
@@ -205,7 +201,7 @@ def test_a_fit_reports_convergence_a_singular_information_and_refuses_impossible
     assert full.converged and full.rank == 2 and np.all(np.isfinite(full.cov)), full.reason
     s2 = tools.Space(p0, [R, SA], scales={SA: 0.1})
 
-    def mean_knots(p):
+    def mean_knots(p, seed=0):
         r = jnp.mean(p[R].value)
         return AMP * r ** POW[:, 0] * (1.0 + 3.0 * p[SA] * (1.0 + POW[:, 1]))
 
@@ -213,4 +209,45 @@ def test_a_fit_reports_convergence_a_singular_information_and_refuses_impossible
     assert res.rank == 2 and np.all(np.isinf(np.diag(res.cov)[:2])) and np.isfinite(res.cov[2, 2])
     assert np.all(np.isinf(res.sigma[R])) and np.isfinite(res.sigma[SA])
     with pytest.raises(ValueError, match="mu = 0, n > 0"):
-        tools.fit(lambda p: jnp.concatenate([model(p), jnp.zeros(1)]), s, np.r_[data, 3.0])
+        tools.fit(lambda p, seed: jnp.concatenate([model(p), jnp.zeros(1)]), s, np.r_[data, 3.0])
+
+
+CELLS = 4000  # faint cells, 4 counts each: the sum of a run's relative variances over them is what biases a fit on it
+
+
+def _noisy(p, seed):
+    """A Monte Carlo model: the cells' light A R^a exp(-L / ABS) from 15 photons each, the same photons at every value
+    (their weights are the values'), so mu and its derivative are noisy together."""
+    r = np.random.default_rng(int(seed))
+    i = np.arange(CELLS)[:, None]
+    paths = jnp.asarray((1.0 + 3.0 * (i % 2)) * r.exponential(1.0, (CELLS, 15)), jnp.float32)  # m: near and far cells
+    bounces = jnp.asarray(r.poisson(0.5 + 1.5 * (i // 2 % 2), (CELLS, 15)), jnp.float32)
+    amp, scale = jnp.asarray(4.0, jnp.float32), p[R].value[0] ** bounces * jnp.exp(-paths / p[ABS].value[0])
+    return amp * jnp.mean(scale, axis=1)
+
+
+def test_a_fit_to_a_monte_carlo_model_is_unbiased_and_its_errors_cover(p0):
+    """Every toy at its own seeds; the truth is the mean of other seeds. One run for both factors of each product
+    (equal arrays a, b) is biased and over-confident: the second half shows the test sees it."""
+    s = tools.Space(p0, factors=[R, ABS])
+    truth = np.r_[-0.1, 0.1]
+    mu = np.mean([np.asarray(_noisy(s.params(truth), 900 + i), np.float64) for i in range(8)], 0)
+    kind = np.arange(CELLS) % 4  # the cells of one kind expect the same light
+    mu = np.array([mu[kind == j].mean() for j in range(4)])[kind]
+    rng = np.random.default_rng(1)
+    new, old = [], []
+    for k in range(12):
+        n = rng.poisson(mu)
+        new.append(tools.fit(_noisy, s, n, truth, seeds=(2 * k, 2 * k + 1)))
+        old.append(tools.fit(lambda p, seed, k=k: _noisy(p, 2 * k), s, n, truth))
+    assert all(r.converged for r in new), [r.reason for r in new]
+    pulls = np.stack([(r.x - truth) / np.sqrt(np.diag(r.cov)) for r in new])
+    assert np.all(np.abs(pulls.mean(0)) < 4 * pulls.std(0, ddof=1) / np.sqrt(12)), pulls.mean(0)
+    assert np.all(pulls.std(0, ddof=1) < 2.0), pulls.std(0, ddof=1)
+    worst = np.stack([(r.x - truth) / np.sqrt(np.diag(r.cov)) for r in old])
+    assert np.max(np.abs(worst.mean(0))) > 2.0, worst.mean(0)
+
+
+def test_two_equal_seeds_are_refused(p0):
+    with pytest.raises(ValueError, match="two independent runs"):
+        tools.fit(model, tools.Space(p0, [SA]), np.ones(6), seeds=(3, 3))

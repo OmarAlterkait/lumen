@@ -220,14 +220,15 @@ tools/check.py | <module> | 3.0 | 1 | choice | stated in place: each stencil's s
 tools/check.py | check_gradient | 8 | 1 | choice | no stated reason in place
 tools/check.py | check_gradient | 0.01 | 1 | choice | no stated reason in place
 tools/extend.py | _bins | 1e-12 | 1 | choice | no stated reason in place
-tools/fit.py | <module> | 12 | 1 | choice | stated in place: tenfold raises of the ridge per step (to 1e12 times its start: a step of float32 size) before
+tools/fit.py | <module> | 12 | 1 | choice | stated in place: halvings of a step whose decrement rose before the fit stops
+tools/fit.py | <module> | 3.0 | 2 | choice | stated in place: a Gaussian's fourth moment; the standard errors of a determined eigenvalue
+tools/fit.py | <module> | 8 | 1 | choice | stated in place: the seeds a coverage's truth is the mean of
 tools/fit.py | fit | 20 | 1 | choice | no stated reason in place
-tools/fit.py | fit | 0.02 | 1 | choice | no stated reason in place
+tools/fit.py | fit | 1e-06 | 1 | choice | the Newton decrement (in log-likelihood) a fit stops at
 tools/fit.py | fit | 0.1 | 1 | choice | no stated reason in place
-tools/fit.py | fit | 1e-08 | 1 | choice | no stated reason in place
 tools/fit.py | fit | 1e-300 | 1 | choice | no stated reason in place
-tools/fit.py | fit | 10.0 | 2 | choice | no stated reason in place
 tools/fit.py | descend | 50 | 1 | choice | no stated reason in place
+tools/fit.py | descend | 0.001 | 1 | choice | the Newton decrement (in log-likelihood) a first-order fit counts as converged at
 tools/fit.py | descend | 0.02 | 1 | choice | no stated reason in place
 tools/fit.py | descend | 0.9 | 1 | choice | no stated reason in place
 tools/fit.py | descend | 0.999 | 1 | choice | no stated reason in place
