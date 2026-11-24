@@ -58,8 +58,9 @@ def test_the_loop_runs_on_the_step_schedule(loop):
     assert float(np.asarray(t.outputs["charge:0"]).sum()) > 0.0
     modes = [k["schedule"] for k in tm.history()["kernels"]]  # each kernel tallymap built or reused here
     # the photon loop's one pass on the step schedule (its records sized from tallymap's count: again at the count's
-    # power of two past its slots); the readout after it, one item per record (its cells, then its moments)
-    assert modes[-3:] == ["step", "item", "item"], modes
+    # power of two past its slots); its health's sums, one item per photon; the readout after it, one item per record
+    # (its cells, then its moments)
+    assert modes[-4:] == ["step", "item", "item", "item"], modes
 
 
 def test_xla_adds_no_per_photon_memory_around_the_kernel(loop):
