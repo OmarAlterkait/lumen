@@ -80,12 +80,14 @@ def test_the_edge_floor_proposes_the_zero_outcomes_at_their_share():
     fl = (q > 0) & (pr <= 0)
     support = list(types.PAINTED.outcomes)
     assert sorted(np.flatnonzero(np.asarray(fl)).tolist()) == sorted(support)
-    assert float(jnp.sum(jnp.where(fl, q, 0.0))) == pytest.approx(1.0)  # S = 0: n eps = 1
+    e = estimator.DEFENSIVE_SHARE  # the share e of the whole distribution, absorption included:
+    # at S = 0 the draw's total e / (1 - e) is the reference weight's factor, so a photon in a cavity of absorbing
+    # walls meets the roulette (a share of S would leave it unchanged at 1: never ended)
+    assert float(jnp.sum(jnp.where(fl, q, 0.0))) == pytest.approx(e / (1 - e), rel=1e-6)
     pr = jnp.zeros(N_OUTCOMES, F32).at[SPECULAR].set(0.5)  # half absorbed
     q = estimator.edge_floor(pr, jnp.int32(0), tables, estimator.EdgeRows(surfaces=(0,)))
     fl = (q > 0) & (pr <= 0)
-    s, e = 0.5, estimator.DEFENSIVE_SHARE  # a fixed share of the draws, whatever S
-    assert float(jnp.sum(jnp.where(fl, q, 0.0))) == pytest.approx(s * e / (1 - e), rel=1e-6)
+    assert float(jnp.sum(jnp.where(fl, q, 0.0))) == pytest.approx(e / (1 - e), rel=1e-6)  # whatever S
     q2 = estimator.edge_floor(pr, jnp.int32(1), tables, estimator.EdgeRows(surfaces=(0,)))  # not an edge row
     assert np.array_equal(np.asarray(q2), np.asarray(pr))
     e = estimator.DEFENSIVE_SHARE  # Mie's lobe choice: the same rule over (r, 1 - r)

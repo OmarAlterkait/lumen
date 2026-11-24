@@ -1,5 +1,9 @@
 """GDML export: a detector file written as a GDML that Geant4 10.7 and 11.2 read as lumen does.
 
+A scintillating material carries both releases' scintillation keys (Geant4 10.7 reads only FAST/SLOWCOMPONENT, ...,
+YIELDRATIO; 11 only SCINTILLATIONCOMPONENTi, ...: ``lumen.rules.keys.geant4_10_scintillation``); lumen's import reads
+the pair back as one (``lumen.build.import_rules``).
+
     report = lumen.gdml.export("my_detector.lumen", "my_detector.gdml")    # ExportReport: what was written, warnings
 
 The export is the detector as lumen simulates it -- the whole world's geometry, its materials with their optical
@@ -613,6 +617,23 @@ def _gdml_text(df: schema.DetectorFile, sel: _Selection, digest: str) -> str:
 
 
 # ------------------------------------------------------------------------------------------------------ the export
+def _geant4_10_scintillation(df: schema.DetectorFile, sel: _Selection) -> schema.DetectorFile:
+    """Return the detector with each scintillating material's Geant4-10 keys added beside its Geant4-11 keys
+    (``lumen.rules.keys.geant4_10_scintillation``): Geant4 10.7's G4Scintillation reads only the 10 keys, 11's only
+    the 11 keys, so both read the light lumen emits. Each is an annotation; a material with no 10.7 form a warning."""  # noqa: D205, D209
+    from lumen.rules import keys
+
+    mats = dict(df.materials)
+    for name, m in df.materials.items():
+        extra, note = keys.geant4_10_scintillation(m.properties)
+        if extra:
+            mats[name] = dataclasses.replace(m, properties={**m.properties, **extra})
+            sel.annotations.append(f"material {name!r}: {note}")
+        elif note:
+            sel.warnings.append(f"material {name!r}: {note}")
+    return dataclasses.replace(df, materials=mats)
+
+
 def export(df_or_path, path, *, calibration=None, on_lossy="error") -> ExportReport:
     """Write a detector file (a ``.lumen`` path or a DetectorFile) as GDML at ``path``; see the module docstring.
 
@@ -625,6 +646,7 @@ def export(df_or_path, path, *, calibration=None, on_lossy="error") -> ExportRep
     df, name = _calibrate(io.read(root) if root else df_or_path, root, calibration)
     digest = io.content_digest(io.to_files(df))
     sel = _Selection()
+    df = _geant4_10_scintillation(df, sel)
     _select_surfaces(df, on_lossy, sel)
     _select_materials(df, sel)
     _check(df, sel)

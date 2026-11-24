@@ -114,12 +114,17 @@ def import_structure(df: schema.DetectorFile, sensor_set: SensorSet | None = Non
 
     The sensor ids are numbered in the canonical walk; with no sensor set, the detector has an empty one.
     ``sensor_columns(df, sensor_paths)`` gives the id-map columns from the sensors' paths (a recipe's; None: the
-    set's own). A recipe (``Recipe.apply``) and the YAML reader finish here.
+    set's own). A recipe (``Recipe.apply``) and the YAML reader finish here. The detector volume is closed as Geant4
+    transports light (``lumen.build.binding.detector_volume_closed``): a recipe's that light leaves into a volume with
+    RINDEX grows to it, each step in the report.
     """  # noqa: D205
-    from lumen.build import import_rules, lowering
+    from lumen.build import binding, import_rules, lowering
 
     df = import_rules.apply(df)
     check(df)
+    closed, grown = binding.detector_volume_closed(df)
+    if grown:
+        df = dataclasses.replace(df, detector_volume=closed, report=tuple(df.report) + grown)
     sset = sensor_set or SensorSet(())
     loaded = lowering.lower(df, detector=df.detector_volume, sensors=sset.is_sensor)
     ids = tuple(loaded.sensors[i] for i in sorted(loaded.sensors))

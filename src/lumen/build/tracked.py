@@ -162,7 +162,8 @@ def from_scene(scene, optics, cache=False):
     sens = [i for i, p in enumerate(vols) if p in sensor_index]
     vtx = vertices(optics)
     # never transparent: a sensor, and a volume of a class whose crossing into another of its volumes is a vertex
-    kept = [i for i, c in enumerate(vol_cls) if i in set(sens) or vtx[int(c), int(c)]]
+    is_sensor = set(sens)
+    kept = [i for i, c in enumerate(vol_cls) if i in is_sensor or vtx[int(c), int(c)]]
     cl = navigator_build.Classes(tuple(int(c) for c in vol_cls), tuple(int(c) for c in mesh_cls), int(out_cls),
                                  tuple(kept), interchangeable(optics, vtx))  # fmt: skip
     nav = navigate.Navigator.from_scene(scene, cache=cache, classes=cl)

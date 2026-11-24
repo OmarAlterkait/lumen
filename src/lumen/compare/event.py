@@ -4,6 +4,7 @@
     ev = event.read("mu_ev0.npz")                                   # steps (m, ns, eV), hits, sensors
     light = event.simulate(det, ev, samples=1 << 18, seed=0)        # every light of every material, summed
     res = event.compare(det, ev, samples=1 << 18, seed=0)           # per sensor: lumen and Geant4 counts; times
+    many = event.compare_events(det, paths, samples=1 << 16, seed=0)  # many events: their pulls, pooled
 
 Each material and light (Cherenkov, scintillation) with Geant4 photons in the event is one step source (the
 true step length) and one run; materials the detector has no optics for are left out (``Event.outside`` counts their
@@ -31,6 +32,7 @@ from lumen.units import EV_PER_MEV
 
 LIGHTS = ("cherenkov", "scintillation")
 MM = 1e-3  # m per mm: g4ref writes mm, MeV
+MU_MIN = charge.PEARSON_MIN  # a sensor's expected hits from which its Poisson pull is near Gaussian
 STEP_FIELDS = ("start", "end", "t_start", "t_end", "beta_start", "beta_end", "charge", "edep", "step_length")
 
 
@@ -185,5 +187,139 @@ def compare(det, ev: Event, params=None, *, lights=LIGHTS, samples: int, seed: i
     summary = charge.compare_band(r, 0, n, np.ones(s.n_sensors), ctx)
     mu = np.bincount(can, weights=q, minlength=s.n_sensors)
     times_g4 = stats.node_split(ev.hits["t"][mine], dt, nt)[0]
-    return dict(lumen=mu, geant4=n, t=dt * np.arange(nt), times_lumen=h, times_geant4=times_g4, light=add(*runs),
-                summary=summary)  # fmt: skip
+    return dict(lumen=mu, lumen_var=np.bincount(can, weights=qv, minlength=s.n_sensors), geant4=n, t=dt * np.arange(nt),
+                times_lumen=h, times_geant4=times_g4, light=add(*runs), summary=summary)  # fmt: skip
+
+
+def compare_events(det, events, params=None, *, lights=LIGHTS, samples: int, seed: int,  # noqa: PLR0913
+                   mu_min: float = MU_MIN, toys: int = 1, groups=None, **kw) -> dict:  # fmt: skip
+    """Return ``compare`` over many Geant4 events of one detector, and their pooled statistics.
+
+    Each event runs lumen twice, ``samples // 2`` photons per source each, with independent seeds: half A chooses
+    which sensors enter a statistic and sets its variance, half B is what Geant4 is compared with, so lumen's own
+    noise cannot select its sensors nor correlate a residual with its variance (one run doing both biases the mean
+    pull: from lumen's noise, and from Poisson skew where the counts' mean is used). ``events``: Events, or paths
+    ``read`` takes. ``kw``: ``compare``'s (``dt``, ``nt``, ``backend``, ...).
+
+    Returns, per event (rows, in order): "lumen" (A and B's mean) and "lumen_var" (its Monte Carlo variance),
+    "geant4", "summary" (``compare``'s, half B); pooled over the events: "t", "times_lumen", "times_geant4";
+    "pull": (Geant4 - B) / sqrt(A + var B) of every sensor and event where A >= ``mu_min``, with "pull_mu" (A)
+    and "pull_toy" (the same of Poisson toys about lumen's mean, ``toys`` per sensor and event: what an exact match
+    gives, skewed where counts are few); "bins": Geant4 against lumen summed in bins of the expected hits (bins on A,
+    measured with B, and the other way round, averaged: no regression to the mean), each its relative difference,
+    error and z; "sensor_z" (each sensor over the events) and "event_z" (each event's total): (Geant4 - B) /
+    sqrt(A + var B), N(0, 1) if lumen is right; "groups": the same per group of sensors (``groups``, {name: mask};
+    by default ``default_groups``: each surface of the detector's display layout and each sensor type), each its
+    total's ratio and z and its per-event pulls' mean and spread: an effect common to a group's sensors, which no
+    single sensor shows, shows there (a spread above 1 where the sensors' is 1).
+    """
+    keep = ("lumen", "lumen_var", "geant4", "t", "times_lumen", "times_geant4")
+    rows, summaries = [], []
+    for i, e in enumerate(events):  # each event's arrays on the host: the device holds one event at a time
+        ev = e if isinstance(e, Event) else read(e)
+        half = []
+        for j in (0, 1):
+            r = compare(det, ev, params, lights=lights, samples=max(samples // 2, 1), seed=seed + 104729 * i + 7 * j,
+                        **kw)  # fmt: skip
+            half.append({k: np.asarray(r[k]) for k in keep})
+            if j == 1:
+                summaries.append(r["summary"])
+            del r
+        rows.append(half)
+    if not rows:
+        raise ValueError("compare_events: no events")
+    a, va, b, vb, n = (np.stack([r[h][k] for r in rows]) for h, k in ((0, "lumen"), (0, "lumen_var"),
+                                                                       (1, "lumen"), (1, "lumen_var"),
+                                                                       (1, "geant4")))  # fmt: skip
+    out = statistics(a, va, b, vb, n, mu_min=mu_min, seed=seed, toys=toys,
+                     groups=default_groups(det) if groups is None else groups)  # fmt: skip
+    return out | dict(summary=summaries, t=rows[0][1]["t"],
+                      times_lumen=sum(0.5 * (r[0]["times_lumen"] + r[1]["times_lumen"]) for r in rows),
+                      times_geant4=sum(r[1]["times_geant4"] for r in rows))  # fmt: skip
+
+
+def statistics(a, va, b, vb, n, *, mu_min: float = MU_MIN, seed: int = 0, toys: int = 1,  # noqa: PLR0913
+               groups=None) -> dict:  # fmt: skip
+    """Return ``compare_events``' statistics from two independent lumen halves ``a``, ``b`` (events, sensors), their
+    variances and Geant4's counts ``n``: half A selects and sets the variance, half B is compared."""  # noqa: D205, D209
+    a, va, b, vb, n = (np.asarray(x, np.float64) for x in (a, va, b, vb, n))
+    mu, var = 0.5 * (a + b), 0.25 * (va + vb)
+    sig = np.maximum(a, 0.0) + vb  # Geant4 - B: Poisson about lumen (estimated by A) and B's own noise
+    m = a >= mu_min
+    pull = (n[m] - b[m]) / np.sqrt(sig[m])
+    rng = np.random.default_rng(seed)
+    bm = np.maximum(b[m], 0.0)  # an exact match: Poisson counts about lumen, less lumen's noise of the same size
+    toy = np.concatenate([(rng.poisson(bm) - bm + rng.normal(0.0, np.sqrt(vb[m]))) / np.sqrt(sig[m])
+                          for _ in range(max(toys, 1))])  # fmt: skip
+    s_sig = np.where(m, sig, 0.0).sum(0)
+    lit = m.sum(0) > 0
+    sensor_z = np.full(n.shape[1], np.nan)
+    sensor_z[lit] = np.where(m, n - b, 0.0).sum(0)[lit] / np.sqrt(s_sig[lit])  # sensors some event lights enough
+    event_z = (n.sum(1) - b.sum(1)) / np.sqrt(sig.sum(1))
+    return dict(lumen=mu, lumen_var=var, geant4=n, pull=pull, pull_mu=a[m], pull_toy=toy, bins=_bins(a, va, b, vb, n),
+                sensor_z=sensor_z, event_z=event_z, mu_min=mu_min,
+                groups=_groups(b, vb, sig, n, {"all": np.ones(n.shape[1], bool)} | dict(groups or {})))  # fmt: skip
+
+
+def _groups(b, vb, sig, n, groups) -> list:
+    """Each group's total (Geant4 / B, its error and z) and its events' pulls (mean, spread, and their errors)."""
+    out = []
+    for name, mask in groups.items():
+        m = np.asarray(mask, bool)
+        if not m.any():
+            continue
+        tb, tn, ts = b[:, m].sum(1), n[:, m].sum(1), sig[:, m].sum(1)
+        lit = ts > 0  # the events the group expects light in (a module far from the track expects none)
+        if not lit.any():  # dark in every event (a cryostat no track reaches): it tests nothing
+            continue
+        z = (tn[lit] - tb[lit]) / np.sqrt(ts[lit])
+        k = len(z)
+        out.append(dict(name=str(name), sensors=int(m.sum()), ratio=float(tn.sum() / tb.sum()),
+                        err=float(np.sqrt(ts.sum()) / tb.sum()), z=float((tn.sum() - tb.sum()) / np.sqrt(ts.sum())),
+                        events=k, event_mean=float(z.mean()),
+                        event_sd=float(z.std(ddof=1)) if k > 1 else float("nan"),
+                        event_sd_err=float(1 / np.sqrt(2 * (k - 1))) if k > 1 else float("nan")))  # fmt: skip
+    return out
+
+
+def default_groups(det) -> dict:
+    """Return the groups of sensors ``compare_events`` reports by default: each surface of the detector's display
+    layout (a face, the barrel, a cap) and each sensor type (the id map's "type" column, where there are several)."""  # noqa: D205, D209
+    from lumen.tools import layout
+
+    out = {}
+    n = len(det.sensor_table().position)
+    lay = layout.of(det)
+    for name, idx in lay.parts:
+        if len(lay.parts) > 1:
+            m = np.zeros(n, bool)
+            m[lay.index[idx]] = True
+            out[name] = m
+    types = det.sensor_table().columns.get("type")
+    if types is not None and len(set(types)) > 1:
+        t = np.asarray(types)
+        out |= {f"type {u}": t == u for u in sorted(set(types))}
+    return out
+
+
+BIN_EDGES = (0.5, 2.0, 5.0, 20.0, 100.0, 1000.0, np.inf)  # expected hits per sensor and event
+
+
+def _bins(a, va, b, vb, n, edges=BIN_EDGES):
+    """Geant4 against lumen summed per bin of the expected hits: binned on one half, measured with the other."""
+    out = []
+    for lo, hi in zip(edges[:-1], edges[1:], strict=True):
+        d, w, cnt = [], [], 0
+        for sel, ref, vref in ((a, b, vb), (b, a, va)):
+            m = (sel >= lo) & (sel < hi)
+            if m.sum() == 0:
+                continue
+            e = ref[m].sum()
+            d.append((n[m].sum() - e) / e)
+            w.append(np.sqrt(e + vref[m].sum()) / e)
+            cnt += int(m.sum())
+        if d:
+            err = float(np.mean(w))  # the two halves' estimates share Geant4's counts: their mean, not combined
+            diff = float(np.mean(d))
+            out.append(dict(lo=lo, hi=hi, count=cnt // len(d), diff=diff, err=err, z=diff / err))
+    return out

@@ -20,7 +20,7 @@ and comparisons live in their own packages, which depend on lumen: [lumen-wc](ht
 (the WCSim detectors) and [lumen-tpc](https://github.com/OmarAlterkait/lumen-tpc) (the LArSoft ones). There, lumen's results are checked against Geant4, WCSim and LArSoft, each package with its own
 validation report; lumen's own checks are in [its report](docs/validation/report.md).
 
-**Status: 0.2.0.** The interfaces can still change. lumen is not on PyPI: `pip install lumen` installs an unrelated
+**Status: 0.2.1.** The interfaces can still change. lumen is not on PyPI: `pip install lumen` installs an unrelated
 package; install from GitHub as below. `simulate` differentiates optical
 values (absorption and scattering lengths, reflectivities, surface roughness) and, through the readout, the PMT
 values; refractive indices and the source position are calibrated by value only. What changed between releases is in the
@@ -40,7 +40,7 @@ export LUMEN_DETECTORS=/path/to/your/calibrations       # where your calibration
 ```
 
 This also installs lumen's photon-loop engine, tallymap, from its repository at a fixed tag (`tallymap @
-git+https://github.com/OmarAlterkait/tallymap.git@v0.8.0`). The last Python line should list a
+git+https://github.com/OmarAlterkait/tallymap.git@v0.8.1`). The last Python line should list a
 `CudaDevice`. Without a GPU, lumen compiles the photon loop for the CPU, which needs a C++ compiler with OpenMP (g++). [Installing
 lumen](docs/howto/install.md) has the details: the pinned versions, running without a GPU, every cache variable
 (`TALLYMAP_CACHE` holds tallymap's compiled kernels), compile times and a fixed-version install.
