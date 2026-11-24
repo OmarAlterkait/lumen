@@ -15,12 +15,12 @@ classifiers = ["Private :: Do Not Upload"]
 dependencies = [
     "numpy>=1.24",
     # jax is pinned exactly: docs/dev/decisions.md, 7 (0.5.3's CPU runtime missed faces with the persistent cache on;
-    # tallymap v0.8.0 is tested on 0.6.2)
+    # tallymap v0.8.1 is tested on 0.6.2)
     "jax==0.6.2",
     "jaxlib==0.6.2",
     "scipy>=1.10",  # spatial search of sibling placements (scipy.spatial.cKDTree) in the geometry lowering
     "pyyaml>=6",  # detectors written in YAML (lumen.format.yaml), read at conversion only
-    "tallymap @ git+https://github.com/OmarAlterkait/tallymap.git@v0.8.0",  # tallymap v0.8.0 (not on PyPI)
+    "tallymap @ git+https://github.com/OmarAlterkait/tallymap.git@v0.8.1",  # tallymap v0.8.1 (not on PyPI)
 ]
 
 [project.optional-dependencies]

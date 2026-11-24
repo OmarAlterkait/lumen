@@ -25,12 +25,12 @@ python -c "import jax, lumen; print(lumen.__version__, jax.devices())"
 ```
 
 That is the latest release: the repository's `main` moves only at releases. For a fixed version, name its tag:
-`pip install "lumen[cuda,plot] @ git+https://github.com/OmarAlterkait/lumen.git@v0.2.0"`. The `plot` extra
+`pip install "lumen[cuda,plot] @ git+https://github.com/OmarAlterkait/lumen.git@v0.2.1"`. The `plot` extra
 (matplotlib) adds `lumen.tools.plot` and the tutorial's figures. lumen is not on PyPI: `pip install lumen` installs an
 unrelated package.
 
 `jax[cuda12]` (the `cuda` extra) provides everything tallymap needs on a GPU. tallymap is not on PyPI; lumen's
-dependency names its tag on GitHub: `tallymap @ git+https://github.com/OmarAlterkait/tallymap.git@v0.8.0`. The first GPU run also builds a
+dependency names its tag on GitHub: `tallymap @ git+https://github.com/OmarAlterkait/tallymap.git@v0.8.1`. The first GPU run also builds a
 small C++ launch shim, so a C++17 compiler must be on the PATH once.
 Without `[cuda]` (plain `jax`), lumen runs on the CPU only.
 

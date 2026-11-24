@@ -3,6 +3,37 @@
 Changes a user of lumen can see, newest first. Each entry says what changed, what an old file, key or script does
 now, and what to do.
 
+## 0.2.1 (2026-11-23)
+
+### Results that change
+
+- **A photon in a closed cavity of absorbing walls now ends.** At a surface whose reflectivity is exactly 0, the
+  covered outcome is proposed at a share of the whole distribution, so the photon's reference weight falls and the
+  roulette ends it. In 0.2.0 such a photon (inside a PMT whose walls absorb everything) kept its reference weight and
+  was followed until the vertex guard, which could take millions of steps. Values and derivatives are unchanged within
+  the Monte Carlo error.
+- **The detector volume grows to where Geant4 transports the light**: while a photon leaving it enters a volume with
+  RINDEX; it stops at a volume that absorbs light on entry. This is decided at conversion: convert a detector again to
+  get it. The conversion summary names the volume.
+- **The Geant4 export writes Geant4 10.7's scintillation keys** beside Geant4 11's (10.7 ignores the 11 keys and
+  produced no scintillation). A GDML that has both is read as its Geant4 11 keys, giving the same light.
+
+### New
+
+- **Event displays on the detector's own layout** (`lumen.tools.layout`, `lumen.tools.plot.display`): planes for a
+  TPC's light detectors, an unrolled cylinder for a tank, an equal-area sphere otherwise.
+- **Many Geant4 events against lumen** (`lumen.compare.event.compare_events`, `lumen.tools.plot.compare_events`):
+  pulls per sensor and per event, by display surface and sensor type. A group's per-event pulls use only the events in
+  which it expects light. `tools/g4ref/events.py` makes the Geant4 events.
+
+### Faster
+
+- The first `simulate` on a warm cache of a detector with 43,212 sensors went from 384 s to 43 s.
+
+### Pinned
+
+- tallymap v0.8.1 (was v0.8.0).
+
 ## 0.2.0 (2026-11-20)
 
 lumen 0.2 is a rewrite of the photon loop's outputs, of how a detector is described and of where the experiments'
