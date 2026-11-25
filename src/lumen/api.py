@@ -1082,7 +1082,8 @@ def simulate(det, source, params=None, *, samples: int | None = None, seed: int,
                 continue  # the same photons again, in launches of the size that fits
             first_rows = None
             cap = max(cap or 0, runner.pow2(appended))
-            seen[shape] = max(seen.get(shape, 0), slots)
+            if records is None:  # records= is this run's own: never a later run's first guess
+                seen[shape] = max(seen.get(shape, 0), slots)
             if truth is not None:
                 rows_of.append(tr.chunk_rows(truth, tabs, tr.detection_values(tabs[3], params), t.per_item, labels,
                                              key, first, count))  # fmt: skip

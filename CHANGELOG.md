@@ -64,9 +64,10 @@ now, and what to do.
   launch at one deposit record slot per photon row, so a detector whose photons append more records than that (SK:
   1.17 per photon) overflowed it and ran the whole photon loop again at the count's power of two, in every run. A
   run's first launch now starts at the most slots a launch of the same detector, layout and launch size ran with
-  without overflowing (kept with the detector's parts), a shape already compiled; `records=` still comes first. The
-  outputs are the same bit for bit. Per photon on an A100 (2^20 photons, after a first run): SK 0.57 us (was 0.99),
-  the others unchanged; the first run of a shape still runs again.
+  without overflowing (kept with the detector's parts), a shape already compiled; `records=` still comes first and is
+  that run's own, never a later run's guess. The outputs are the same bit for bit. Per photon on an A100 (2^20
+  photons, after a first run): SK 0.57 us (was 0.99), the others unchanged; the first run of a shape still runs
+  again.
 
 ## 0.2.1 (2026-11-23)
 
