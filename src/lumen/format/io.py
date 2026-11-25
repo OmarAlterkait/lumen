@@ -294,6 +294,7 @@ class _Reader:
 
     def __init__(self, root: Path, manifest: dict):
         self.root, self.manifest = root, manifest
+        self._decoders: dict = {}
 
     def json(self, rel: str) -> dict:
         data = (self.root / rel).read_bytes()
@@ -311,22 +312,44 @@ class _Reader:
 
     def decode(self, h, v, where: str):
         """Return the value of type ``h`` stored as ``v`` (``where``: its path, for a refusal)."""
+        d = self.decoder(h)
+        return v if d is None else d(v, where)
+
+    def decoder(self, h):
+        """Return the decoding of a stored value of type ``h``, (v, where) -> value, made once per type; None where the
+        stored value is the value (a string, a number, a boolean, None)."""  # noqa: D205, D209
+        if h not in self._decoders:
+            self._decoders[h] = self._make(h)
+        return self._decoders[h]
+
+    def _make(self, h):
         h = _inner(h)
-        if v is None:
-            return None
         if h is np.ndarray:
-            return self.npy(v) if isinstance(v, str) else np.asarray(v, np.float64)
+            return lambda v, where: None if v is None else self.npy(v) if isinstance(v, str) else np.asarray(v, float)
         if dataclasses.is_dataclass(h):
-            return self.record(h, v, where)
-        args = typing.get_args(h)
-        if typing.get_origin(h) is dict and args:
-            if dataclasses.is_dataclass(args[1]):
-                key = _key_field(args[1])
-                return {k: self.record(args[1], v[k], f"{where}/{k}", {key: k}) for k in v}
-            return {k: self.decode(args[1], x, f"{where}/{k}") for k, x in v.items()}
-        if typing.get_origin(h) is tuple:
-            return tuple(self.decode(_item(h, i), x, where) for i, x in enumerate(v))
-        return dict(v) if h is dict else v
+            return lambda v, where: None if v is None else self.record(h, v, where)
+        args, origin = typing.get_args(h), typing.get_origin(h)
+        if origin is dict and args and dataclasses.is_dataclass(args[1]):
+            t, key = args[1], _key_field(args[1])
+            return lambda v, where: None if v is None else {k: self.record(t, v[k], f"{where}/{k}", {key: k})
+                                                            for k in v}  # fmt: skip
+        if origin is dict and args:
+            sub = self.decoder(args[1])
+            if sub is None:
+                return lambda v, where: None if v is None else dict(v)
+            return lambda v, where: None if v is None else {k: sub(x, f"{where}/{k}") for k, x in v.items()}
+        if origin is tuple and args and args[-1] is not Ellipsis:
+            subs = [self.decoder(a) for a in args]
+            return lambda v, where: None if v is None else tuple(x if subs[i] is None else subs[i](x, where)
+                                                                  for i, x in enumerate(v))  # fmt: skip
+        if origin is tuple or h is tuple:
+            sub = self.decoder(args[0]) if args else None
+            if sub is None:
+                return lambda v, where: None if v is None else tuple(v)
+            return lambda v, where: None if v is None else tuple(sub(x, where) for x in v)
+        if h is dict:
+            return lambda v, where: None if v is None else dict(v)
+        return None
 
     def record(self, t, v, where: str, given: dict | None = None):
         if not isinstance(v, dict):
@@ -343,12 +366,14 @@ class _Reader:
         hints = field_types(t)
         cols = {f: self.npy(f"arrays/{name}/{f}.npy") for f, h in hints.items() if _is_vector(h)}
         names = [f for f in hints if f not in cols]
+        decoders = [(f, self.decoder(hints[f])) for f in names]
+        vectors = {f: a.tolist() for f, a in cols.items()}
         out = []
         for i, row in enumerate(rows):
             if len(row) != len(names):
                 raise FormatError(f"{self.root}: {name}[{i}] has {len(row)} fields, not {len(names)} ({names})")
-            kw = {f: self.decode(hints[f], x, f"{name}[{i}]/{f}") for f, x in zip(names, row, strict=True)}
-            out.append(t(**kw, **{f: tuple(a[i].tolist()) for f, a in cols.items()}))
+            kw = {f: x if d is None else d(x, f"{name}[{i}]/{f}") for (f, d), x in zip(decoders, row, strict=True)}
+            out.append(t(**kw, **{f: tuple(v[i]) for f, v in vectors.items()}))
         return tuple(out)
 
 
