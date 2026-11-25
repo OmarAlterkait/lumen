@@ -13,6 +13,17 @@ the float32 resolution of the coordinates, the **band**. The rules, each with th
   but farther perpendicularly is looked for up to ``GRAZE`` times farther: a ray leaving its face at an angle theta
   is K_ON bands from it after K_ON / sin(theta) bands, so ``GRAZE`` sets the shallowest angle the start's face is
   still recognised at, asin(1 / GRAZE) = 0.22 deg; below it the face is a new crossing (a zero-length step).
+  A bulk event within ``ZERO_STEP_BANDS`` bands of the start leaves the photon on the surface it sat on
+  (``lumen.transport.step``: its point has not moved off that face, so its side there is still its direction's), and a
+  zero-length crossing whose solid gives no face of its own (a point one ulp beyond the face just crossed) is read on
+  that surface too: its normal is the crossing's.
+- **Relocation.** A crossing is relocated from one band along the ray and past the face met, along its normal the way
+  the photon travels (G4Navigator's LocateGlobalPointAndSetup, up while a solid does not hold the point, then down):
+  one band of the point's own coordinates (``step_band``) for a crossing, whose point is within an ulp of the face at
+  any angle of the ray; ``K_ON`` + 1 of the query's bands for a zero-length one, whose point is the start's, up to
+  ``K_ON`` bands on the near side of the face the on-face rule put the photon on. A volume whose own face coincides
+  with the one met (a daughter placed flush in its mother) is then left, or entered, at that one crossing, as Geant4
+  leaves a mother whose surface the point is on when the direction leaves it.
 - **Provenance of the multiples.** The band and its multiples (``BAND_ULPS``, ``K_ON``, ``GRAZE``,
   ``ZERO_STEP_BANDS``, ``FACET_*``, the push) are stated, with every other geometry tolerance, in
   ``lumen.rules.tolerances``: the band is a few float32 ulps of the coordinates (a root and its point each carry about

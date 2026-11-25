@@ -7,7 +7,7 @@ shell absent (g4ref: a 1 um shell detects as a 0.1 mm one).
 The surface lookup's side of coincident faces is in test_surfaces.py."""
 
 import numpy as np
-from nav_toys import defn, make_scene, per_ray
+from nav_toys import defn, make_scene, one, per_ray, query, toy
 from test_surfaces import MATS, library, tree
 
 from lumen.build import lookup as regions
@@ -69,3 +69,22 @@ def test_a_float32_thin_same_medium_shell_keeps_its_cathode():
         # the cathode: the compiler takes a coincident crossing past a pass pair to the border
         kinds[shell] = {o.rows[int(k)].surface_type for k in o.row_of[r["cls_before"], r["cls_after"]]}
     assert kinds[True] == kinds[False] == {types.PHOTOCATHODE}, kinds
+
+
+def test_a_start_within_the_band_of_coincident_faces_leaves_every_one_of_them():
+    """A start inside the innermost of three volumes whose +z faces coincide, within the on-face band of that face
+    and heading out, ends beyond all three: the on-face rule's zero-length exit is relocated past the face, not into
+    a mother whose own face the photon has not passed (a bulk event in a flush film: its light is the mother's
+    otherwise, read with the mother's surface).
+    """
+    from lumen.rules import navigation
+
+    _, nav = toy("coincident")
+    inner, world = nav.names.index("env_0/glass_0/inner_0"), nav.names.index("")
+    band = navigation.band(0.3)  # inner, glass and env are flush at z = 0.3
+    for depth in (0.5 * band, 3.0 * band):  # within K_ON bands of the face: the start is on it
+        for d in ([0.0, 0.0, 1.0], [0.99, 0.0, 0.141]):  # straight out, and grazing (the on-face rule's own window)
+            r = one(query(nav, [0.0, 0.0, 0.3 - depth], d, inner, t_max=10.0))
+            assert bool(r["hit"]) and bool(r["zero"]) and float(r["t"]) == 0.0, (depth, d)
+            assert int(r["vol_after"]) == world, (depth, d, nav.names[int(r["vol_after"])])
+            assert float(r["normal"][2]) < -0.99, (depth, d, r["normal"])  # the face's normal, against the ray

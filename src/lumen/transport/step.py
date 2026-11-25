@@ -491,8 +491,11 @@ def _after(ops, ph, sc, nx, wr, b0, an=None):  # noqa: PLR0913
     return After(alive=alive, w=w_new, wr=wr_new, nz=nz_new, abandoned=abandoned, rouletted=rouletted, analog=an)
 
 
-def _advance(sc):
-    """Return (vol, srf) after the event (the navigator's state for the next query)."""
+def _advance(sc, ph, b0):
+    """Return (vol, srf, held) after the event: the navigator's state for the next query.
+
+    ``held``: the photon keeps the surface it sat on (a bulk event that did not move it off that face).
+    """
     q = sc.q
     # a bulk event: the volume the free path ends in (before the first invisible crossing the start's, after the
     # last the one before the visible crossing, between them the one the walk found there: the ray's, as Geant4
@@ -501,8 +504,12 @@ def _advance(sc):
     vol_b = jnp.where(sc.s < q["t_pass0"], q["vol_start"], jnp.where(sc.s > q["t_pass1"], q["vol_before"], q["vol_at"]))
     after = jnp.asarray(FAR_SIDE)[sc.os_] & sc.drawn
     vol = jnp.where(sc.scatter, vol_b, jnp.where(after, q["vol_after"], q["vol_before"])).astype(I32)
-    srf = jnp.where(sc.scatter | ~q["hit"], -1, q["item"]).astype(I32)
-    return vol, srf
+    # a bulk event within a zero-length step of the start leaves the photon on the surface it sat on: its point did
+    # not move off that face, and the band rules read the face from the photon's state, never from a float32 probe of
+    # the point (a re-emission at a face it sits within one ulp of: the side is still the direction's)
+    held = sc.scatter & (sg(sc.s) <= navigation.ZERO_STEP_BANDS * b0) & (ph.srf >= 0)
+    srf = jnp.where(held, ph.srf, jnp.where(sc.scatter | ~q["hit"], -1, q["item"])).astype(I32)
+    return vol, srf, held
 
 
 def step(model, ops, ph, key):
@@ -544,11 +551,12 @@ def step(model, ops, ph, key):
         an = _analog_crossing(ph.analog, sg(share), sg(nx.w), at)
     af = _after(ops, ph, sc, nx, wr, b0, an)
     alive = af.alive
-    vol, srf = _advance(sc)
+    vol, srf, held = _advance(sc, ph, b0)
     gen = None if ph.gen is None else ph.gen + nx.reemitted.astype(I32)
     ph2 = state.Photon(x=nx.x, d=nx.d, t=ph.t + nx.dtime, lam=nx.lam, w=jnp.where(alive, af.w, 0.0),
                        wr=jnp.where(alive, af.wr, 0.0), alive=alive, vertex=ph.vertex + 1, er=nx.er.astype(F32),
-                       ei=nx.ei.astype(F32), vol=vol, srf=srf, sn=nx.sn, nz=af.nz, cls=nx.cls,
+                       ei=nx.ei.astype(F32), vol=vol, srf=srf, sn=jnp.where(held, ph.sn, nx.sn), nz=af.nz,
+                       cls=nx.cls,
                        analog=af.analog, gen=gen)  # fmt: skip
     event, pair = jnp.where(scatter, -2, nx.outcome).astype(I32), cb * jnp.asarray(tables.row_of).shape[0] + c_k
     dep = Deposit(sensor=jnp.where(at_if, sensor_dep, -1), q=dep_q, time=time, lam=ph.lam, lost=lost,

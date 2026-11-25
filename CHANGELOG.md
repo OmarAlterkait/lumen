@@ -26,6 +26,22 @@ now, and what to do.
   reported (`rank`, infinite variance, not converged). Give `model = lambda p, seed: ...`; `seeds=(a, b)` picks the two.
   `fit`'s `ridge` and `refresh` are gone, `jacobian` takes `seed=`, and `tol` is the Newton decrement. `fisher` may have
   a negative eigenvalue where the data say less than the noise.
+- **A WLS film placed flush in its holder now shifts the light it should.** Where a film's outer face is coincident
+  with its holder's own face, the crossing into the film is the crossing into the holder, so light re-emitted inside
+  the film within the float32 band of that face was read on the holder's face (its surface, often a paint) or with no
+  face at all (no refraction, so nothing held by total internal reflection), and a crossing grazing that face could
+  stop in the holder. The same film placed as the holder's sibling was already right. A 1 mm film of absorption
+  length 0.5 um, 0.2 m from its source, detected 0.1004 per photon against Geant4's 0.1305, and 0.3045 against
+  0.1322 at an absorption length of 0.1 nm; both are now 0.1302. A pencil 0.5 degrees off the film's plane detected
+  0.715 against Geant4's 0.030; it is now 0.0301. Films 2 um to 120 um thick, 0.2 m to 10 m from the source, at 0 to
+  89.5 degrees, and absorption lengths from 0.1 nm to 50 um, agree with Geant4 to 0.5% (1.5% at 0.1 nm, where a film
+  placed as a sibling is equally far); they were up to 24 times out. Light born within a micron of the film's faces
+  no longer depends on how the film is placed.
+- The experiments' own light does not move: SBND, MicroBooNE, WCTE and SK charge counts change by at most 8e-5
+  relative, far inside their Monte Carlo error (SBND's and MicroBooNE's TPB films sit in a holder of the liquid argon
+  around them, which carries no surface of its own, so reading the light on the holder's face gave the same answer).
+  SK's lost weight, light that reached a surface with no row, goes to 0.
+- A run costs 1% to 5% more time (median 2%): a relocation past a face now reads that face's normal.
 
 ### Changed
 
@@ -43,6 +59,16 @@ now, and what to do.
 - **`lumen.api.package_detector("package:name")`**: a detector package's detector as `lumen.convert` converts it (its
   recipe, GDML file and inputs, through the package's `prepare`, while the context is open), and
   `lumen.api.is_package_detector`, for a tool that reads a package's detector the way lumen does.
+
+### Known limits
+
+- A flush film about two to three bands thick (the band is 9.5e-7 times the coordinate scale in m; a film thinner
+  than one band is already refused) can still be read as a zero-length crossing of its own far face, which reflects
+  the light at the holder instead of shifting it. Which way the float32 rounding falls decides it: at a 10 m
+  coordinate scale a 20 um film (2.1 bands) detects 6.3% less light than Geant4 and a 25 um film (2.6 bands) 2.6%
+  less, while 22, 28, 30, 40, 60, 80 and 120 um agree to 0.1%. Above three bands every case measured agrees to 0.1%.
+- Light born within one band of a face is located on a side neither lumen nor Geant4 can agree on (it is on the
+  boundary): up to 9% in detected light, however the film is placed.
 
 ## 0.2.1 (2026-11-23)
 
