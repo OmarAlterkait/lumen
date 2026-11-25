@@ -674,7 +674,7 @@ def _frame_fields(model, frame, x, d, n, gen) -> dict:
 
 def _local(model, ops, sc, out_side, ph) -> dict:
     """Return the deposit's local fields at a crossing, in the sensor placement's frame (``_frame_fields``)."""
-    x = ph.x + sc.dist * ph.d
+    x = ph.x + sc.q["t"] * ph.d
     return _frame_fields(model, lambda: sensor_frame(model, ops, sc, out_side), x, ph.d, sc.q["normal"], ph.gen)
 
 

@@ -244,7 +244,7 @@ def bound(nav, lo, h, n, cap):
                                     dev["VHI"])  # fmt: skip
         out = np.asarray(out[:-1]).reshape(tuple(n))
     scale = float(np.max(np.abs(np.concatenate([lo, lo + h * (n - 1)])))) + float(cap)
-    c = np.maximum(out - float(rules.band(scale, nav.prec)), 0.0)
+    c = np.maximum(out - float(rules.band(scale)), 0.0)
     c32 = c.astype(np.float32)
     up = c32.astype(np.float64) > c
     c32[up] = np.nextafter(c32[up], np.float32(0))

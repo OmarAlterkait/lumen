@@ -314,6 +314,15 @@ def _is_yaml(source) -> bool:
     return all(p.suffix in (".yaml", ".yml") or p.is_dir() for p in paths)
 
 
+def _check_x64(what: str, precision: str):
+    """Refuse a float64 navigator while JAX's 64-bit mode is off: its arrays would be truncated to float32 with float64
+    tolerances."""  # noqa: D205, D209
+    if precision == "float64" and not jax.config.jax_enable_x64:
+        raise ValueError(f'{what}: precision="float64" needs JAX\'s 64-bit mode, which is off: set JAX_ENABLE_X64=1 '
+                         'before starting Python, or call jax.config.update("jax_enable_x64", True) before any JAX '
+                         "array is made")  # fmt: skip
+
+
 def load(path, *, calibration: str = cal.NOMINAL, parts: dict | None = None, responses=(),
          precision: str = "float32") -> Detector:  # fmt: skip
     """Load the detector file at ``path`` (a ``.lumen`` directory) with a calibration.
@@ -339,10 +348,7 @@ def load(path, *, calibration: str = cal.NOMINAL, parts: dict | None = None, res
     from lumen.rules import navigation
 
     prec = navigation.precision(precision)
-    if prec is navigation.FLOAT64 and not jax.config.jax_enable_x64:
-        raise ValueError('load: precision="float64" needs JAX\'s 64-bit mode, which is off: set JAX_ENABLE_X64=1 '
-                         'before starting Python, or call jax.config.update("jax_enable_x64", True) before any JAX '
-                         "array is made")  # fmt: skip
+    _check_x64("load", prec.name)
     path = Path(path)
     if not path.is_dir():
         raise FileNotFoundError(f"no detector file at {path} (a detector is its file: convert it first, lumen.convert)")
@@ -674,6 +680,7 @@ def _model(det, local: tuple = (), analog=False, levers=None):
     from lumen.geometry import reach
     from lumen.transport import step as steps
 
+    _check_x64("simulate", det.precision)
     levers = spd.EXACT if levers is None else levers
     models = _MODELS.setdefault(det.parts, {})
     k = (local, analog, levers, det.precision)

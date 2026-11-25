@@ -174,7 +174,7 @@ def diffuse(model, ops, ph, sc, x, b):
     it through the walk's projections and the weight the scores of the walk's Rayleigh densities in the state (exact's
     lp with the live state)."""  # noqa: D205, D209
     D = ops.tables["diff"]
-    xs = sg(x)  # where the walk may act: a decision, no tangent
+    xs = sg(x).astype(F32)  # where the walk may act (the grids are float32): a decision, no tangent
     inside, c = jnp.bool_(False), F32(0.0)
     for m, G in zip(model.jump.media, D["grids"], strict=True):
         here = sc.medium_idx == m
