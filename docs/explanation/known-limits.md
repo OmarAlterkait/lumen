@@ -128,17 +128,12 @@ wavelength derivative, from paths carrying 4 % of the light).
 Every random choice is drawn at the reference values and weighted to the live ones (`simulate(reference=)`; by
 default the reference is the run's own values, where none of this applies). The weight is unbiased wherever the
 reference draw can reach every outcome the live values can. Where a parameter can zero a probability, lumen's one
-defensive mixture covers it (`DEFENSIVE_SHARE` of the draws from a covering density). Four cases are covered only
+defensive mixture covers it (`DEFENSIVE_SHARE` of the draws from a covering density). Three cases are covered only
 near the reference, so a run whose live values move far from a held reference needs a reference closer to them:
 
 - **GLISUR polish moved down (a wider facet ball).** The facet is drawn from the reference ball, mixed with its shell
   (radius 1 - polish at the reference). That covers the derivative at the reference, but not facets outside the
   reference ball that a smaller live polish reaches.
-- **An index moved at a GLISUR dielectric surface (facet refraction).** A refraction drawn at the reference implies,
-  at the live indices, another facet; the live refractions whose facets lie outside the reference ball are never
-  drawn. The facet density vanishes at the ball's edge, so the light missed grows as the move to the power 1.5 and a
-  finite difference's bias vanishes with its step (at polish 0.6, gas into an index of 1.5 at 50 degrees, raising the
-  index 3 % misses 1.6 % of the light transmitted).
 - **A photocathode's straight share with only its complex index keyed.** Where the reflectance from (nr, nk) reaches
   1 (no absorption, total reflection), the straight share is 0 at the reference and not covered. It is covered
   whenever TRANSMITTANCE or the efficiency is keyed too.

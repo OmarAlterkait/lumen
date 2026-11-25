@@ -1,14 +1,14 @@
 """GLISUR facet refraction (glisur ground dielectric_dielectric): the path's weights, as the photon step forms them.
 
-The path is drawn at the reference (polish, the two indices, the photon's state) and weighted by its live / reference
-density, facet by facet (``lumen.surfaces.facets.dielectric_event_logpdf``; ``lumen.transport.surface_event``,
+The path is drawn at the reference polish, the live indices and state, and weighted by its live / drawn density, facet by facet (``lumen.surfaces.facets.dielectric_event_logpdf``; ``lumen.transport.surface_event``,
 ``_dielectric_path_branch``). What is checked:
 
-- reweighted to other values (a smaller facet ball, either index moved), the paths drawn at the reference are the
-  paths drawn there: the last direction's histogram and the share that ends beyond the surface;
+- reweighted to other values (a smaller facet ball), the paths drawn at the reference are the paths drawn there, at
+  any indices (they are the live ones): the last direction's histogram and the share that ends beyond the surface;
 - the derivatives in the polish and in either index are those of the draw itself (float32 forward mode against
   central differences of the analog draw with common random numbers);
-- between matched indices a facet refraction keeps the direction, with weight 1.
+- between matched indices a facet refraction keeps the direction, with weight 1;
+- the reading: same-material skip, NoRINDEX kill, polish >= 1, the refused values.
 
 Geant4's own paths: ``tests/unit/test_g4_boundary.py``.
 """
@@ -51,15 +51,15 @@ def _states(seed, n, wi):
 
 
 def _weighted(lobe_name, live, ref, shared=False, theta=THETA):
-    """Return f(u, er, ei, r, n1, n2) -> (direction, weight, far) of the step's dielectric branch, drawn at ``ref``."""
+    """Return f(u, er, ei, r, n1, n2) -> (direction, weight, far) of the step's dielectric branch, drawn at the width
+    ``ref``."""
     lobe = facets.FACET_LOBES[lobe_name]
     wi = _wi(theta)
 
     def one(u, er, ei, r, n1, n2):
-        r_ref, idx_ref = (jax.lax.stop_gradient(r), (jax.lax.stop_gradient(n1), jax.lax.stop_gradient(n2))) if shared \
-            else (F32(ref[0]), (F32(ref[1]), F32(ref[2])))  # fmt: skip
+        r_ref = jax.lax.stop_gradient(r) if shared else F32(ref)
         lb = se.Lobes(wi=wi, n=UP, er=er, ei=ei, width={"sigma_alpha": r}, width_ref={"sigma_alpha": r_ref}, rand=u,
-                      shared=shared, idx=(n1, n2), idx_ref=idx_ref)  # fmt: skip
+                      shared=shared, idx=(n1, n2))  # fmt: skip
         out = se._dielectric_path_branch(lobe, lb)(None)
         return out.d, out.w, out.far
 
@@ -84,12 +84,13 @@ def _hist(d, w=None):
 
 
 @pytest.mark.parametrize("lobe_name", ["glisur_dielectric", "glisur_dielectric+cover"])
-@pytest.mark.parametrize("live", [(0.67, *IDX0), (R0, 1.0, 1.60), (R0, 1.0, 1.74), (R0, 1.03, 1.67)],
-                         ids=["narrower-ball", "n2-down", "n2-up", "n1-up"])  # fmt: skip
+@pytest.mark.parametrize("live", [(0.67, *IDX0), (R0, 1.0, 1.60), (R0, 1.0, 1.74), (R0, 1.03, 1.67),
+                                  (R0, 1.67, 1.6705)],
+                         ids=["narrower-ball", "n2-down", "n2-up", "n1-up", "near-matched"])  # fmt: skip
 def test_a_path_reweighted_to_other_values_is_the_path_drawn_there(lobe_name, live):
     """Reference paths weighted live / reference against paths drawn at the live values: the histogram (weighted
     chi2, both samples' variances) and the share beyond the surface."""
-    one, _ = _weighted(lobe_name, live, (R0, *IDX0))
+    one, _ = _weighted(lobe_name, live, R0)
     u = _uniforms(1, N)
     er, ei = _states(2, N, _wi())
     d, w, far = jax.jit(jax.vmap(one, (0, 0, 0, None, None, None)))(u, er, ei, *(F32(x) for x in live))
@@ -102,7 +103,7 @@ def test_a_path_reweighted_to_other_values_is_the_path_drawn_there(lobe_name, li
     assert stats.chi2.sf(c2, int(use.sum())) > P_MIN, (c2, int(use.sum()))
     m_w, s_w = float(np.mean(w * far)), float(np.std(w * far)) / math.sqrt(N)
     m_d, s_d = float(np.mean(far2)), float(np.std(far2)) / math.sqrt(N)
-    assert abs(m_w - m_d) < z_limit() * math.hypot(s_w, s_d), (m_w, m_d)
+    assert abs(m_w - m_d) <= z_limit() * math.hypot(s_w, s_d), (m_w, m_d)
 
 
 @pytest.mark.parametrize("which", [0, 1, 2], ids=["width", "n1", "n2"])
@@ -110,7 +111,7 @@ def test_the_derivatives_are_those_of_the_draw(which):
     """d/dx E[far] and E[dz] from the step's weights (forward mode, the covered lobe, the reference the live values)
     against central differences of the analog draw at x +- h with common random numbers, Richardson extrapolated."""
     x0 = [R0, *IDX0]
-    one, _ = _weighted("glisur_dielectric+cover", x0, x0, shared=True)
+    one, _ = _weighted("glisur_dielectric+cover", x0, R0, shared=True)
     u = _uniforms(5, N)
     er, ei = _states(6, N, _wi())
 
@@ -148,7 +149,7 @@ def test_between_matched_indices_a_facet_refraction_passes_straight_with_weight_
     def one(uu, a, b):
         n = F32(1.4)
         lb = se.Lobes(wi=wi, n=UP, er=a, ei=b, width={"sigma_alpha": F32(R0)}, width_ref={"sigma_alpha": F32(R0)},
-                      rand=uu, shared=False, idx=(n, n), idx_ref=(n, n))  # fmt: skip
+                      rand=uu, shared=False, idx=(n, n))  # fmt: skip
         out = se._dielectric_path_branch(lobe, lb)(None)
         return out.d, out.w, out.far, out.er
 
@@ -156,6 +157,44 @@ def test_between_matched_indices_a_facet_refraction_passes_straight_with_weight_
     np.testing.assert_allclose(d, np.tile(np.asarray(wi), (4096, 1)), atol=1e-6)
     np.testing.assert_allclose(er1, np.asarray(er), atol=1e-6)
     assert np.all(far) and np.allclose(w, 1.0)
+
+
+# ---------------------------------------------------------------------------------------------------- the reading
+def _surface(value=0.3, model="glisur", finish="ground"):
+    from lumen.format import schema
+
+    return schema.Surface("s", type="dielectric_dielectric", model=model, finish=finish, value=value)
+
+
+def test_the_reading_is_skipped_between_one_material_and_killed_without_rindex():
+    """Geant4's SameMaterial and NoRINDEX returns come before the R / T draw (measured in 10.7.4: a same-material
+    border transmits at R = 0 too)."""
+    from lumen.rules import optics
+    from lumen.rules.boundary import FAR_KILL
+    from lumen.surfaces import types
+
+    for e in (optics.surface(_surface()), optics.geant4_sensor(_surface())):
+        assert e.ignored_between_same_material and e.far_side == FAR_KILL and e.surface_type.refracts
+    assert optics.geant4_sensor(_surface()).surface_type is types.GLISUR_DIELECTRIC
+
+
+@pytest.mark.parametrize("value", [1.0, 1.5])
+def test_polish_one_and_above_is_the_polished_reading(value):
+    """GetFacetNormal returns the normal for glisur at polish >= 1."""
+    from lumen.rules import optics
+
+    s = optics.surface(_surface(value))
+    p = optics.surface(_surface(0.3, finish="polished"))
+    assert s.surface_type == p.surface_type and s.params == p.params and not s.surface_type.refracts
+    assert (s.ignored_between_same_material, s.far_side) == (p.ignored_between_same_material, p.far_side)
+
+
+@pytest.mark.parametrize(("value", "model"), [(-0.1, "glisur"), (0.9995, "glisur"), (0.3, "unified")])
+def test_the_refused_readings(value, model):
+    from lumen.rules import optics
+
+    with pytest.raises(optics.OpticsRefused):
+        optics.surface(_surface(value, model))
 
 
 # ------------------------------------------------------------------------------------------------- through simulate
@@ -278,12 +317,12 @@ def test_through_simulate_the_polish_derivative_is_the_draws(toy):
 
 
 @pytest.mark.slow  # compiles the photon loop: about a minute on 4 CPUs
-@pytest.mark.parametrize(("key", "factor"), [("materials/SolidB/RINDEX", 1.005), ("materials/GasA/RINDEX", 1.02),
-                                             ("surfaces/TPB/polish", 1.1)])  # fmt: skip
+@pytest.mark.parametrize(("key", "factor"), [("materials/SolidB/RINDEX", 1.2), ("materials/SolidB/RINDEX", 0.7),
+                                             ("materials/GasA/RINDEX", 1.5), ("surfaces/TPB/polish", 1.1)])  # fmt: skip
 def test_through_simulate_a_held_reference_reaches_other_values(toy, key, factor):
-    """simulate(params, reference=default): the paths drawn at the default values and weighted to ``params`` (an index
-    or the polish moved; the facet ball narrower) give the light drawn at ``params`` (other seeds). A move of the far
-    medium's index leaves the reference's facet ball (docs/explanation/known-limits.md): a small one here."""
+    """simulate(params, reference=default): the paths drawn at the default polish and weighted to ``params`` (an index
+    or the polish moved; the facet ball narrower) give the light drawn at ``params`` (other seeds). An index may move
+    any way, the side of total reflection included: the facets refract at the live indices."""
     import lumen
 
     det, src, below = toy

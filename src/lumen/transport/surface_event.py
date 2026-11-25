@@ -78,7 +78,7 @@ def _amplitudes(a8):
 # ---------------------------------------------------------------------------------------- the outcome's direction
 class Lobes(NamedTuple):
     """The drawn outcome's inputs: incoming direction, normal and state at the crossing, the widths, uniforms, and
-    the crossing's indices (n1, n2) live and at the reference (a dielectric facet path's)."""  # noqa: D205, D209
+    the crossing's live indices (n1, n2) (a dielectric facet path's)."""  # noqa: D205, D209
 
     wi: jax.Array
     n: jax.Array
@@ -89,7 +89,6 @@ class Lobes(NamedTuple):
     rand: jax.Array
     shared: bool
     idx: tuple
-    idx_ref: tuple
 
 
 class Outcome(NamedTuple):
@@ -137,9 +136,16 @@ def _facet_path_branch(lobe, lb):
 
 def _dielectric_path_branch(lobe, lb):
     def f(_):
-        """Return the GLISUR dielectric facet path's Outcome: drawn at the reference (width, indices, the state at the
-        crossing), weighted as a whole path, live over the density drawn from; its Jones vector the live one."""  # noqa: D205, D209
+        """Return the GLISUR dielectric facet path's Outcome: drawn at the reference width and at the live indices and
+        state (held), weighted as a whole path, live over the density drawn from; its Jones vector the live one.
+
+        The indices drawn at are the live ones, as a polished interface refracts (``outcome_direction``): a refracted
+        direction is a map of the facet whose size is the index gap, so a direction drawn at other indices implies
+        another facet, outside the reference ball once the index moves by a share of the gap (at matched indices at
+        any move), and no weight corrects it.
+        """
         proposal = lobe.facet_proposal_logpdf
+        idx = (sg(lb.idx[0]), sg(lb.idx[1]))
 
         def visit(c, ev):
             lp, lr, er, ei, er_r, ei_r = c
@@ -148,12 +154,12 @@ def _dielectric_path_branch(lobe, lb):
             if proposal is not None or not lb.shared:
                 q = proposal if proposal is not None else lobe.facet_logpdf
                 ev_r = ev._replace(w0=sg(ev.w0))
-                lr_k, _, er_r, ei_r = q({**lb.width_ref, "idx": lb.idx_ref}, ev_r, (er_r, ei_r), lb.n)
+                lr_k, _, er_r, ei_r = q({**lb.width_ref, "idx": idx}, ev_r, (er_r, ei_r), lb.n)
                 lr = lr + sg(lr_k)
             return lp, lr, er1, ei1, er_r, ei_r
 
         z = jnp.zeros((), lb.wi.dtype)
-        p_ref = {**lb.width_ref, "idx": lb.idx_ref, "er": lb.er, "ei": lb.ei}
+        p_ref = {**lb.width_ref, "idx": idx, "er": lb.er, "ei": lb.ei}
         start = (z, z, lb.er, lb.ei, sg(lb.er), sg(lb.ei))
         c, d_, far, _ = lobe.path(p_ref, lb.wi, lb.n, lb.rand, visit, start)
         lp, lr, er, ei, _, _ = c

@@ -210,8 +210,7 @@ class StepContext(NamedTuple):
     table's row (-1 none), ``cont`` (a continue event), ``live_eval`` (live TypeEval), ``sigma_r``, ``p_draw`` (drawn
     from), ``p_proposal`` (the proposal), ``o`` the drawn outcome (-1 none), ``os_`` it clamped, ``drawn`` (o >= 0);
     ``ctx`` the crossing as the surface kernel reads it (lam, wi, n, n1, n2, er, ei: the state, filled for an
-    unpolarised photon); ``idx_r`` its (n1, n2) at the reference (a dielectric facet path is drawn there). ``rand``:
-    the step's uniforms; ``scatter``: the free path ends before the crossing.
+    unpolarised photon). ``rand``: the step's uniforms; ``scatter``: the free path ends before the crossing.
     """
 
     rand: dict
@@ -240,7 +239,6 @@ class StepContext(NamedTuple):
     os_: Any
     drawn: Any
     ctx: dict
-    idx_r: Any
     scatter: Any
 
 
@@ -345,7 +343,7 @@ def _step_context(model, ops, ph, key):
     surf = _surface(model, q, zero)
     row, cont = surf
     ctx, live_eval = _crossing(model, ops.params, ph, q, surf, n1, (er0, ei0))
-    ref_ctx, ref_eval = (ctx, live_eval) if shared else _crossing(model, ops.reference, ph, q, surf, n1_r, (er0, ei0))
+    ref_eval = live_eval if shared else _crossing(model, ops.reference, ph, q, surf, n1_r, (er0, ei0))[1]
     ref_eval = jax.tree_util.tree_map(sg, ref_eval)
     pr_r = ref_eval.probs
     p_draw = estimator.edge_floor(pr_r, row, tables, cfg.edge_rows) if cfg.edge_rows else pr_r
@@ -357,7 +355,7 @@ def _step_context(model, ops, ph, key):
                      reach_live=jnp.exp(-mu * dist), reach_ref=jnp.exp(-mu_r * sg(dist)),
                      att_if=jnp.exp(-mu_abs * dist), att_r=jnp.exp(-mu_abs_r * sg(dist)), row=row, cont=cont,
                      live_eval=live_eval, sigma_r=ref_eval.sigma_alpha, p_draw=p_draw, p_proposal=p_proposal, o=o,
-                     os_=jnp.maximum(o, 0), drawn=o >= 0, ctx=ctx, idx_r=(sg(ref_ctx["n1"]), sg(ref_ctx["n2"])),
+                     os_=jnp.maximum(o, 0), drawn=o >= 0, ctx=ctx,
                      scatter=(mu_r > 0.0) & (s < sg(dist)) & ph.alive)  # fmt: skip
     return ph, b0, sc
 
@@ -372,7 +370,7 @@ def _surface_event(model, ops, ph, sc):
     width = {"tables": ops.tables["unified"]}
     lb = se.Lobes(wi=ph.d, n=nrm, er=ctx["er"], ei=ctx["ei"], width={"sigma_alpha": sc.live_eval.sigma_alpha, **width},
                   width_ref={"sigma_alpha": sc.sigma_r, **width}, rand=sc.rand["lobe"],
-                  shared=ops.reference is None, idx=(ctx["n1"], ctx["n2"]), idx_ref=sc.idx_r)  # fmt: skip
+                  shared=ops.reference is None, idx=(ctx["n1"], ctx["n2"]))  # fmt: skip
     cross = (ph.d, nrm, ctx["n1"] / ctx["n2"], (ctx["er"], ctx["ei"], sc.live_eval.amps8))
     out = se.outcome_direction(tables, sc.row, os_, cross, lb)
     d_new = unit(out.d)  # no norm drift over many bounces
