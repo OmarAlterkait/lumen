@@ -30,7 +30,7 @@ now, and what to do.
   The build cache keys a navigator by its precision (docs/dev/decisions.md, 29).
 - **Skin sensors**: a `border_into` group's volume that no border sensor enters and whose own skin detects has that
   skin as its sensor, met where Geant4 picks it (entering from the volume's mother, or from a volume without a skin);
-  leaving through it detects with the surface's EFFICIENCY, credited to the volume left. nexus's photocathodes and
+  leaving through it the skin is the surface and detects nothing, as InvokeSD's. nexus's photocathodes and
   SiPMs read so (G4OpticalParameters::SetBoundaryInvokeSD). A `border_into` group that binds nothing, neither a border
   into its volumes nor a detecting skin, is refused (it converted with no sensors).
 - **Border surfaces across coincident faces**: a border between volumes that never touch as mother and daughter or as

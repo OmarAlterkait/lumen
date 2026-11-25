@@ -459,8 +459,6 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `sensor binding <sb>: entry must be 'any', 'border' or 'skin'` | `DescriptionError` | `lumen.build.lookup` |
 | `sensor binding <sb>: give exactly one of lv= or pv=` | `DescriptionError` | `lumen.build.lookup` |
 | `sensor entry <name>: crossings into it have different normal-incidence absorptance (<by_entry> and <a_n> at <lam> nm)` | `OpticsError` | `lumen.build.lookup` |
-| `skin exit of LV <lv>: <k> is not a library sensor` | `DescriptionError` | `lumen.build.lookup` |
-| `skin exit of LV <lv>: its placements are no skin sensors` | `DescriptionError` | `lumen.build.lookup` |
 | `skin on LV <lv>: <s> is not a library surface` | `DescriptionError` | `lumen.build.lookup` |
 | `skin surface <s> on LV <lv>, which does not occur in the tree` | `DescriptionError` | `lumen.build.lookup` |
 | `surface <name>: expected a SurfaceEntry(SurfaceType, params)` | `DescriptionError` | `lumen.build.lookup` |

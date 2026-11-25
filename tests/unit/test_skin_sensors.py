@@ -5,12 +5,11 @@ What is checked:
 
 - at the surface lookup, the skin is the sensor where Geant4 picks it: entering from the mother (the daughter's skin
   first), or from a volume without a skin; a sibling's own skin, or a border on the crossing, is read instead;
-  leaving a transparent skin sensor through its skin detects, credited to the volume left;
+  leaving a transparent skin sensor its skin is the surface, without detection;
 - through simulate, a pencil beam into a sensor slab whose skin has R = 0 and EFFICIENCY 0.4 is detected at 0.4;
 - a border_into group with neither a border into its volumes nor a detecting skin is refused.
 """
 
-import dataclasses
 import math
 
 import numpy as np
@@ -32,8 +31,6 @@ PMT = (
 
 def _lib():
     lib = library()
-    pmt = lib.sensors["pmt"]
-    lib.sensors["pmt_out"] = dataclasses.replace(pmt, exit=True)
     lib.surfaces["mirror"] = SurfaceEntry(types.no_detection(types.SPECULAR_METAL), {"R": 1.0})
     return lib
 
@@ -41,16 +38,32 @@ def _lib():
 def test_the_skin_is_the_sensor_where_geant4_picks_it():
     t = tree(*PMT)
     cath = (SensorBinding("pmt", 1, pv="Cath", entry="skin"),)
-    o = compile_(t, lib=_lib(), skins={"SkinnedLV": "refl"}, sensors=cath, skin_exits={"CathLV": "pmt_out"})
+    o = compile_(t, lib=_lib(), skins={"SkinnedLV": "refl", "CathLV": "refl2"}, sensors=cath)
     assert kern(o, "Pmt", "Cath")[1] == "sensor:pmt"  # from the mother: the daughter's skin
     assert kern(o, "Side", "Cath")[1] == "sensor:pmt"  # from a sibling without a skin: the cathode's
     assert kern(o, "Skinned", "Cath")[1] == "surface:refl"  # from a sibling with its own: that one first
-    # leaving the cathode through its skin: the exit sensor, credited to the cathode
-    assert kern(o, "Cath", "Pmt")[1] == "sensor:pmt_out" and o.deposit_pre[o.class_of["Cath"], o.class_of["Pmt"]]
-    assert kern(o, "Cath", "Skinned")[1] == "sensor:pmt_out"  # into a sibling with a skin: the cathode's first
+    # leaving the cathode its skin is the surface, without detection (Geant4's InvokeSD: the volume entered's SD)
+    assert kern(o, "Cath", "Pmt")[1] == "surface:refl2" and kern(o, "Cath", "Pmt")[0].detects is False
+    assert kern(o, "Cath", "Skinned")[1] == "surface:refl2"  # into a sibling with a skin: the cathode's first
     o = compile_(t, lib=_lib(), borders={("Pmt", "Cath"): "mirror"},
                  sensors=(SensorBinding("pmt", 1, pv="Cath", entry="skin"),))  # fmt: skip
     assert kern(o, "Pmt", "Cath")[1] == "surface:mirror"  # a border before any skin
+
+
+def test_daughters_and_touching_placements_of_a_skin_sensor():
+    """Geant4 10.7.4 with SetBoundaryInvokeSD (skins' EFFICIENCY 0.4 and 0.7 on two touching slabs): a crossing from
+    one into the other is read by the skin of the volume left and detected by the volume entered; a daughter without a
+    skin leads back into its mother through the mother's."""
+    t = tree(*PMT[:3], ("Cath2", "CathLV", "LAr", "Pmt"), ("Core", "CoreLV", "Water2", "Cath"),
+             ("Other", "OtherLV", "Water2", "Pmt"))  # fmt: skip
+    o = compile_(t, lib=_lib(), skins={"CathLV": "refl2", "OtherLV": "refl"},
+                 sensors=(SensorBinding("pmt", 2, lv="CathLV", entry="skin"),))  # fmt: skip
+    assert kern(o, "Cath", "Cath2")[1] == "sensor:pmt"  # the one skin: detected by the placement entered
+    assert o.deposit_pre is None
+    assert kern(o, "Pmt", "Cath2")[1] == "sensor:pmt" and len(o.sensor_pvs) == 2
+    assert kern(o, "Cath", "Core")[1] == "surface:refl2"  # into a daughter without a skin: its mother's
+    assert kern(o, "Core", "Cath")[1] == "sensor:pmt"
+    assert kern(o, "Other", "Cath")[1] == "surface:refl"  # another skin first
 
 
 SLAB = """<?xml version="1.0" encoding="UTF-8" ?>
@@ -118,3 +131,11 @@ def test_a_border_into_group_with_nothing_to_read_is_refused(tmp_path):
 
     with pytest.raises(LibraryError, match="would never detect"):
         _convert(tmp_path, SLAB.format(skin=""))
+
+
+def test_a_skin_without_efficiency_is_no_sensor(tmp_path):
+    """Nothing to detect with (no EFFICIENCY, no efficiency of the group's): refused, as a group with no skin is."""
+    from lumen.build.library import LibraryError
+
+    with pytest.raises(LibraryError, match="would never detect"):
+        _convert(tmp_path, SLAB.format(skin=SKIN).replace('<property name="EFFICIENCY" ref="E4"/>', ""))

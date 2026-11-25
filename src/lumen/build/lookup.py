@@ -206,7 +206,9 @@ class SensorBinding:
     border bound to this sensor do, any other entry resolves as if the PV were no sensor (Geant4's photocathode is a
     border surface, not the volume); "skin" -- the sensor is the PV's own skin surface, met where Geant4 picks it: no
     border on the crossing, and the PV entered from its mother (enteredDaughter: the daughter's skin first) or from a
-    volume with no skin (a nexus photocathode, with G4OpticalParameters::SetBoundaryInvokeSD).
+    volume with no skin or the same one (a nexus photocathode, with G4OpticalParameters::SetBoundaryInvokeSD). The
+    skin itself stays bound: leaving the PV it is its surface and detects nothing (InvokeSD gives a Detection to the
+    volume entered).
     """
 
     sensor: str
@@ -225,9 +227,6 @@ class Bindings:
     # (pre physvol, post physvol) -> surface | sensor: every touching instance pair of the two (``Tree.physvol``)
     borders: Mapping[tuple[str, str], str] = field(default_factory=dict)
     sensors: tuple[SensorBinding, ...] = ()
-    # LV -> the exit sensor of its skin sensor: leaving the volume where Geant4 picks its skin, detected with the
-    # surface's EFFICIENCY and credited to the volume left (``lumen.rules.sensors``)
-    skin_exits: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, eq=False)
@@ -264,20 +263,8 @@ class Description:
         entry = self.sensor_entry.get(post, "any")
         if entry == "skin":
             return self.border(pre, post) is None and (relation(self.tree, pre, post) == "daughter"
-                                                       or not self.has_skin(pre))  # fmt: skip
+                                                       or self.skin[pre] in (None, self.skin[post]))  # fmt: skip
         return entry == "any" or self.border(pre, post) == self.sensor[post]
-
-    def has_skin(self, pv):
-        """Return whether a PV has a skin surface Geant4 reads: a bound skin, or its own as a skin sensor."""
-        return self.skin[pv] is not None or self.sensor_entry.get(pv) == "skin"
-
-    def skin_exit(self, pre, post):
-        """Return the exit sensor of pre's skin sensor where the crossing pre -> post leaves through it (Geant4 picks
-        pre's skin: no border, and post no daughter of pre or one with no skin), else None."""  # noqa: D205, D209
-        k = self.bindings.skin_exits.get(self.tree.by_name[pre].lv)
-        if k is None or self.sensor_entry.get(pre) != "skin" or self.border(pre, post) is not None:
-            return None
-        return k if relation(self.tree, pre, post) != "daughter" or not self.has_skin(post) else None
 
 
 def _check_materials(library, tree, b):
@@ -341,7 +328,7 @@ def _bind_sensors(library, tree, b):
 
 def _check_sensor_borders(library, tree, b, sensor, entry, skin):
     for n in sorted(sensor):
-        if skin[n] is not None:
+        if skin[n] is not None and entry[n] != "skin":
             raise DescriptionError(f"sensor PV {n!r} also has a skin surface {skin[n]!r} on its LV: ambiguous "
                                    "(the sensor's surface type is the boundary of a sensor)")  # fmt: skip
     entered = set()
@@ -364,14 +351,6 @@ def _check_sensor_borders(library, tree, b, sensor, entry, skin):
                                "into it: it would never detect")  # fmt: skip
 
 
-def _check_skin_exits(library, tree, b, entry):
-    for lv, k in sorted(b.skin_exits.items()):
-        if k not in library.sensors:
-            raise DescriptionError(f"skin exit of LV {lv!r}: {k!r} is not a library sensor")
-        if not any(entry.get(n) == "skin" for n in tree.placements(lv)):
-            raise DescriptionError(f"skin exit of LV {lv!r}: its placements are no skin sensors")
-
-
 def resolve(library: Library, tree, bindings: Bindings) -> Description:
     """Check a library, a tree and bindings against each other (fail closed) and return the Description."""
     check_library(library)
@@ -381,7 +360,6 @@ def resolve(library: Library, tree, bindings: Bindings) -> Description:
     sensor, entry = _bind_sensors(library, tree, b)
     skin = {n: b.skins.get(tree.by_name[n].lv) for n in tree.order}
     _check_sensor_borders(library, tree, b, sensor, entry, skin)
-    _check_skin_exits(library, tree, b, entry)
     medium = {n: b.materials[tree.by_name[n].material] for n in tree.order}
     coincident = {xy: s for (pre, post), s in sorted(b.borders.items()) if not border_instances(tree, pre, post)[0]
                   for xy in nearest_instances(tree, pre, post)}  # fmt: skip
@@ -686,10 +664,6 @@ class _Regions:
     def enters_sensor(self, pre, post):
         """Return whether the crossing pre -> post meets post's sensor type."""
         return self.d.enters_sensor(pre, post)
-
-    def skin_exit(self, pre, post):
-        """Return the exit sensor of pre's skin sensor met by the crossing pre -> post (``Description.skin_exit``)."""
-        return self.d.skin_exit(pre, post)
 
     def border(self, pre, post):
         """Return the border surface (or sensor) of the crossing pre -> post (``Description.border``)."""

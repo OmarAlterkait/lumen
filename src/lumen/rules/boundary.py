@@ -9,8 +9,9 @@ for physvols that meet only across coincident faces between their nearest instan
 library entries and which media are opaque. For an ordered crossing (pre, post), in Geant4's order:
 
 1. entering a sensor PV whose rule is "any entry" (or across the border bound to its sensor, or where Geant4 picks
-   its own detecting skin): that sensor's type; a border sensor out of pre, or pre's skin sensor where Geant4 picks
-   that skin leaving it (an exit sensor: WCSim's Detection leaving the tube) is credited to pre;
+   its own detecting skin): that sensor's type; a border sensor out of pre (an exit sensor: WCSim's Detection leaving
+   the tube) is credited to pre. Leaving a skin sensor, its skin is the surface and detects nothing
+   (G4OpBoundaryProcess::InvokeSD calls the sensitive detector of the volume entered);
 2. the border surface of the ordered pair (pre, post): directional, as the GDML defines it;
 3. the skins: post's then pre's when post is a daughter of pre (Geant4's enteredDaughter), otherwise pre's then
    post's;
@@ -89,9 +90,6 @@ def crossing(v, pre, post, rel):
     elif v.border(pre, post) in lib.sensors:  # an exit sensor: pre is a sensor PV
         name = v.border(pre, post)
         side, reason = "pre", f"border sensor {name} (credited to pre)"
-    elif v.skin_exit(pre, post) is not None:  # leaving a skin sensor through its skin
-        name = v.skin_exit(pre, post)
-        side, reason = "pre", f"skin sensor {name} (credited to pre)"
     if name is None:
         stype, origin, reason, far = _surface(v, pre, post, rel)
     elif lib.sensors[name].ignored_between_same_material and v.material(pre) == v.material(post):
