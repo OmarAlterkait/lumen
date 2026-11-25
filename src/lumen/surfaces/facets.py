@@ -489,11 +489,11 @@ def _dielectric_path_of(e):
         """Draw a GLISUR dielectric facet path at p and fold ``visit`` over its FacetEvents: (carry, wo, far, k).
 
         p: "sigma_alpha" (r = 1 - polish), "idx" (n1, n2) and the Jones vector "er", "ei" at the crossing, held (the
-        width the reference's). Geant4's loop (G4OpBoundaryProcess::DielectricDielectric, 11.3.0): a facet drawn for the current
-        direction about the current normal, reflected or refracted with the Fresnel shares of the photon's state about
-        it; a refraction that leaves the photon pointing back at the surface swaps the media and the normal; it ends
-        when the direction leaves the surface, on either side (``far``: an odd number of refractions). The draws are
-        held; ``visit(carry, event)`` gets each facet's event with w0 = wi as given (live) for the first facet.
+        width the reference's). Geant4's loop (G4OpBoundaryProcess::DielectricDielectric, 11.3.0): a facet drawn for the
+        current direction about the current normal, reflected or refracted with the Fresnel shares of the photon's state
+        about it; a refraction that leaves the photon pointing back at the surface swaps the media and the normal; it
+        ends when the direction leaves the surface, on either side (``far``: an odd number of refractions). The draws
+        are held; ``visit(carry, event)`` gets each facet's event with w0 = wi as given (live) for the first facet.
         """
         r, nd = sg(p["sigma_alpha"]), sg(n)
         idx = (sg(p["idx"][0]), sg(p["idx"][1]))

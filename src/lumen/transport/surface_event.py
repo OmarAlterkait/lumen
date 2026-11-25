@@ -136,9 +136,10 @@ def _facet_path_branch(lobe, lb):
 
 def _dielectric_path_branch(lobe, lb):
     def f(_):
-        """Return the GLISUR dielectric facet path's Outcome: drawn at the reference width and at the live indices and
-        state (held), weighted as a whole path, live over the density drawn from; its Jones vector the live one.
+        """Return the GLISUR dielectric facet path's Outcome.
 
+        Drawn at the reference width and at the live indices and state (held), weighted as a whole path, live over the
+        density drawn from; its Jones vector the live one.
         The indices drawn at are the live ones, as a polished interface refracts (``outcome_direction``): a refracted
         direction is a map of the facet whose size is the index gap, so a direction drawn at other indices implies
         another facet, outside the reference ball once the index moves by a share of the gap (at matched indices at

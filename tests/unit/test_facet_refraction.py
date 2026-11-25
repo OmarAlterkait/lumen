@@ -1,6 +1,7 @@
 """GLISUR facet refraction (glisur ground dielectric_dielectric): the path's weights, as the photon step forms them.
 
-The path is drawn at the reference polish, the live indices and state, and weighted by its live / drawn density, facet by facet (``lumen.surfaces.facets.dielectric_event_logpdf``; ``lumen.transport.surface_event``,
+The path is drawn at the reference polish, the live indices and state, and weighted by its live / drawn density, facet
+by facet (``lumen.surfaces.facets.dielectric_event_logpdf``; ``lumen.transport.surface_event``,
 ``_dielectric_path_branch``). What is checked:
 
 - reweighted to other values (a smaller facet ball), the paths drawn at the reference are the paths drawn there, at
