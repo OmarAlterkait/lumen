@@ -9,7 +9,8 @@ The documentation follows the Diátaxis layout:
   comparison with Geant4; [light sources](howto/sources.md), the sources lumen ships (SK, WCTE, ANNIE,
   Hyper-K and IWCD are lumen-wc's, SBND, MicroBooNE, ICARUS and DUNE lumen-tpc's); [extending
   lumen](howto/extending.md), your own source, sensor response or medium model, with its parameters as keys;
-  [a detector written in YAML](howto/yaml-detector.md), by hand.
+  [a detector written in YAML](howto/yaml-detector.md), by hand; [the GDML viewer](howto/viewer.md), a GDML file
+  in your browser as lumen reads it.
 - **Reference**: [the API](reference/api.md), every public function and its signature; [sensor value
   sets](reference/value-sets.md), the format of a sensor model's values; [errors](reference/errors.md), every error
   lumen raises with its fix; [vocabulary](reference/vocabulary.md), the words lumen uses.

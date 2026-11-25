@@ -82,6 +82,8 @@ Then follow the tutorial.
 - [Light sources](docs/howto/sources.md).
 - [Extending lumen](docs/howto/extending.md): your own source, sensor response, medium or surface model.
 - [A detector written in YAML](docs/howto/yaml-detector.md): write one by hand.
+- [The GDML viewer](docs/howto/viewer.md): a GDML file in your browser, with lumen's reading of every material and
+  surface.
 - Reference: [the API](docs/reference/api.md), [sensor value sets](docs/reference/value-sets.md),
   [the detector file](docs/reference/format.md).
 - [Errors](docs/reference/errors.md): the errors lumen raises, what each means, and the fix.

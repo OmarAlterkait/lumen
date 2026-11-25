@@ -1,2 +1,5 @@
 lumen
 Copyright 2026 Omar Alterkait
+
+src/lumen/viewer/static/three.min.js and OrbitControls.js are three.js r128 (npm three 0.128.0),
+Copyright 2010-2021 three.js authors, under the MIT License (src/lumen/viewer/static/three.LICENSE).

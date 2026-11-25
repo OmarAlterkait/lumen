@@ -10,4 +10,4 @@ What is not built yet, with no release planned. A release that builds an item re
 - Open extension points: surface models, readout components, features, time profiles, re-emitting media.
 - `lumen.estimate` (a cost estimate before a run), `Light.check()` and an eager warning on bad health,
   `Params.sensor(id, field)`.
-- A viewer; `lumen convert` and `lumen doctor` commands (the command line has `python -m lumen.compare` only).
+- `lumen convert` and `lumen doctor` commands (the command line has `python -m lumen.compare` only).

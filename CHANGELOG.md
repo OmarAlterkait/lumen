@@ -3,6 +3,16 @@
 Changes a user of lumen can see, newest first. Each entry says what changed, what an old file, key or script does
 now, and what to do.
 
+## Unreleased
+
+### Added
+
+- **The GDML viewer**: `python -m lumen.viewer FILE.gdml` (or a package's `package:name`, or `--recipe FILE.py:NAME`)
+  converts and loads the detector and serves a page with its geometry in 3D and what lumen built: the reading of
+  every material, surface and sensor group, the surface of each crossing, what lumen refuses and why, the tables
+  against wavelength (`--range` shades the light's). Every drawn solid is compared with the solid lumen traces. It
+  needs the `view` extra (`manifold3d`); three.js r128 ships with it (docs/howto/viewer.md).
+
 ## 0.2.1 (2026-11-23)
 
 ### Results that change

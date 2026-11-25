@@ -868,4 +868,10 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `operands: the roulette is a number ε > 0 (a photon ends only at weight 0), got <roulette>` | `ValueError` | `lumen.transport.step` |
 | `<value> is not a number or a quantity of <what> such as "<example>"` | `ValueError` | `lumen.units` |
 | `<value>: <src> is not a unit of <what> (one of <join>)` | `ValueError` | `lumen.units` |
+| `lumen.viewer needs manifold3d: install lumen's view extra (pip install -e '.[view]')` | `ImportError` | `lumen.viewer.mesh` |
+| `no display mesh for a <type> solid` | `NotImplementedError` | `lumen.viewer.mesh` |
+| `recipe <spec>: <path> is not a Python file` | `ValueError` | `lumen.viewer.scene` |
+| `recipe <spec>: give FILE.py:NAME` | `ValueError` | `lumen.viewer.scene` |
+| `up: <up> is not one of <AXES>` | `ValueError` | `lumen.viewer.scene` |
+| `not JSON: <__name__>` | `TypeError` | `lumen.viewer.server` |
 <!-- end of the generated messages -->
