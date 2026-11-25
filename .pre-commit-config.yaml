@@ -56,5 +56,5 @@ repos:
         entry: '(^|[\s"''=(`])/(?!dev/|tmp\b|usr/|etc/|proc/|sys/|app/|bin/|opt/|path/|jax/|x/|nowhere/)[A-Za-z_][\w.-]*/|--(account|partition|qos)[ =][a-z]'
         language: pygrep
         files: ^(src|tests|tools|examples)/
-        exclude: \.cc$  # C++: Geant4's UI commands ("/run/verbose") read as paths
+        exclude: (\.cc|\.min\.js)$  # C++: Geant4's UI commands ("/run/verbose"), three.js: regular expressions
         stages: [pre-commit]

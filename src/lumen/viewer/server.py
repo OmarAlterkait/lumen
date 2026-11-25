@@ -16,7 +16,7 @@ import json
 import sys
 import webbrowser
 from http import HTTPStatus
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 STATIC = Path(__file__).parent / "static"
@@ -47,7 +47,7 @@ def _default(x):
 def handler(scene_gz: bytes):
     """Return a request handler serving the page and the gzipped scene."""
 
-    class Handler(SimpleHTTPRequestHandler):
+    class Handler(BaseHTTPRequestHandler):
         def do_GET(self):  # noqa: N802 -- the http.server method name
             path = self.path.split("?", 1)[0]
             if path in ("/", "/index.html"):
