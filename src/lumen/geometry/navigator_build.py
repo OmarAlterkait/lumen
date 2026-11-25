@@ -31,6 +31,7 @@ The navigator follows Geant4's tracking, with no configuration.
 from __future__ import annotations
 
 import dataclasses
+import itertools
 from dataclasses import dataclass
 from typing import NamedTuple
 
@@ -155,25 +156,32 @@ def _volumes(scene, T):  # noqa: N803 -- T the instance table
     vo = np.flatnonzero(vol)
     vidx = np.full(n_all, -1, np.int64)
     vidx[vo] = np.arange(len(vo))
+    par = np.asarray(T.parent, np.int64)
     moth = np.full(n_all, -1, np.int64)
-    for i in range(1, n_all):  # parents come first in the canonical order
-        p = int(T.parent[i])
-        moth[i] = vidx[p] if vol[p] else moth[p]
+    up = par[1:]
+    direct = vol[up]
+    moth[1:][direct] = vidx[up[direct]]
+    for i in (np.flatnonzero(~direct) + 1).tolist():  # below a member-less definition: its mother's (parents first)
+        moth[i] = moth[par[i]]
     V = dict(kind=[], R=T.R[vo], t=T.t[vo], med=[], parent=moth[vo].tolist(), depth=T.depth[vo].tolist(),
              name=[T.path[i_] for i_ in vo], defn=[T.defn[i_] for i_ in vo])  # fmt: skip
-    V["origin"] = [defs[d_].origin or d_ for d_ in V["defn"]]
+    first = dict.fromkeys(V["defn"])  # the definitions, as first met
+    origin = {d_: defs[d_].origin or d_ for d_ in first}
+    V["origin"] = [origin[d_] for d_ in V["defn"]]
     whole: dict = {}  # a split union's instance (the instance placing its pieces) -> its group
-    V["piece"] = [whole.setdefault(int(T.parent[i_]), len(whole)) if defs[d_].piece_of else -1
-                  for i_, d_ in zip(vo, V["defn"], strict=True)]  # fmt: skip
-    kinds, kid_of = [], {}
-    for i_ in vo:  # the kinds (first met), media: per volume
-        m = mem[i_]
+    pieces = {d_ for d_ in first if defs[d_].piece_of}
+    V["piece"] = [whole.setdefault(int(par[i_]), len(whole)) if d_ in pieces else -1
+                  for i_, d_ in zip(vo.tolist(), V["defn"], strict=True)]  # fmt: skip
+    kinds, kid_of, kind_of, med_of = [], {}, {}, {}
+    for d_ in first:  # the kinds (first met, by solid), media: per definition
+        m = defs[d_].member
         k = id(m.solid)
         if k not in kid_of:
             kid_of[k] = len(kinds)
             kinds.append(m.solid)
-        V["kind"].append(kid_of[k])
-        V["med"].append(int(m.label.medium))
+        kind_of[d_], med_of[d_] = kid_of[k], int(m.label.medium)
+    V["kind"] = [kind_of[d_] for d_ in V["defn"]]
+    V["med"] = [med_of[d_] for d_ in V["defn"]]
     meshes = [
         (mem[i_].solid.tris @ T.R[i_].T + T.t[i_], int(mem[i_].label.medium), int(moth[i_]), T.defn[i_], int(i_))
         for i_ in np.flatnonzero(mesh)
@@ -216,17 +224,20 @@ def _transparent(n, parent, own, classes):
                                              np.asarray(mesh_cls, np.int64)].astype(np.int64)]  # fmt: skip
     ok = np.ones(n, bool)
     ok[np.asarray(kept, np.int64)] = False
-    for u in range(n):
-        ok[[a for a in own.clips[u] if a < n]] = False  # something below reaches out of it
-        if cls[parent[u]] != cls[u]:
-            ok[u] = False
-        for w in own.owners[u]:  # it lists its owners: they must be of its class
-            if w < n and cls[u] != cls[w]:
-                ok[w] = False
-    for a, b in own.pairs:  # an owner of part of a mesh (a mesh: unit n + k, class n + 1 + k)
-        if a >= n and b < n:
-            ok[b] = False
+    clips = _flat(own.clips[:n])[1]
+    ok[clips[clips < n]] = False  # something below reaches out of it
+    ok[cls[np.asarray(parent[:n], np.int64)] != cls[:n]] = False
+    u, w = _flat(own.owners[:n])  # each lists its owners: they must be of its class
+    ok[w[(w < n) & (cls[u] != cls[np.minimum(w, n)])]] = False
+    pairs = np.asarray(own.pairs, np.int64).reshape(-1, 2)  # an owner of part of a mesh (a mesh: unit n + k)
+    ok[pairs[(pairs[:, 0] >= n) & (pairs[:, 1] < n), 1]] = False
     return ok
+
+
+def _flat(rows):
+    """Return (per item its row, the items) of a sequence of int sequences, flattened."""
+    lens = np.fromiter(map(len, rows), np.int64, len(rows))
+    return np.repeat(np.arange(len(rows)), lens), np.fromiter(itertools.chain.from_iterable(rows), np.int64, lens.sum())
 
 
 def _dissolve(kids, parent, clear, clips):
@@ -296,16 +307,14 @@ def _entries(kids, n, mesh, rot):
     """Return the daughter entries of every volume ordered (mother, group key, daughters' order) and their groups."""
     Rh, hb = rot
     nv = n + 1 + mesh["n_mesh"]
-    lens = np.array([len(x) for x in kids], np.int64)
-    kf = np.concatenate([np.asarray(x, np.int64) for x in kids]) if lens.sum() else np.zeros(0, np.int64)
-    vf = np.repeat(np.arange(len(kids)), lens)
+    vf, kf = _flat(kids)
     un = kf < n
     gkey, G, Rg_all = bvh.frame_groups_all(Rh, hb, vf[un], kf[un])
     # one sequence: (mother, group key, kids order); a mother's mesh chunks after its unit groups
     ent_v = np.r_[vf[un], vf[~un]]
     ent_k = np.r_[gkey, np.full(int((~un).sum()), 3 * (G + nv), np.int64)]
     ent_i = np.r_[kf[un], kf[~un]]
-    o_ = np.lexsort((np.arange(len(ent_v)), ent_k, ent_v))
+    o_ = np.argsort(ent_v * (int(ent_k.max(initial=0)) + 1) + ent_k, kind="stable")  # by (mother, key), as listed
     ent_v, ent_k, ent_i = ent_v[o_], ent_k[o_], ent_i[o_]
     newg = np.r_[True, (ent_v[1:] != ent_v[:-1]) | (ent_k[1:] != ent_k[:-1])] if len(ent_v) else np.zeros(0, bool)
     gs = np.flatnonzero(newg)  # each group's first entry
@@ -425,8 +434,8 @@ def _volume_boxes(tables, V):  # noqa: N803 -- V the volumes' columns
     kind = np.asarray(V["kind"], np.int64)
     Rh = np.asarray(V["R"], float).reshape(-1, 3, 3)
     th = np.asarray(V["t"], float).reshape(-1, 3)
-    cb = np.stack([tables.kind_box[k][0] for k in kind])
-    hb = np.stack([tables.kind_box[k][1] for k in kind])
+    cb = np.stack([b[0] for b in tables.kind_box])[kind]
+    hb = np.stack([b[1] for b in tables.kind_box])[kind]
     cw = np.einsum("nij,nj->ni", Rh, cb) + th
     hw = np.einsum("nij,nj->ni", np.abs(Rh), hb)
     pad = _pad(cw, hw)
@@ -439,8 +448,9 @@ def _candidates(own, n, kids, mesh, n_mesh):
     chunks_of = [[] for _ in range(n_mesh)]
     for c, m_ in enumerate(mesh["cmesh"]):
         chunks_of[m_].append(mesh["ch0"] + c)
-    for u in range(n):  # an owner is a candidate of its non-owner and of the volumes below it it reaches (a mesh: its
-        # triangle chunks); an ancestor u reaches out of is a candidate too (its exit is u's)
+    some = np.fromiter(map(len, own.owners[:n]), np.int64, n) + np.fromiter(map(len, own.clips[:n]), np.int64, n)
+    for u in np.flatnonzero(some).tolist():  # an owner is a candidate of its non-owner and of the volumes below it it
+        # reaches (a mesh: its triangle chunks); an ancestor u reaches out of is a candidate too (its exit is u's)
         kids[u].extend(w if w < n else c for w in own.owners[u] for c in ([w] if w < n else chunks_of[w - n]))
         kids[u].extend(own.clips[u])
 
