@@ -17,13 +17,14 @@ the float32 resolution of the coordinates, the **band**. The rules, each with th
   (``lumen.transport.step``: its point has not moved off that face, so its side there is still its direction's), and a
   zero-length crossing whose solid gives no face of its own (a point one ulp beyond the face just crossed) is read on
   that surface too: its normal is the crossing's.
-- **Relocation.** A crossing is relocated from one band along the ray and past the face met, along its normal the way
-  the photon travels (G4Navigator's LocateGlobalPointAndSetup, up while a solid does not hold the point, then down):
-  one band of the point's own coordinates (``step_band``) for a crossing, whose point is within an ulp of the face at
-  any angle of the ray; ``K_ON`` + 1 of the query's bands for a zero-length one, whose point is the start's, up to
-  ``K_ON`` bands on the near side of the face the on-face rule put the photon on. A volume whose own face coincides
-  with the one met (a daughter placed flush in its mother) is then left, or entered, at that one crossing, as Geant4
-  leaves a mother whose surface the point is on when the direction leaves it.
+- **Relocation.** A crossing is relocated from a point ``RELOCATE_BANDS`` bands past the face met, along that face's
+  normal the way the photon travels (G4Navigator's LocateGlobalPointAndSetup, up while a solid does not hold the
+  point, then down). The point's own distance from the face (``surface_id.face_dist``) is the rest of the step: it is
+  within an ulp of the face for a crossing, at any angle of the ray, and up to ``K_ON`` bands on the near side of it
+  for a zero-length one, where the on-face rule put the photon. A volume whose own face coincides with the one met
+  (a daughter placed flush in its mother) is then left, or entered, at that one crossing, as Geant4 leaves a mother
+  whose surface the point is on when the direction leaves it; a layer thicker than ``RELOCATE_BANDS`` bands is never
+  stepped over, so no layer the navigator resolves (one band and up) is lost to the relocation.
 - **Provenance of the multiples.** The band and its multiples (``BAND_ULPS``, ``K_ON``, ``GRAZE``,
   ``ZERO_STEP_BANDS``, ``FACET_*``, the push) are stated, with every other geometry tolerance, in
   ``lumen.rules.tolerances``: the band is a few float32 ulps of the coordinates (a root and its point each carry about
@@ -70,6 +71,7 @@ from lumen.rules import tolerances as tol
 
 # the band and its multiples, stated once in lumen.rules.tolerances; read as rules.<name> here and in the loop
 BAND_ULPS, BAND_FLOOR, K_ON, GRAZE = tol.BAND_ULPS, tol.BAND_FLOOR, tol.K_ON, tol.GRAZE
+RELOCATE_BANDS = tol.RELOCATE_BANDS
 FACET_BEHIND_BANDS, FACET_SHORT_ULPS, ZERO_STEP_BANDS = (
     tol.FACET_BEHIND_BANDS,
     tol.FACET_SHORT_ULPS,

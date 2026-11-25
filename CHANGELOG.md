@@ -41,7 +41,8 @@ now, and what to do.
   relative, far inside their Monte Carlo error (SBND's and MicroBooNE's TPB films sit in a holder of the liquid argon
   around them, which carries no surface of its own, so reading the light on the holder's face gave the same answer).
   SK's lost weight, light that reached a surface with no row, goes to 0.
-- A run costs 1% to 5% more time (median 2%): a relocation past a face now reads that face's normal.
+- A run costs 1% to 6% more time (median 3%): a relocation past a face now reads that face's normal and the point's
+  distance from it.
 
 ### Changed
 
@@ -62,6 +63,12 @@ now, and what to do.
 
 ### Known limits
 
+- A layer thinner than a band where it is placed is not resolved in float32, flush or not, as before: the relocation
+  steps only ``RELOCATE_BANDS`` (a quarter band) past the face it crossed, so it never steps over a layer, but the
+  on-face rule still takes the two faces of a sub-band layer for one. Measured on the NEXT toy's coating (Geant4 /
+  lumen at the PMT): at 1.9 bands and above every version agrees to 1%; at one band lumen is 9% low (it was 5% low
+  in 0.2.1) and at 0.7 bands 10% low (0.2.1: 40% high); where the coating shifts the light, one band is 1.6x low
+  (0.2.1: 1.6x) and 0.7 bands 1.9x (0.2.1: 1.3x). float64 agrees with Geant4 to 2% at every thickness.
 - A flush film about two to three bands thick (the band is 9.5e-7 times the coordinate scale in m; a film thinner
   than one band is already refused) can still be read as a zero-length crossing of its own far face, which reflects
   the light at the holder instead of shifting it. Which way the float32 rounding falls decides it: at a 10 m

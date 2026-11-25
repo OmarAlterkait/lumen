@@ -7,7 +7,7 @@ shell absent (g4ref: a 1 um shell detects as a 0.1 mm one).
 The surface lookup's side of coincident faces is in test_surfaces.py."""
 
 import numpy as np
-from nav_toys import defn, make_scene, one, per_ray, query, toy
+from nav_toys import defn, make_scene, nav_of, one, per_ray, query, toy
 from test_surfaces import MATS, library, tree
 
 from lumen.build import lookup as regions
@@ -88,3 +88,31 @@ def test_a_start_within_the_band_of_coincident_faces_leaves_every_one_of_them():
             assert bool(r["hit"]) and bool(r["zero"]) and float(r["t"]) == 0.0, (depth, d)
             assert int(r["vol_after"]) == world, (depth, d, nav.names[int(r["vol_after"])])
             assert float(r["normal"][2]) < -0.99, (depth, d, r["normal"])  # the face's normal, against the ray
+
+
+def test_a_crossing_into_a_coating_two_bands_thick_is_not_stepped_over():
+    """Two layers stacked on a mother's face, the outer one flush with it: a photon leaving the inner layer enters
+    the outer one, which is only a couple of bands thick.
+
+    The relocation's point is just past the face met (the relocation rule), so it cannot step over a layer: at
+    K_ON + 1 bands past that face it landed beyond the outer layer and the mother both (the world), and at the
+    photon's own point it stayed in the mother, whose face the photon has not passed.
+    """
+    from lumen.geometry import solids
+    from lumen.rules import navigation
+
+    x0 = 20.0  # a band of 19 um there
+    band = navigation.band(x0)
+    for nb in (1.0, 2.5):  # bands: the outer layer's thickness
+        t = nb * band
+        defs = {"world": defn("world", solids.g4_box(60.0, 60.0, 60.0), 1, [("mother", np.eye(3), (x0, 0.0, 0.0))]),
+                "mother": defn("mother", solids.g4_box(1.0, 1.0, 1.0), 2,
+                               [("out", np.eye(3), (0.5 - t / 2, 0.0, 0.0)),
+                                ("in", np.eye(3), (0.5 - 1.5 * t, 0.0, 0.0))]),
+                "out": defn("out", solids.g4_box(t, 1.0, 1.0), 3),
+                "in": defn("in", solids.g4_box(t, 1.0, 1.0), 4)}  # fmt: skip
+        nav = nav_of(make_scene(defs))
+        inner, outer = nav.names.index("mother_0/in_1"), nav.names.index("mother_0/out_0")
+        x = np.float32(x0 + 0.5 - 1.5 * t)  # the inner layer's middle
+        r = one(query(nav, [x, 0.0, 0.0], [1.0, 0.0, 0.0], inner, t_max=10.0))
+        assert bool(r["hit"]) and int(r["vol_after"]) == outer, (nb, nav.names[int(r["vol_after"])])

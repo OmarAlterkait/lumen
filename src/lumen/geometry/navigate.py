@@ -509,13 +509,13 @@ class Navigator:
 
         A daughter's or an owner's face: entered, then down; v's own face, or an ancestor's v reaches out of: located
         from beyond that face, up while a solid does not hold the point, then down (Geant4's
-        LocateGlobalPointAndSetup). Either is located from past the face met (the relocation rule): the point of the
-        crossing itself is within an ulp of that face, a zero-length crossing's on the near side of it, where a
-        coincident face would hold it still.
+        LocateGlobalPointAndSetup). Either is located from just past the face met (the relocation rule): the point
+        of a zero-length crossing is on the near side of that face, where a face coincident with it would hold it
+        still.
         """
         D = self.dev()
         OUT = I32(self.n)
-        t_c, u_in, is_own, band, hit, l_in, f_in, zero = ev
+        t_c, u_in, is_own, band, hit, l_in, f_in = ev
         is_ch = u_in >= self.CH0
         uc = jnp.clip(u_in, 0, OUT - 1)
         clip = ~is_own & ~is_ch & self.is_ancestor(u_in, v)
@@ -524,23 +524,25 @@ class Navigator:
         up = jnp.where(clip, D["parent"][uc], D["parent"][jnp.minimum(v, D["parent"].shape[0] - 1)])
         nxt = jnp.where(go_in, v_in, up)
         unit_x = jnp.where(go_in, jnp.where(is_ch, I32(-1), u_in), vi)
-        # the relocation crosses the face met, along its normal the way the photon travels: one band of the point's
-        # own coordinates for a crossing (whose point is within an ulp of the face, however the ray meets it),
-        # K_ON + 1 of the query's bands for a zero-length one (whose point is the start's, up to K_ON bands on the
-        # near side of the face the on-face rule put the photon on). So a volume whose own face coincides with the
-        # one met is left, or entered, at that one crossing, as Geant4 leaves a mother whose surface the point is on
-        # when the direction leaves it (LocateGlobalPointAndSetup).
+        # the relocation's point is RELOCATE_BANDS bands past the face met, along that face's normal the way the
+        # photon travels; the point's own distance from the face (face_dist) is the rest of the step (it is within an
+        # ulp of the face for a crossing, up to K_ON bands on the near side of it for a zero-length one). So a face
+        # coincident with the one met -- a daughter placed flush in its mother -- is crossed with it, as Geant4
+        # leaves a mother whose surface the point is on when the direction leaves it
+        # (LocateGlobalPointAndSetup), and a layer thicker than that step is never stepped over.
         off = hit & (l_in >= 0) & ~is_ch
 
         def past_face():
             x = q.od + t_c * q.dd
-            g = self.hit_grad(jnp.where(is_own, vi, uc), jnp.maximum(l_in, 0), f_in, x)
+            it, lf = jnp.where(is_own, vi, uc), jnp.maximum(l_in, 0)
+            g = self.hit_grad(it, lf, f_in, x)
             n = g / safe_norm(g)
-            m = jnp.where(zero, (F32(rules.K_ON) + 1.0) * band, rules.step_band(x))
+            m = surface_id.face_dist(self, it, lf, f_in, x) + rules.RELOCATE_BANDS * rules.step_band(x)
             return m * jnp.where(jnp.dot(n, q.dd) < 0, F32(-1.0), F32(1.0)) * n
 
+        # that step replaces the step along the ray, which clears the face only by its normal component
         od = q.od + pick(off, past_face, lambda: jnp.zeros(3, F32))
-        ray = (od, q.dd, t_c + step)
+        ray = (od, q.dd, jnp.where(off, t_c, t_c + step))
         return pick(hit & ~(go_in & is_ch), lambda: self._settle(nxt, ray, unit_x, step + band),
                     lambda: (nxt, jnp.bool_(False)))  # fmt: skip
 
@@ -561,7 +563,7 @@ class Navigator:
         # the relocation's step past the crossing: the band at the crossing (not at the round's start: the same
         # crossing steps alike however many rounds led to it)
         step = rules.band(q.xa + jnp.abs(jnp.where(hit, t_c, t_lo)))
-        nxt, moved = self._next_volume(q, (t_c, u_in, is_own, step, hit, l_in, f_in, z_in), v, vi, step)
+        nxt, moved = self._next_volume(q, (t_c, u_in, is_own, step, hit, l_in, f_in), v, vi, step)
         item = jnp.where(~is_own, u_in, vi)
         after = D["cls"][jnp.where(hit, nxt, v)]
         # a volume the ray only touches is never entered: entered at t_in (the round before), it holds no point of the
