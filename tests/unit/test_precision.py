@@ -266,7 +266,8 @@ def test_through_simulate_a_scattering_medium_at_speed_fast(tmp_path):
     from lumen.sources import Point
 
     gas = ('<property name="RINDEX" ref="R1"/>',
-           '<property name="RINDEX" ref="R1"/> <property name="RAYLEIGH" ref="RL"/> <property name="ABSLENGTH" ref="AB"/>')
+           '<property name="RINDEX" ref="R1"/> <property name="RAYLEIGH" ref="RL"/> '
+           '<property name="ABSLENGTH" ref="AB"/>')  # fmt: skip
     tab = '<matrix name="RL" coldim="2" values="2.0*eV 1.0 4.5*eV 1.0"/>' \
           '<matrix name="AB" coldim="2" values="2.0*eV 200.0 4.5*eV 200.0"/></define>'  # fmt: skip
     path = _converted(tmp_path, SLAB.replace(*gas).replace("</define>", tab))
@@ -282,3 +283,32 @@ def test_through_simulate_a_scattering_medium_at_speed_fast(tmp_path):
     a, b = out["float32"], out["float64"]
     assert b[1] == pytest.approx(b[2], rel=1e-4)
     np.testing.assert_allclose(a, b, rtol=0.02)
+
+
+def test_a_checks_manifest_entry_carries_the_precision(tmp_path, monkeypatch):
+    """``lumen.compare``'s charge and gradients checks load the detector at the entry's ``precision`` (default
+    float32), so a float64 detector can be validated."""
+    import json
+    from pathlib import Path
+
+    import lumen
+    from lumen.compare import charge, gradients
+
+    entry = {"name": "toy", "detector": str(tmp_path / "toy.lumen"), "precision": "float64",
+             "sources": [[0.0, 0.0, 0.0]], "wavelength": 400.0}  # fmt: skip
+    manifest = tmp_path / "refs.json"
+    seen = []
+
+    def load(path, **kw):
+        seen.append(kw.get("precision"))
+        raise RuntimeError("stop here")
+
+    monkeypatch.setattr(lumen, "load", load)
+    for precision in ("float64", None):
+        e = dict(entry) if precision else {k: v for k, v in entry.items() if k != "precision"}
+        manifest.write_text(json.dumps({"schema": "lumen-references/1", "checks": {"gradients": [e]},
+                                        "products": {}}))  # fmt: skip
+        with pytest.raises(RuntimeError, match="stop here"):
+            gradients.check("toy", extra=[str(manifest)])
+    assert seen == ["float64", "float32"], seen
+    assert 'precision=spec.get("precision", "float32")' in Path(charge.__file__).read_text()  # the same line
