@@ -177,19 +177,57 @@ GLISUR_BORDERS = """\
   <bordersurface name="mask_coat_gas" surfaceproperty="TPB_GLISUR">
     <physvolref ref="mask_coat"/> <physvolref ref="gas"/> </bordersurface>
 """
+# the wls case: the TPB shifts the light (as NEXT's does), the sensors are blind to the unshifted light, and the
+# tube's coating is 1 um -- 0.63 of float32's band at the toy's scale -- so only a navigator that resolves it sees
+# anything. WLSABSLENGTH absorbs above 2.65 eV only, so a shifted photon is not absorbed again.
+WLS_PATCH = (
+    (
+        '<box name="MaskCoatBox" x="200" y="200" z="0.004" lunit="mm"/>',
+        '<box name="MaskCoatBox" x="200" y="200" z="0.001" lunit="mm"/>',
+    ),
+    (
+        '<tube name="CoatSolid" rmin="500" rmax="500.003" z="1200" deltaphi="360" aunit="deg" lunit="mm"/>',
+        '<tube name="CoatSolid" rmin="500" rmax="500.001" z="1200" deltaphi="360" aunit="deg" lunit="mm"/>',
+    ),
+    (
+        '<position name="pmc" unit="mm" x="0" y="0" z="2.998"/>',
+        '<position name="pmc" unit="mm" x="0" y="0" z="2.9995"/>',
+    ),
+    (
+        '<matrix name="EFF_SIPM" coldim="2" values="1.0*eV 0.4 12.0*eV 0.4"/>',
+        '<matrix name="EFF_SIPM" coldim="2" values="1.0*eV 0.4 2.5*eV 0.4 2.6*eV 0.0 12.0*eV 0.0"/>',
+    ),
+    (
+        '<matrix name="EFF_PMT" coldim="2" values="1.0*eV 0.3 12.0*eV 0.3"/>',
+        '<matrix name="EFF_PMT" coldim="2" values="1.0*eV 0.3 2.5*eV 0.3 2.6*eV 0.0 12.0*eV 0.0"/>\n'
+        '  <matrix name="WLS_ABS" coldim="2" values="1.0*eV 1.0e6 2.65*eV 1.0e6 2.7*eV 0.0005 12.0*eV 0.0005"/>\n'
+        '  <matrix name="WLS_COMP" coldim="2" values="1.0*eV 0.0 2.0*eV 1.0 2.3*eV 1.0 2.4*eV 0.0 12.0*eV 0.0"/>\n'
+        '  <matrix name="WLS_TAU" coldim="1" values="2.0"/>',
+    ),
+    (
+        '<material name="TPB" state="solid"> <property name="RINDEX" ref="RI_TPB"/>',
+        '<material name="TPB" state="solid"> <property name="RINDEX" ref="RI_TPB"/>\n'
+        '    <property name="WLSABSLENGTH" ref="WLS_ABS"/> <property name="WLSCOMPONENT" ref="WLS_COMP"/>\n'
+        '    <property name="WLSTIMECONSTANT" ref="WLS_TAU"/>',
+    ),
+)
 CASES = {
-    "plain": ("", ""),
-    "sigma1": (MASK_SOLIDS, MASK_SKINS),
-    "glisur": (GLISUR_SOLIDS, GLISUR_BORDERS),
-    "all": (MASK_SOLIDS + GLISUR_SOLIDS, MASK_SKINS + GLISUR_BORDERS),
+    "plain": ("", "", ()),
+    "sigma1": (MASK_SOLIDS, MASK_SKINS, ()),
+    "glisur": (GLISUR_SOLIDS, GLISUR_BORDERS, ()),
+    "all": (MASK_SOLIDS + GLISUR_SOLIDS, MASK_SKINS + GLISUR_BORDERS, ()),
+    "wls": (MASK_SOLIDS + GLISUR_SOLIDS, MASK_SKINS + GLISUR_BORDERS, WLS_PATCH),
 }
 
 
 def write(out: Path):
     """Write every case's GDML under ``out``."""
     out.mkdir(parents=True, exist_ok=True)
-    for case, (solids, structure) in CASES.items():
+    for case, (solids, structure, patch) in CASES.items():
         text = GDML.format(solids=SENSOR_SOLIDS + solids, structure=SENSOR_SKINS + structure)
+        for old_, new_ in patch:
+            assert old_ in text, old_
+            text = text.replace(old_, new_, 1)
         (out / f"next_toy_{case}.gdml").write_text(text)
         print(f"wrote {out / f'next_toy_{case}.gdml'}")
     (out / "sources.cfg").write_text(
@@ -209,19 +247,21 @@ def reduce(out: Path, run: Path):
     """Add one case's counts (the g4ref run with prefix ``run``) to ``out/geant4.json``."""
     case = run.name.split("_", 1)[1]
     summary = (run.parent / f"{run.name}_summary.txt").read_text()
-    rows = np.load(run.parent / f"{run.name}_hits.npy")
-    launched = sum(n for *_, n, _ in SOURCES)
-    table = (run.parent / f"{run.name}_sensors.csv").read_text().splitlines()[1:]
-    path_of = {int(line.split(",")[0]): line.split(",")[1] for line in table if line}
-    paths = [path_of[int(i)] for i in rows["sensor"]]
-    lv_of = {int(line.split(",")[0]): line.split(",")[2] for line in table if line}
-    lvs = [lv_of[int(i)] for i in rows["sensor"]]
-    counts = {g: int(sum(x == lv for x in lvs)) for g, lv in GROUPS.items()}
+    launched = sum(int(m[1]) for m in re.finditer(r"^source .* launched (\d+)$", summary, re.M))
+    table = [line.split(",") for line in (run.parent / f"{run.name}_sensors.csv").read_text().splitlines()[1:] if line]
+    path_of = {int(r[0]): r[1] for r in table}
+    lv_of = {int(r[0]): r[2] for r in table}
+    totals = [line.split(",") for line in (run.parent / f"{run.name}_totals.csv").read_text().splitlines()[1:] if line]
+    counts = {g: 0 for g in GROUPS}
     sipms: dict = {}
-    for p in paths:
-        m = re.search(r"/sipm(\d)", p)
+    for r in totals:  # src, sensor, n, ...
+        i, n = int(r[1]), int(r[2])
+        for g, lv in GROUPS.items():
+            if lv_of[i] == lv:
+                counts[g] += n
+        m = re.search(r"/sipm(\d)", path_of[i])
         if m:
-            sipms[f"sipm{m[1]}"] = sipms.get(f"sipm{m[1]}", 0) + 1
+            sipms[f"sipm{m[1]}"] = sipms.get(f"sipm{m[1]}", 0) + n
     rec = {
         "geant4": geant4_version(re.search(r"^geant4 (.*)$", summary, re.M)[1]),
         "launched": launched,

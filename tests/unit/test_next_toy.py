@@ -8,13 +8,15 @@ Its four cases switch on one kind of surface each, and every one of them is a fe
 - ``plain``: the skin sensors alone (Geant4's InvokeSD: the volume entered detects);
 - ``sigma1``: the mask's unified ground skin with sigma_alpha = 1 rad (above lumen 0.2's 0.707 rad);
 - ``glisur``: the glisur ground dielectric_dielectric borders gas <-> TPB, which hold across coincident faces only;
-- ``all``: every surface together, the end-to-end counts per sensor group.
+- ``all``: every surface together, the end-to-end counts per sensor group;
+- ``wls``: ``all`` with the coatings shifting the light (as NEXT's TPB does) and 1 um thick, and sensors blind to the
+  unshifted light: only a navigator that resolves the coating sees anything, so this is the float32 limit end to end.
 
 Each case's detected fractions per group are compared with g4ref's on the same GDML (``tests/data/next_toy``
 ``geant4.json``, Geant4 11.3.0; the toy reads no property whose Geant4 10.7.4 path differs, so one release stands for
-both). Every case is checked in float64, the two that do not touch the coatings in float32 as well, and the
-end-to-end counts of ``all`` at both precisions (``test_the_same_counts_at_both_precisions_on_this_toy``: the toy's
-coating is 1.9 float32 bands where it sits, so float32 still tracks it).
+both). Every case is checked in float64, the two that do not touch the coatings in float32 as well, the end-to-end
+counts of ``all`` at both precisions (its 3 um coating is 1.9 float32 bands where it sits, so float32 still tracks
+it), and the float32 deficit of ``wls`` (6.5 % of the PMT light and 59 % of the SiPMs').
 """
 
 import json
@@ -100,7 +102,7 @@ def test_the_skin_sensors_and_a_sigma_alpha_of_one_match_geant4_in_float32(tmp_p
 
 @pytest.mark.slow
 @needs_reference
-@pytest.mark.parametrize("case", ["plain", "sigma1", "glisur", "all"])
+@pytest.mark.parametrize("case", ["plain", "sigma1", "glisur", "all", "wls"])
 def test_every_case_matches_geant4_in_float64(tmp_path, case):
     """Every feature together, in float64: the glisur borders across the coatings' coincident faces too."""
     with enable_x64():
@@ -109,15 +111,12 @@ def test_every_case_matches_geant4_in_float64(tmp_path, case):
 
 @pytest.mark.slow
 @needs_reference
-def test_the_same_counts_at_both_precisions_on_this_toy(tmp_path):
-    """The end-to-end counts of ``all`` at float32 and float64, and how far the toy is from float32's limit.
+def test_the_same_counts_at_both_precisions_where_the_coating_is_thick_enough(tmp_path):
+    """The end-to-end counts of ``all`` at float32 and float64.
 
-    The toy's 3 um coating is 1.9 float32 bands where it sits (the band of a ray that started 0.5 m from the origin
-    and travelled 1.2 m is 1.6 um), so float32 still tracks it: measured, the two precisions give the same fractions
-    to 0.3 % at the PMT and 0.4 % at the SiPMs, inside the Monte Carlo error (lumen / Geant4 1.009 and 0.90 at
-    float32, 1.012 and 0.90 at float64). A coating thinner than that, or photons starting farther away, is where
-    float32 loses it: NEXT-100's own 2 to 5.4 um coatings, with its 1.3 m drift, are the measured case
-    (docs/explanation/known-limits.md, "Thin layers").
+    Its 3 um coating is 1.9 float32 bands where it sits (the band of a ray that started 0.5 m from the origin and
+    travelled 1.2 m is 1.6 um), so float32 still tracks it: measured at 2^22 photons, Geant4 / lumen is 0.998 and
+    1.008 at float32 and 0.997 and 1.010 at float64, and the two precisions agree to 0.1 %.
     """
     a = _fractions(_detector(tmp_path, "all"))
     with enable_x64():
@@ -125,3 +124,22 @@ def test_the_same_counts_at_both_precisions_on_this_toy(tmp_path):
     for g in GROUPS:
         err = math.hypot(a[g][1], b[g][1])
         assert abs(a[g][0] - b[g][0]) <= 3.0 * err, (g, a[g], b[g])
+
+
+@pytest.mark.slow
+@needs_reference
+def test_float32_loses_the_light_of_a_shifting_coating_and_float64_does_not(tmp_path):
+    """The ``wls`` case is the float32 limit end to end, and the reason NEXT-100 needs float64.
+
+    Its coating is 1 um (0.63 of float32's band where it sits) and shifts the light, and the sensors are blind to the
+    unshifted light, so a photon counts only if the navigator put it inside the coating. Measured at 2^22 photons,
+    Geant4 / lumen: in float64 1.0026 at the PMT (0.6 sigma) and 1.017 at the SiPMs (1.2 sigma), so lumen agrees;
+    in float32 1.069 (15 sigma) and 2.45 (55 sigma), so a float32 run loses 6.5 % of the PMT light and 59 % of the
+    SiPMs' (docs/explanation/known-limits.md, "Thin layers"). float64's agreement is checked with the other cases
+    (``test_every_case_matches_geant4_in_float64``); here the float32 deficit is the record.
+    """
+    ref = GEANT4["wls"]
+    got = _fractions(_detector(tmp_path, "wls"))
+    for g, least in (("pmt", 1.03), ("sipm", 1.5)):
+        ratio = ref[g] / got[g][0]
+        assert ratio > least, (g, got[g], ref[g], ratio)
