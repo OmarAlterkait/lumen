@@ -107,7 +107,7 @@ body {
 .section { font-size: 10px; color: var(--accent); letter-spacing: 2px; font-weight: 600; margin: 16px 0 6px;
            padding-top: 10px; border-top: 1px solid var(--line) }
 .kv { display: grid; grid-template-columns: 120px 1fr; gap: 3px 10px; font-size: 11px }
-.kv .k { color: var(--dim) }
+.kv .k { color: var(--dim); word-break: break-all }
 .kv .v { color: #ccc; font-family: var(--mono); font-size: 10.5px; word-break: break-all }
 .msg { border-radius: 5px; padding: 8px 10px; font-size: 11px; line-height: 1.45; margin: 8px 0; overflow-wrap: anywhere }
 .msg.err { background: rgba(239,83,80,.09); border: 1px solid rgba(239,83,80,.3); color: #f5a3a1 }

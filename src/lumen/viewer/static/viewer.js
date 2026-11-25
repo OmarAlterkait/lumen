@@ -8,10 +8,11 @@ const ROLE = {
   medium: ['#4fc3f7', 'transparent medium'],
   wls: ['#66bb6a', 'wavelength shifter'],
   scint: ['#ba68c8', 'scintillator'],
-  sensor: ['#ffd54f', 'sensor (a recipe group)'],
-  opaque: ['#78909c', 'opaque: no RINDEX'],
+  sensor: ['#ffd54f', 'sensor'],
+  opaque: ['#78909c', 'opaque'],
   refused: ['#ef5350', 'refused by lumen'],
-  bound: ['#90a4ae', 'bound to another medium'],
+  outside: ['#455a64', 'outside the detector volume: not simulated'],
+  unread: ['#90a4ae', 'not read: lumen refused the GDML'],
   none: ['#5f6b70', 'no material'],
 };
 const NOT_READ = {
@@ -27,7 +28,7 @@ const PARAM_NAMES = {
 };
 
 let S = null;                 // the scene payload
-let I = null;                 // decoded instances {lv, parent, pv, depth, inside, matrix, n}
+let I = null;                 // decoded instances {lv, parent, placement, group, depth, inside, matrix, n}
 let lvGids = [];              // per LV: Int32Array of its instance ids
 let lvObjects = [];           // per LV: {mesh: InstancedMesh|null, geom, mat, color, transparent}
 let geoms = [];               // per mesh index: BufferGeometry
@@ -53,6 +54,7 @@ let dirty = true;             // draw a frame: the view or the scene changed (no
 function setStatus(s) { $('status').textContent = s || ''; }
 function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('visible'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('visible'), 2200); }
 function esc(s) { return String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function num(x) { return Number(x).toLocaleString(); }
 function b64(s, T) {
   const bin = atob(s); const n = bin.length; const u8 = new Uint8Array(n);
   for (let i = 0; i < n; i++) u8[i] = bin.charCodeAt(i);
@@ -77,13 +79,16 @@ function viridis(t) {
 function badge(text, cls, title = '') { return `<span class="badge ${cls}" title="${esc(title)}">${esc(text)}</span>`; }
 
 function material(name) { return name ? S.materials[name] : null; }
+function groupsOf(v) { return Object.keys(v.sensors); }
+function solidRefusal(v) { return v.mesh === null || v.mesh === undefined ? '' : S.meshes[v.mesh].refused; }
 function lvRole(v) {
-  if (v.sensor) return 'sensor';
+  if (S.meta.detector_volume && !v.inside) return 'outside';
+  if (groupsOf(v).length) return 'sensor';
   const m = material(v.material);
   if (!m) return 'none';
-  if (m.status === 'refused') return 'refused';
+  if (m.status === 'refused' || solidRefusal(v)) return 'refused';
   if (m.status === 'opaque') return 'opaque';
-  if (m.status === 'bound') return 'bound';
+  if (m.status !== 'medium') return 'unread';
   if (m.channels.includes('wls')) return 'wls';
   if (m.scintillation) return 'scint';
   return 'medium';
@@ -93,17 +98,22 @@ function lvTransparent(v) {
   const role = lvRole(v);
   if (role === 'sensor') return false;
   if (role === 'refused') return hasIndex(material(v.material));
-  return ['medium', 'wls', 'scint', 'bound'].includes(role);
+  return ['medium', 'wls', 'scint', 'unread'].includes(role) || (role === 'outside' && hasIndex(material(v.material)));
 }
-function surfaceStatusClass(s) { return s.status === 'ok' ? 'b-ok' : (s.status === 'sensor' ? 'b-sensor' : 'b-refused'); }
-function surfaceLabel(s) { return s.status === 'ok' ? s.surface_type : (s.status === 'sensor' ? `sensor: ${s.sensor_type}` : 'REFUSED'); }
+const SURFACE_STATUS = {
+  ok: ['b-ok', 'READ'], sensor: ['b-sensor', 'SENSOR'], refused: ['b-refused', 'REFUSED'],
+  unused: ['b-dim', 'NOT USED'], unread: ['b-dim', 'NOT READ'],
+};
+function surfaceStatusClass(s) { return (SURFACE_STATUS[s.status] || SURFACE_STATUS.unread)[0]; }
+function surfaceLabel(s) { return (SURFACE_STATUS[s.status] || SURFACE_STATUS.unread)[1]; }
 function lvSurfaces(v) { return [...new Set([...(v.skins || []), ...(v.borders || [])])]; }
 function surfaceColor(name) {
   const s = S.surfaces[name];
   if (!s) return '#555';
   if (s.status === 'refused') return ROLE.refused[0];
   if (s.status === 'sensor') return ROLE.sensor[0];
-  const c = new THREE.Color(); c.setHSL(hashHue(s.surface_type || name), 0.55, 0.6); return '#' + c.getHexString();
+  if (!s.uses.length) return ROLE.outside[0];
+  const c = new THREE.Color(); c.setHSL(hashHue(s.uses[0].type), 0.55, 0.6); return '#' + c.getHexString();
 }
 function lvColor(i) {
   const v = S.volumes[i];
@@ -123,7 +133,7 @@ async function load() {
   S = await r.json();
   if (S.instances === undefined) throw new Error((S.errors || []).map((e) => `${e.stage}: ${e.text}`).join('\n') || 'empty scene');
   const d = S.instances;
-  I = { lv: b64(d.lv, Int32Array), parent: b64(d.parent, Int32Array), pv: b64(d.pv, Int32Array), depth: b64(d.depth, Int32Array),
+  I = { lv: b64(d.lv, Int32Array), parent: b64(d.parent, Int32Array), placement: b64(d.placement, Int32Array), group: b64(d.group, Int32Array), depth: b64(d.depth, Int32Array),
         inside: b64(d.inside, Uint8Array), matrix: b64(d.matrix, Float32Array), n: d.n };
   const counts = new Int32Array(S.volumes.length);
   for (let g = 0; g < I.n; g++) counts[I.lv[g]]++;
@@ -233,6 +243,7 @@ function buildObjects() {
     const mat = new THREE.MeshPhongMaterial({ color: 0xffffff, side: THREE.DoubleSide, flatShading: true, shininess: 18 });
     const mesh = new THREE.InstancedMesh(geoms[v.mesh], mat, Math.max(1, lvGids[i].length));
     mesh.userData.lv = i; mesh.count = 0; mesh.frustumCulled = false;
+    if (groupsOf(v).length) mesh.instanceColor = new THREE.BufferAttribute(new Float32Array(3 * lvGids[i].length).fill(1), 3);
     scene.add(mesh);
     return { mesh, mat, gids: new Int32Array(0) };
   });
@@ -287,7 +298,19 @@ function refreshMaterials() {
     o.mesh.renderOrder = o.mat.transparent ? 2 : 1;
   });
   if (pickHelper) pickHelper.material.clippingPlanes = planes;
-  renderLegend(); dirty = true;
+  shadeGroup(); renderLegend(); dirty = true;
+}
+
+// A selected group's own copies keep their colour; the other copies of its volumes (other groups') are darkened.
+function shadeGroup() {
+  const k = selection && selection.kind === 'group' ? S.sensor_groups.findIndex((g) => g.name === selection.name) : -1;
+  const on = new THREE.Color(1, 1, 1), off = new THREE.Color(0.12, 0.12, 0.12);
+  lvObjects.forEach((o, i) => {
+    if (!o || !groupsOf(S.volumes[i]).length) return;
+    if (k >= 0) o.mat.emissive.set('#000000');
+    o.gids.forEach((g, j) => o.mesh.setColorAt(j, k < 0 || I.group[g] === k ? on : off));
+    o.mesh.instanceColor.needsUpdate = true;
+  });
 }
 
 function fitCamera() {
@@ -340,7 +363,7 @@ function showPicked(gid, lv) {
 
 function lvsOfMaterial(name) { const s = new Set(); S.volumes.forEach((v, i) => { if (v.material === name) s.add(i); }); return s; }
 function lvsOfSurface(name) { const s = new Set(); S.volumes.forEach((v, i) => { if (lvSurfaces(v).includes(name)) s.add(i); }); return s; }
-function lvsOfGroup(name) { const s = new Set(); S.volumes.forEach((v, i) => { if (v.sensor === name) s.add(i); }); return s; }
+function lvsOfGroup(name) { const s = new Set(); S.volumes.forEach((v, i) => { if (name in v.sensors) s.add(i); }); return s; }
 
 function select(sel) {
   if (sel && sel.kind === 'volume') sel.lvs = new Set([sel.name]);
@@ -381,13 +404,13 @@ function volumeRows(q) {
     const sel = selection && selection.kind === 'volume' && selection.name === i;
     const on = lvShown(i);
     const bulk = v.instances > bulkMax && lvVisible[i] === 'auto';
-    const tag = bulk ? badge('HIDDEN', 'b-dim', `placed ${v.instances.toLocaleString()} times, more than the setting allows (⚙): tick to draw`)
-      : badge(role === 'medium' ? 'MEDIUM' : role.toUpperCase(), 'b-' + (role === 'bound' || role === 'none' ? 'dim' : role));
+    const tag = bulk ? badge('HIDDEN', 'b-dim', `placed ${num(v.instances)} times, more than the setting allows (⚙): tick to draw`)
+      : badge(role === 'medium' ? 'MEDIUM' : role.toUpperCase(), roleBadge(role));
     out.push(`<div class="row ${sel ? 'selected' : ''}" data-lv="${i}" style="padding-left:${6 + Math.min(depth, 10) * 11}px">
       <input type="checkbox" data-vis="${i}" ${on ? 'checked' : ''} ${v.mesh === null ? 'disabled' : ''}>
       <span class="sw" style="background:${lvColor(i)}"></span>
       <span class="nm" title="${esc(v.name)}">${esc(v.short)}</span>
-      <span class="meta">${v.instances > 1 ? '×' + v.instances.toLocaleString() : ''}</span>${tag}</div>`);
+      <span class="meta">${v.instances > 1 ? '×' + num(v.instances) : ''}</span>${tag}</div>`);
   };
   if (q) {
     S.volumes.forEach((v, i) => { if (v.short.toLowerCase().includes(q) || (v.material || '').toLowerCase().includes(q)) row(i, 0); });
@@ -399,16 +422,18 @@ function volumeRows(q) {
   return out.join('') || '<div class="empty">no volume</div>';
 }
 
+function roleBadge(role) { return 'b-' + (['outside', 'unread', 'none', 'unused'].includes(role) ? 'dim' : role); }
+const MATERIAL_STATUS = { medium: 'MEDIUM', opaque: 'OPAQUE', refused: 'REFUSED', unused: 'NOT USED', unread: 'NOT READ' };
 function materialBadges(m) {
-  const b = [badge(m.status === 'medium' ? 'MEDIUM' : m.status.toUpperCase(), 'b-' + (m.status === 'bound' ? 'dim' : m.status))];
+  const b = [badge(MATERIAL_STATUS[m.status] || 'NOT READ', roleBadge(m.status in MATERIAL_STATUS ? m.status : 'unread'))];
   const short = { refraction: null, absorption: 'ABS', rayleigh: 'RAY', mie: 'MIE', wls: 'WLS' };
   m.channels.forEach((c) => { if (short[c]) b.push(badge(short[c], c === 'wls' ? 'b-wls' : 'b-medium')); });
   if (m.scintillation) b.push(badge('SCINT', 'b-scint'));
-  if (m.inert.length) b.push(badge(`${m.inert.length} INERT`, 'b-dim', 'keys no Geant4 optical process reads: kept, never read'));
+  if (m.inert.length) b.push(badge(`${m.inert.length} INERT`, 'b-dim', 'keys kept and never read'));
   return b.join(' ');
 }
 function materialRows(q) {
-  const order = { refused: 0, medium: 1, bound: 2, opaque: 3 };
+  const order = { refused: 0, medium: 1, opaque: 2, unread: 3, unused: 4 };
   const names = Object.keys(S.materials).filter((n) => !q || n.toLowerCase().includes(q))
     .sort((a, b) => (order[S.materials[a].status] - order[S.materials[b].status]) || a.localeCompare(b));
   return names.map((n) => {
@@ -433,18 +458,18 @@ function surfaceRows(q) {
 }
 function sensorRows() {
   if (!S.sensor_groups.length) {
-    return `<div class="msg info">No sensor groups: this GDML was read without a recipe. Read it with one
+    return S.meta.recipe ? '<div class="msg info">The recipe has no sensor groups.</div>'
+      : `<div class="msg info">No sensor groups: this GDML was read without a recipe. Read it with one
       (<code>--recipe FILE.py:NAME</code>), or as a detector package's detector (<code>package:name</code>), to see
       lumen's sensors and detector volume.</div>`;
   }
   const out = [];
   S.sensor_groups.forEach((g) => {
-    const lvs = [...lvsOfGroup(g.name)]; const n = lvs.reduce((a, i) => a + S.volumes[i].inside, 0);
     const sel = selection && selection.kind === 'group' && selection.name === g.name;
     out.push(`<div class="row ${sel ? 'selected' : ''}" data-group="${esc(g.name)}"><span class="sw" style="background:${ROLE.sensor[0]}"></span>
-      <span class="nm">${esc(g.name)}</span><span class="meta">${n.toLocaleString()} placed</span>${badge(g.rule, 'b-sensor')}</div>`);
+      <span class="nm">${esc(g.name)}</span><span class="meta">${g.sensors === null ? 'not built' : num(g.sensors) + ' sensors'}</span>${badge(g.rule, 'b-sensor')}</div>`);
   });
-  if (S.sensor_ids !== null) out.push(`<div class="msg info">lumen numbers <b>${S.sensor_ids.toLocaleString()}</b> sensor ids for this recipe (one per placed copy inside the detector volume).</div>`);
+  if (S.sensor_ids !== null) out.push(`<div class="msg info">lumen has <b>${num(S.sensor_ids)}</b> sensors here, one per placed copy in the detector volume.</div>`);
   return out.join('');
 }
 function reportHtml() {
@@ -453,21 +478,23 @@ function reportHtml() {
   let h = `<div class="group-title">FILE</div><div class="kv">${kv('file', esc(m.file))}${kv('sha256', esc((m.sha256 || '').slice(0, 16)) + '…')}
     ${kv('lumen', esc(m.lumen))}${kv('recipe', m.recipe ? esc(m.recipe) : '<i>none</i>')}${kv('world', esc(m.world))}
     ${kv('detector volume', m.detector_volume ? `<a class="lnk" data-lvname="${esc(m.detector_volume)}">${esc(m.detector_volume)}</a>${m.detector_guessed ? ' <span class="badge b-warn" title="no recipe: the largest volume of a transparent material, as lumen\'s auto: rule picks it">GUESSED</span>' : ''}` : '<i>unknown (no recipe)</i>')}
-    ${kv('wavelengths', m.wavelength_range ? `${m.wavelength_range[0]}–${m.wavelength_range[1]} nm` : '–')}
-    ${kv('counts', Object.entries(c).map(([k, v]) => `${k} ${Number(v).toLocaleString()}`).join(', '))}
-    ${kv('built in', `${m.seconds} s`)}</div>`;
+    ${kv('wavelengths', m.wavelength_range ? `${fmt(m.wavelength_range[0], 6)}–${fmt(m.wavelength_range[1], 6)} nm` : '–')}
+    ${kv('counts', Object.entries(c).map(([k, v]) => `${k} ${num(v)}`).join(', '))}
+    ${kv('detector', m.built ? 'converted and loaded by lumen' : '<b>refused by lumen</b> (below): the crossings and the sensors are not shown')}${kv('read in', `${fmt(m.seconds)} s`)}</div>`;
   if (S.errors.length) h += `<div class="group-title">REFUSED / FAILED</div>` + S.errors.map((e) => `<div class="msg err"><b>${esc(e.stage)}</b>: ${esc(e.text)}</div>`).join('');
   const refusedM = Object.values(S.materials).filter((x) => x.status === 'refused');
   const refusedS = Object.values(S.surfaces).filter((x) => x.status === 'refused');
-  if (refusedM.length || refusedS.length) {
+  const refusedV = S.volumes.filter((v) => (v.inside || !m.detector_volume) && solidRefusal(v));
+  if (refusedM.length || refusedS.length || refusedV.length) {
     h += `<div class="group-title">WHAT LUMEN REFUSES</div>`;
     refusedM.forEach((x) => { h += `<div class="msg err"><a class="lnk" data-mat="${esc(x.name)}">material ${esc(x.short)}</a>: ${esc(x.message)}</div>`; });
+    refusedV.forEach((x) => { h += `<div class="msg err">volume ${lvLink(x.name)}: ${esc(solidRefusal(x))}</div>`; });
     refusedS.forEach((x) => { h += `<div class="msg err"><a class="lnk" data-surf="${esc(x.name)}">surface ${esc(x.short)}</a>: ${esc(x.message)}</div>`; });
   }
   if (S.notes.length) h += `<div class="group-title">WARNINGS</div>` + S.notes.map((n) => `<div class="msg warn"><b>${esc(n.kind)}</b> (${esc(n.stage)}): ${esc(n.text)}</div>`).join('');
   const approx = S.meshes.filter((x) => !x.exact);
   if (approx.length) h += `<div class="group-title">DRAWN APPROXIMATELY</div>` + approx.map((x) => `<div class="report-line">${esc(x.solid)}: ${esc(x.note)}</div>`).join('');
-  if (m.instances_cut) h += `<div class="msg warn">${m.instances_cut.toLocaleString()} placed copies were left out (more than the viewer draws).</div>`;
+  if (m.instances_cut) h += `<div class="msg warn">${num(m.instances_cut)} placed copies were left out (more than the viewer draws).</div>`;
   if (S.report.length) h += `<div class="group-title">IMPORT REPORT</div>` + S.report.map((l) => `<div class="report-line">${esc(l)}</div>`).join('');
   return h;
 }
@@ -482,9 +509,9 @@ function surfLink(name) { return S.surfaces[name] ? `<a class="lnk" data-surf="$
 function instancePath(gid) {
   const parts = [];
   for (let g = gid; g >= 0; g = I.parent[g]) {
-    const p = I.pv[g];
+    const p = I.placement[g];
     const v = S.volumes[I.lv[g]];
-    parts.push(p < 0 ? `<b>${esc(v.short)}</b>` : `<b>${esc(S.placements[p].short)}</b>${S.placements[p].copy !== null && S.placements[p].copy !== undefined ? '#' + S.placements[p].copy : ''}`);
+    parts.push(p < 0 ? `<b>${esc(v.short)}</b>` : `<b>${esc(S.placements[p].short)}</b>${S.placements[p].copy !== null && S.placements[p].copy !== undefined ? '#' + esc(S.placements[p].copy) : ''}`);
   }
   return parts.reverse().join(' / ');
 }
@@ -503,25 +530,24 @@ function volumeHtml(i, gid) {
   const v = S.volumes[i]; const role = lvRole(v); const m = material(v.material);
   const kv = (k, val) => `<div class="k">${esc(k)}</div><div class="v">${val}</div>`;
   let h = `<div class="d-kind">VOLUME</div><div class="d-title">${esc(v.short)}</div><div class="d-full">${esc(v.name)}</div>
-    <div class="d-badges">${badge(ROLE[role][1], 'b-' + (role === 'bound' || role === 'none' ? 'dim' : role))}
-    ${v.sensor ? badge('group ' + v.sensor, 'b-sensor') : ''}${S.meta.detector_volume === v.name ? badge(S.meta.detector_guessed ? 'DETECTOR VOLUME (GUESSED)' : 'DETECTOR VOLUME', S.meta.detector_guessed ? 'b-warn' : 'b-ok') : ''}</div>`;
-  if (gid !== undefined && gid !== null) h += `<div class="section">PICKED COPY</div><div class="path">${instancePath(gid)}</div>`;
+    <div class="d-badges">${badge(ROLE[role][1], roleBadge(role))}
+    ${Object.entries(v.sensors).map(([g, n]) => badge(`group ${g}: ${num(n)}`, 'b-sensor')).join('')}${S.meta.detector_volume === v.name ? badge(S.meta.detector_guessed ? 'DETECTOR VOLUME (GUESSED)' : 'DETECTOR VOLUME', S.meta.detector_guessed ? 'b-warn' : 'b-ok') : ''}</div>`;
+  if (gid !== undefined && gid !== null) h += `<div class="section">PICKED COPY</div><div class="path">${instancePath(gid)}</div>${I.group[gid] >= 0 ? badge('sensor of group ' + S.sensor_groups[I.group[gid]].name, 'b-sensor') : ''}`;
   h += `<div class="section">VOLUME</div><div class="kv">${kv('material', matLink(v.material))}
-    ${kv('placed', `${v.instances.toLocaleString()} ×${S.meta.detector_volume ? ` (${v.inside.toLocaleString()} in the detector volume)` : ''}`)}
-    ${kv('daughters', v.daughters)}${kv('depth', v.depth)}
+    ${kv('placed', `${num(v.instances)} ×${S.meta.detector_volume ? ` (${num(v.inside)} in the detector volume)` : ''}`)}
+    ${kv('daughters', num(v.daughters))}${kv('depth', num(v.depth))}
     ${kv('skin', v.skins.length ? v.skins.map(surfLink).join(', ') : '–')}
     ${kv('borders', v.borders.length ? v.borders.map(surfLink).join(', ') : '–')}</div>`;
   if (m) {
-    const msg = m.status === 'refused' ? `<div class="msg err">${esc(m.message)}</div>`
-      : (m.status === 'opaque' ? `<div class="msg info">No RINDEX: lumen stops a photon at this volume's boundary (Geant4's NoRINDEX), unless a surface says otherwise.</div>` : '');
-    h += msg;
+    h += m.status === 'refused' ? `<div class="msg err">${esc(m.message)}</div>`
+      : (m.status === 'opaque' ? `<div class="msg info">${opaqueText(m)}</div>` : '');
   }
   if (v.crossings) {
     const cls = { none: 'b-dim', pass: 'b-dim', absorb: 'b-opaque', fresnel: 'b-medium', surface: 'b-ok', sensor: 'b-sensor', refused: 'b-refused' };
     const line = (c, dir) => `<div class="kv" style="margin:4px 0">${kv(dir, `${badge(c.outcome.toUpperCase(), cls[c.outcome] || 'b-dim')}
-      ${c.surface ? surfLink(c.surface) + ` <span class="badge b-dim">${esc(c.via)}</span>` : ''}<br><span style="color:#999">${esc(c.text)}</span>`)}</div>`;
+      ${c.surface ? surfLink(c.surface) : ''}<br><span style="color:#999">${esc(c.text)}</span>`)}</div>`;
     h += `<div class="section">AT ITS BOUNDARY</div>${v.crossings.map((c) => line(c, (c.dir === 'in' ? 'entering from ' : 'leaving into ') + c.partner)).join('')}
-      <div style="color:#555;font-size:10px">lumen's boundary rule (border, then skins, then the materials) for the first copy: with its mother, and across every border surface it takes part in.</div>`;
+      <div style="color:#555;font-size:10px;overflow-wrap:anywhere">What lumen built for the copy ${esc(v.first)}: its faces with its mother, and with the siblings a border surface names. Other touching siblings are not listed.</div>`;
   }
   if (v.solid_info) {
     const s = v.solid_info; const mesh = S.meshes[v.mesh];
@@ -529,12 +555,16 @@ function volumeHtml(i, gid) {
       ${Object.entries(s.params).map(([k, [x, u]]) => kv(k, `${fmt(x, 6)} ${esc(u)}`)).join('')}
       ${s.refs.length ? kv('operands', s.refs.map(esc).join(', ')) : ''}
       ${s.planes ? kv('planes (mm)', s.planes.map((p) => '(' + p.map((x) => fmt(x, 5)).join(', ') + ')').join(' ')) : ''}
-      ${mesh ? kv('drawn as', `${mesh.nt.toLocaleString()} triangles${mesh.exact ? '' : ' (approximate)'}`) : ''}</div>
+      ${mesh ? kv('drawn as', `${num(mesh.nt)} triangles, ${mesh.exact ? 'compared with the solid lumen traces: they match' : 'approximate'}`) : ''}</div>
       ${mesh && !mesh.exact ? `<div class="msg warn">${esc(mesh.note)}</div>` : ''}`;
   }
   return h;
 }
 
+function opaqueText(m) {
+  const why = m.properties.some((p) => p.key === 'RINDEX') ? (m.optics.note || `optics model ${m.optics.model}`) : 'no RINDEX';
+  return `Opaque (${esc(why)}): a photon entering it ends at its boundary, after what the surface there does.`;
+}
 function readLabels(reads) {
   // one label per parameter: a table read as its energies and values, or derived from them, is one parameter
   const by = new Map();
@@ -552,15 +582,17 @@ function readsText(p, owner) {
     return `<td class="read" title="${esc(keys.join('\n'))}">${esc(ps.join(', '))}</td>`;
   }
   let why = p.why || ((owner && owner.geant4) ? 'not read by lumen' : (NOT_READ[p.key] || 'not read by lumen'));
-  if (owner && owner.status === 'opaque') why = 'not read: no RINDEX, the material is opaque';
-  if (owner && owner.status === 'refused') why = 'not read: lumen refuses this material';
+  if (owner && owner.status === 'opaque') why = 'not read: the material is opaque';
+  if (owner && owner.status === 'refused') why = `not read: lumen refuses this ${owner.geant4 ? 'surface' : 'material'}`;
+  if (owner && owner.status === 'unused') why = 'not read: nothing in the detector volume uses it';
+  if (owner && owner.status === 'unread') why = 'not read: lumen refused this detector';
   return `<td class="read no">${esc(why)}</td>`;
 }
 function propRows(props, owner, idPrefix) {
   return props.map((p, k) => {
     const rng = p.kind === 'table' ? `${fmt(p.min)}–${fmt(p.max)}${p.unit ? ' ' + p.unit : ''}<br>${fmt(p.lam[0], 4)}–${fmt(p.lam[1], 4)} nm, ${p.n} knots` : `${fmt(p.value, 6)}${p.unit ? ' ' + p.unit : ''}`;
-    const cov = p.covers === false ? ' ' + badge('CLAMPED', 'b-warn', "the table's knots do not cover the recipe's wavelength range: Geant4 and lumen keep the end values outside") : '';
-    const org = p.origin && p.origin !== 'gdml' ? ' ' + badge(p.origin.toUpperCase(), 'b-dim', p.note || '') : '';
+    const cov = p.covers === false ? ' ' + badge('CLAMPED', 'b-warn', "the table's knots do not cover the wavelength range given: Geant4 and lumen keep the end values outside") : '';
+    const org = p.origin && p.origin !== 'source' ? ' ' + badge(p.origin.toUpperCase(), 'b-dim', p.note || '') : '';
     const active = plotState && plotState.id === `${idPrefix}:${k}`;
     return `<tr class="${p.kind === 'table' ? 'plot' : ''} ${active ? 'active' : ''}" ${p.kind === 'table' ? `data-plot="${idPrefix}:${k}"` : ''}>
       <td class="key">${esc(p.key)}${cov}${org}</td>${readsText(p, owner)}<td class="rng">${rng}</td></tr>`;
@@ -572,10 +604,12 @@ function materialHtml(m) {
   let h = `<div class="d-kind">MATERIAL</div><div class="d-title">${esc(m.short)}</div><div class="d-full">${esc(m.name)}</div>
     <div class="d-badges">${materialBadges(m)}</div>`;
   if (m.status === 'refused') h += `<div class="msg err"><b>lumen refuses this material.</b> ${esc(m.message)}</div>`;
-  if (m.status === 'opaque') h += `<div class="msg info">No RINDEX: lumen (as Geant4) stops a photon at the boundary of a volume of this material. Its other optical properties are never read.</div>`;
+  if (m.status === 'opaque') h += `<div class="msg info">${opaqueText(m)} Its optical properties are not read.</div>`;
+  if (m.status === 'unused') h += '<div class="msg info">Nothing in the detector volume is made of it: lumen does not read it.</div>';
+  if (m.status === 'unread') h += '<div class="msg info">Not read: lumen refused the GDML (see REPORT).</div>';
   m.warnings.forEach((w) => { h += `<div class="msg warn">${esc(w)}</div>`; });
-  h += `<div class="section">LUMEN</div><div class="kv">${kv('optics model', esc(m.optics.model) + (m.optics.origin !== 'gdml' ? ` <span class="badge b-dim">${esc(m.optics.origin)}</span>` : ''))}
-    ${m.optics.note ? kv('why', esc(m.optics.note)) : ''}${m.target && m.target !== m.name ? kv('medium', esc(m.target)) : ''}
+  h += `<div class="section">LUMEN</div><div class="kv">${kv('optics model', esc(m.optics.model) + (m.optics.origin !== 'source' ? ` <span class="badge b-dim">${esc(m.optics.origin)}</span>` : ''))}
+    ${m.optics.note ? kv('why', esc(m.optics.note)) : ''}
     ${kv('channels', m.channels.length ? esc(m.channels.join(', ')) : '–')}
     ${Object.entries(m.emission || {}).map(([c, prof]) => kv(`${c} delay`, EMISSION[prof] || esc(prof))).join('')}
     ${m.scintillation ? kv('scintillation', `${fmt(m.scintillation.yield_per_MeV)} /MeV, read by the scintillation source`) : ''}
@@ -587,10 +621,10 @@ function materialHtml(m) {
   } else {
     h += `<div class="msg info">No optical properties in the GDML.</div>`;
   }
-  if (m.inert.length) h += `<div class="section">KEPT INERT</div><div class="msg info">Keys no Geant4 optical process reads, kept verbatim and never read: ${m.inert.map(esc).join(', ')}.</div>`;
+  if (m.inert.length) h += `<div class="section">KEPT INERT</div><div class="msg info">Keys kept verbatim and never read by lumen: ${m.inert.map(esc).join(', ')}.</div>`;
   h += `<div class="section">COMPOSITION</div><div class="kv">${kv('state', esc(m.state || '–'))}${kv('density', m.density ? fmt(m.density) + ' g/cm³' : '–')}
     ${m.temperature ? kv('temperature', fmt(m.temperature) + ' K') : ''}${m.pressure ? kv('pressure', fmt(m.pressure / 1e5) + ' bar') : ''}
-    ${kv('components', m.composition.map((c) => `${esc(c.ref)} ${c.fraction !== null ? fmt(c.fraction, 3) : (c.atoms + ' atoms')}`).join(', ') || '–')}</div>`;
+    ${kv('components', m.composition.map((c) => `${esc(c.ref)} ${c.fraction !== null ? fmt(c.fraction, 3) : (esc(c.atoms) + ' atoms')}`).join(', ') || '–')}</div>`;
   return h;
 }
 function surfaceHtml(s) {
@@ -598,15 +632,17 @@ function surfaceHtml(s) {
   let h = `<div class="d-kind">OPTICAL SURFACE</div><div class="d-title">${esc(s.short)}</div><div class="d-full">${esc(s.name)}</div>
     <div class="d-badges">${badge(surfaceLabel(s), surfaceStatusClass(s))}</div>`;
   if (s.status === 'refused') h += `<div class="msg err"><b>lumen refuses this surface.</b> ${esc(s.message)}</div>`;
-  if (s.status === 'sensor') h += `<div class="msg info">A detecting surface on a sensor: lumen reads it with the group's surface reader as <b>${esc(s.sensor_type)}</b>.</div>`;
+  if (s.status === 'unused') h += '<div class="msg info">Nothing in the detector volume uses it: lumen does not read it.</div>';
+  if (s.status === 'unread') h += '<div class="msg info">Not read: lumen refused this detector (see REPORT).</div>';
   h += `<div class="section">GEANT4</div><div class="kv">${kv('type', esc(s.geant4.type))}${kv('model', esc(s.geant4.model))}${kv('finish', esc(s.geant4.finish))}
     ${kv(s.geant4.value_name || 'value', fmt(s.geant4.value, 6))}${s.optics.model !== 'geant4' ? kv('optics model', esc(s.optics.model)) : ''}</div>`;
   h += `<div class="section">ATTACHED</div><div class="kv">${kv('skin on', s.skins.length ? s.skins.map(lvLink).join(', ') : '–')}
-    ${kv('borders', s.n_borders ? `${s.n_borders.toLocaleString()} (${s.borders.slice(0, 6).map((b) => esc(b[0].split('0x')[0]) + ' → ' + esc(b[1].split('0x')[0])).join('; ')}${s.n_borders > 6 ? '; …' : ''})` : '–')}</div>`;
-  if (s.params.length) {
-    h += `<div class="section">LUMEN PARAMETERS</div><table class="props"><tr><th>PARAM</th><th>FROM</th><th>NOTE</th></tr>` +
-      s.params.map((p) => `<tr><td class="key">${esc(p.param)}</td><td class="read ${p.key ? '' : 'no'}">${p.key ? esc(p.key.split('/').pop()) + ` <span class="badge b-dim">${esc(p.column)}</span>` : esc(p.column)}</td><td class="read">${esc(p.note)}</td></tr>`).join('') + '</table>';
-  }
+    ${kv('borders', s.n_borders ? `${num(s.n_borders)} (${s.borders.slice(0, 6).map((b) => esc(b[0].split('0x')[0]) + ' → ' + esc(b[1].split('0x')[0])).join('; ')}${s.n_borders > 6 ? '; …' : ''})` : '–')}</div>`;
+  s.uses.forEach((u) => {
+    h += `<div class="section">READ AS A ${esc(u.how.toUpperCase())}${u.text ? ': ' + esc(u.text) : ''}</div><div class="kv">${kv('type', esc(u.type))}</div>`;
+    if (u.params.length) h += `<table class="props"><tr><th>PARAM</th><th>FROM</th><th>NOTE</th></tr>` +
+      u.params.map((p) => `<tr><td class="key">${esc(p.param)}</td><td class="read ${p.key ? '' : 'no'}">${p.key ? esc(p.key.split('/').pop()) + ` <span class="badge b-dim">${esc(p.column)}</span>` : esc(p.column)}</td><td class="read">${esc(p.note)}</td></tr>`).join('') + '</table>';
+  });
   if (s.properties.length) {
     h += `<div class="section">PROPERTIES</div><table class="props"><tr><th>KEY</th><th>READ BY LUMEN AS</th><th>RANGE</th></tr>${propRows(s.properties, s, 's')}</table>
       <div id="plotWrap"><canvas id="plot"></canvas><div id="plotTip"></div></div>`;
@@ -621,7 +657,7 @@ function groupHtml(name) {
     <div class="kv">${kv('volumes', lvs.map((i) => lvLink(S.volumes[i].name)).join(', '))}${kv('selector', esc(g.lv || g.lv_pattern))}
     ${kv('counting', esc(g.rule))}${kv('values', esc(g.values || '–'))}${g.where ? kv('where', esc(JSON.stringify(g.where))) : ''}
     ${Object.entries(g.settings).map(([k, v]) => kv(k, esc(v))).join('')}
-    ${kv('placed', lvs.reduce((a, i) => a + S.volumes[i].inside, 0).toLocaleString())}</div>`;
+    ${kv('sensors', g.sensors === null ? 'not built (see REPORT)' : num(g.sensors))}</div>`;
 }
 
 function choosePlot(id) {
@@ -630,7 +666,7 @@ function choosePlot(id) {
   if (selection.kind === 'material') { owner = S.materials[selection.name]; p = (kind === 'd' ? owner.derived : owner.properties)[+k]; }
   if (selection.kind === 'surface') { owner = S.surfaces[selection.name]; p = owner.properties[+k]; }
   if (!p || p.kind !== 'table') return;
-  plotState = { id, title: `${owner.short} · ${p.key}`, e: p.energy, v: p.value, unit: p.unit };
+  plotState = { id, title: `${owner.short} · ${p.key}`, e: p.energy, v: p.value, unit: p.unit, spectrum: p.spectrum };
   renderDetails();
 }
 function drawPlot() {
@@ -640,7 +676,7 @@ function drawPlot() {
     const k = owner ? owner.properties.findIndex((p) => p.kind === 'table') : -1;
     if (k < 0) { c.parentElement.style.display = 'none'; return; }
     const p = owner.properties[k];
-    plotState = { id: `${selection.kind === 'material' ? 'm' : 's'}:${k}`, title: `${owner.short} · ${p.key}`, e: p.energy, v: p.value, unit: p.unit, auto: true };
+    plotState = { id: `${selection.kind === 'material' ? 'm' : 's'}:${k}`, title: `${owner.short} · ${p.key}`, e: p.energy, v: p.value, unit: p.unit, spectrum: p.spectrum };
     const row = document.querySelector(`tr[data-plot="${plotState.id}"]`); if (row) row.classList.add('active');
   }
   const dpr = window.devicePixelRatio || 1; const W = c.clientWidth, H = c.clientHeight;
@@ -672,9 +708,16 @@ function drawPlot() {
   g.fillStyle = '#9fd3ee'; g.fillText(plotState.title + (plotState.unit ? ` (${plotState.unit})` : ''), L, 13);
   const order = xs.map((x, i) => i).sort((a, b) => xs[a] - xs[b]);
   g.strokeStyle = '#29b6f6'; g.lineWidth = 1.6; g.beginPath();
-  order.forEach((i, k) => { const px = X(xs[i]), py = Y(ys[i]); if (k) g.lineTo(px, py); else g.moveTo(px, py); });
+  order.forEach((i, k) => {  // linear in photon energy between the knots, as lumen reads a table
+    if (!k) { g.moveTo(X(xs[i]), Y(ys[i])); return; }
+    const j = order[k - 1];
+    for (let q = 1; q <= 8; q++) {
+      const e = plotState.e[j] + (plotState.e[i] - plotState.e[j]) * q / 8;
+      g.lineTo(X(energyX ? e : HC / e), Y(ys[j] + (ys[i] - ys[j]) * q / 8));
+    }
+  });
   g.stroke();
-  g.setLineDash([4, 4]); g.strokeStyle = 'rgba(41,182,246,0.45)'; g.beginPath();  // kept flat outside the knots
+  g.setLineDash([4, 4]); g.strokeStyle = plotState.spectrum ? 'transparent' : 'rgba(41,182,246,0.45)'; g.beginPath();  // kept flat outside the knots (an emission spectrum is not: no light there)
   const first = order[0], last = order[order.length - 1];
   g.moveTo(L, Y(ys[first])); g.lineTo(X(xs[first]), Y(ys[first])); g.moveTo(X(xs[last]), Y(ys[last])); g.lineTo(W - R, Y(ys[last]));
   g.stroke(); g.setLineDash([]);
@@ -735,7 +778,7 @@ function wire() {
   $('solidOp').addEventListener('input', (e) => { solidOpacity = parseFloat(e.target.value); $('solidOpVal').textContent = solidOpacity.toFixed(2); refreshMaterials(); });
   $('depthMax').max = String(maxDepth); $('depthMax').value = String(maxDepth); depthMax = maxDepth; $('depthVal').textContent = 'all';
   $('depthMax').addEventListener('input', (e) => { depthMax = parseInt(e.target.value, 10); $('depthVal').textContent = depthMax >= maxDepth ? 'all' : depthMax; refreshInstances(); refreshMaterials(); });
-  $('bulkMax').addEventListener('input', (e) => { bulkMax = parseInt(e.target.value, 10); $('bulkVal').textContent = bulkMax.toLocaleString(); refreshInstances(); refreshMaterials(); renderList(); });
+  $('bulkMax').addEventListener('input', (e) => { bulkMax = parseInt(e.target.value, 10); $('bulkVal').textContent = num(bulkMax); refreshInstances(); refreshMaterials(); renderList(); });
   $('logYChk').addEventListener('change', (e) => { logY = e.target.checked; drawPlot(); });
   $('energyXChk').addEventListener('change', (e) => { energyX = e.target.checked; drawPlot(); });
   $('tabs').addEventListener('click', (e) => {
@@ -780,7 +823,7 @@ async function main() {
   if (AXES[S.meta.up]) { upAxis = S.meta.up; setActive('upGrp', upAxis); }
   initThree(); wire(); buildObjects(); fitCamera(); renderList();
   const nRef = Object.values(S.materials).filter((m) => m.status === 'refused').length + Object.values(S.surfaces).filter((s) => s.status === 'refused').length;
-  setStatus(`${S.meta.counts.instances.toLocaleString()} placed volumes · ${Object.keys(S.materials).length} materials · ${Object.keys(S.surfaces).length} surfaces${nRef ? ` · ${nRef} refused by lumen` : ''}${S.errors.length ? ' · import failed: see REPORT' : ''}`);
-  if (S.errors.length || nRef) toast(`lumen refuses ${nRef} material(s)/surface(s)${S.errors.length ? ' and the import failed' : ''}: see REPORT`);
+  setStatus(`${num(S.meta.counts.instances)} placed volumes · ${Object.keys(S.materials).length} materials · ${Object.keys(S.surfaces).length} surfaces${nRef ? ` · ${nRef} refused by lumen` : ''}${S.meta.built ? '' : ' · refused by lumen: see REPORT'}`);
+  if (!S.meta.built) toast('lumen refuses this detector: see REPORT');
 }
 main();
