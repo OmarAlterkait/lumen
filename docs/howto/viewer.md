@@ -20,7 +20,8 @@ The command converts the detector (`lumen.convert`, into a temporary directory; 
 package's own preparation, its files under `LUMEN_DATA` or `--data`) and loads it (`lumen.load`), so the page shows
 what lumen built and everything lumen refuses. It prints how long that took and the page's address, and serves the page
 on this machine only (127.0.0.1) until you stop it with Ctrl-C. `--open` opens a browser, `--port` picks another
-number than 8765. On a cluster node, run it there and forward 8765 from your laptop (`ssh -L 8765:127.0.0.1:8765 <node>`), then open the
+number than 8765 (0: any free one); a port already in use is reported at once, before the detector is read. On a
+cluster node, run it there and forward 8765 from your laptop (`ssh -L 8765:127.0.0.1:8765 <node>`), then open the
 address on the laptop.
 
 A large detector takes minutes (Hyper-K, 19,620 sensors: four). To look again later without reading the file again,

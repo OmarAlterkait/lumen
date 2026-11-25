@@ -1,16 +1,17 @@
-"""Serve the viewer on this machine: the page (``static/``) and its scene (``/scene.json``, gzipped).
+"""Serve the viewer on this machine: the page (``static/``) and its scene (``scene.json``, gzipped).
 
     python -m lumen.viewer tank.gdml --open                          # any GDML, its detector volume guessed
     python -m lumen.viewer tank.gdml --recipe my_recipes.py:TANK     # with a recipe of your own
     python -m lumen.viewer lumen_wc:sk                               # a detector package's detector
     python -m lumen.viewer tank.gdml --out tank.view.json            # write the scene; --scene serves it again
 
-The server binds 127.0.0.1 by default and builds the scene once, before it starts.
+The server binds 127.0.0.1 by default, before it builds the scene, so a port in use is reported at once.
 """
 
 from __future__ import annotations
 
 import argparse
+import errno
 import gzip
 import json
 import sys
@@ -79,9 +80,18 @@ def handler(scene_gz: bytes):
     return Handler
 
 
-def serve(scene_json: bytes, host="127.0.0.1", port=PORT, open_browser=False):
-    """Serve the page and a scene (JSON bytes) until interrupted."""
-    httpd = ThreadingHTTPServer((host, port), handler(gzip.compress(scene_json, GZIP_LEVEL)))
+def bind(host="127.0.0.1", port=PORT) -> ThreadingHTTPServer:
+    """Return a server listening on ``host:port`` (port 0: a free one), which answers once ``serve`` gives it the page.
+
+    Bound before the scene is built, a port in use is reported at once, not after minutes of building.
+    """
+    return ThreadingHTTPServer((host, port), BaseHTTPRequestHandler)
+
+
+def serve(httpd: ThreadingHTTPServer, scene_json: bytes, open_browser=False):
+    """Serve the page and a scene (JSON bytes) on a bound server (``bind``) until interrupted."""
+    httpd.RequestHandlerClass = handler(gzip.compress(scene_json, GZIP_LEVEL))
+    host, port = httpd.server_address[:2]
     url = f"http://{host}:{port}/"
     sys.stderr.write(f"[lumen.viewer] {url}  (Ctrl-C stops)\n")
     if open_browser:
@@ -90,8 +100,6 @@ def serve(scene_json: bytes, host="127.0.0.1", port=PORT, open_browser=False):
         httpd.serve_forever()
     except KeyboardInterrupt:
         pass
-    finally:
-        httpd.server_close()
 
 
 def parser() -> argparse.ArgumentParser:
@@ -114,7 +122,7 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument("--up", choices=("x", "y", "z"), default="z", help="the axis drawn vertical first (default z)")
     ap.add_argument("--max-instances", type=int, default=None, help="the placed copies drawn at most")
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--port", type=int, default=PORT)
+    ap.add_argument("--port", type=int, default=PORT, help=f"the port (default {PORT}; 0: a free one)")
     ap.add_argument("--open", action="store_true", help="open the page in a browser")
     ap.add_argument("--out", help="write the scene (JSON) to this file instead of serving it")
     ap.add_argument("--scene", help="serve a scene written by --out")
@@ -124,26 +132,41 @@ def parser() -> argparse.ArgumentParser:
 def main(argv=None) -> int:
     """Run the viewer (see the module docstring) on the command line ``argv``; return the exit status."""
     a = parser().parse_args(argv)
-    if a.scene:
-        data = Path(a.scene).read_bytes()
-    else:
-        if not a.source:
-            sys.stderr.write("lumen.viewer: give a GDML file or a package's detector (or --scene)\n")
+    if not a.scene and not a.source:
+        sys.stderr.write("lumen.viewer: give a GDML file or a package's detector (or --scene)\n")
+        return 2
+    write = bool(a.out) and not a.scene
+    httpd = None
+    if not write:
+        try:
+            httpd = bind(a.host, a.port)
+        except OSError as e:
+            hint = " (pick another with --port)" if e.errno == errno.EADDRINUSE else ""
+            sys.stderr.write(f"lumen.viewer: cannot listen on {a.host}:{a.port}: {e.strerror or e}{hint}\n")
             return 2
-        from lumen.viewer.scene import MAX_INSTANCES, build
-
-        sys.stderr.write(f"[lumen.viewer] reading {a.source} as lumen reads it ...\n")
-        view = build(a.source, a.recipe, data=a.data, max_instances=a.max_instances or MAX_INSTANCES, up=a.up,
-                     wavelength_range=a.range)  # fmt: skip
-        for stage, text in view.errors:
-            sys.stderr.write(f"[lumen.viewer] {stage}: {text}\n")
-        meta = view.payload.get("meta", {})
-        sys.stderr.write(f"[lumen.viewer] {meta.get('counts', {}).get('instances', 0):,} placed volumes, "
-                         f"built in {meta.get('seconds', '?')} s\n")  # fmt: skip
-        data = encode(view.payload)
-        if a.out:
+    try:
+        data = Path(a.scene).read_bytes() if a.scene else _scene(a)
+        if write:
             Path(a.out).write_bytes(data)
             sys.stderr.write(f"[lumen.viewer] wrote {a.out} ({len(data) / 2**20:.1f} MiB)\n")
-            return 0
-    serve(data, a.host, a.port, a.open)
+        else:
+            serve(httpd, data, a.open)
+    finally:
+        if httpd is not None:
+            httpd.server_close()
     return 0
+
+
+def _scene(a) -> bytes:
+    """Return the scene of the command line's source (JSON bytes), with what failed and how long it took."""
+    from lumen.viewer.scene import MAX_INSTANCES, build
+
+    sys.stderr.write(f"[lumen.viewer] reading {a.source} as lumen reads it ...\n")
+    view = build(a.source, a.recipe, data=a.data, max_instances=a.max_instances or MAX_INSTANCES, up=a.up,
+                 wavelength_range=a.range)  # fmt: skip
+    for stage, text in view.errors:
+        sys.stderr.write(f"[lumen.viewer] {stage}: {text}\n")
+    meta = view.payload.get("meta", {})
+    sys.stderr.write(f"[lumen.viewer] {meta.get('counts', {}).get('instances', 0):,} placed volumes, "
+                     f"built in {meta.get('seconds', '?')} s\n")  # fmt: skip
+    return encode(view.payload)

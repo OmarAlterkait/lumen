@@ -337,9 +337,9 @@ def test_a_gdml_geant4_refuses_reaches_the_page_with_its_repair():
 # ----------------------------------------------------------------------------------------------------- the server
 @pytest.fixture
 def served():
-    """Serve a scene of ``{}`` on a port of its own; yield ask(path, method) -> (status, body, headers)."""
-    httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.handler(gzip.compress(b"{}")))
-    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    """Serve a scene of ``{}`` on a free port; yield ask(path, method) -> (status, body, headers)."""
+    httpd = server.bind("127.0.0.1", 0)
+    threading.Thread(target=server.serve, args=(httpd, b"{}"), daemon=True).start()
 
     def ask(path, method="GET", **headers):
         c = http.client.HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=10)
@@ -367,6 +367,16 @@ def test_the_server_sends_no_file_of_the_working_directory(served):
     for method in ("GET", "HEAD", "POST"):
         for path in ("/pyproject.toml", "/../pyproject.toml", "/"):
             assert served(path, method)[0] != 200 or method == "GET" and path == "/", (method, path)
+
+
+def test_a_port_in_use_is_reported_before_the_scene_is_built(monkeypatch, capsys):
+    taken = server.bind("127.0.0.1", 0)
+    try:
+        monkeypatch.setattr(scene, "build", lambda *a, **k: pytest.fail("the scene was built before the port"))
+        assert server.main(["tank.gdml", "--port", str(taken.server_address[1])]) == 2
+        assert "cannot listen on" in capsys.readouterr().err
+    finally:
+        taken.server_close()
 
 
 def test_the_command_line_parses():
