@@ -3,10 +3,10 @@
     meshes = Tessellator(df)
     m = meshes.solid("PMTGlass")          # SolidMesh(vertices (n, 3) float32, triangles (k, 3) uint32, exact, note)
 
-Each solid follows GDML's parameters (full lengths, polyhedra radii as apothems). Curved faces are cut into flat ones
-(``SEGMENTS`` per turn). Booleans are evaluated exactly on those meshes with ``manifold3d`` (the ``view`` extra);
-without it, or where an operand is not a closed surface (an open tessellated solid), a union shows both operands and a
-subtraction or intersection its first one, with ``exact`` False and the reason in ``note``.
+Curved faces are cut into flat ones (``SEGMENTS`` per turn); booleans are evaluated on the meshes by ``manifold3d``
+(the ``view`` extra). No mesh is taken as right by its construction: each one is compared with the solid lumen traces
+(``lumen.build.lowering.SolidMapper``; ``matches``), and one that differs, or whose solid lumen does not trace, has
+``exact`` False and the reason in ``note``.
 """
 
 from __future__ import annotations
@@ -16,31 +16,41 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from lumen.build.lowering import boolean_pose
+from lumen.build.lowering import SolidMapper, boolean_pose
+from lumen.geometry import scene as sc
+from lumen.geometry import solids as so
+from lumen.rules.tolerances import CUT_NORMAL_FLOOR
 from lumen.units import MM
 
 try:
     import manifold3d as _mf
-except ImportError:  # pragma: no cover - exercised only without the extra
+except ImportError:  # the view extra is not installed: ``require``
     _mf = None
 
 SEGMENTS = 48  # flat faces per full turn of a curved face, for a solid drawn a few times
 MIN_SEGMENTS = 6  # per arc, however short
 LOD = ((50, 48), (500, 32), (5000, 20), (None, 12))  # (solid drawn fewer than n times, faces per turn)
-CURVE_POINTS = 16  # points along a hyperbolic or parabolic profile
 TWOPI = 2 * math.pi
 PHI_FULL = 1e-9  # rad: a phi range this close to 2 pi is the full turn
-TWIST_REL = 1e-9  # an arb8 whose edges' cross products pass this share of its size squared is twisted
+CHECK_SEGMENTS = 192  # faces per turn of the mesh compared with lumen's solid
+CHECK_POINTS = 128  # points in the solid's box, and on the mesh, of that comparison
+CHECK_SAGITTAS = 3.0  # its tolerance: this many times the sagitta of those faces (a face curved two ways has two)
+CHECK_FLAT = 1e-6  # its tolerance for a solid of flat faces, as a share of its size (float32 coordinates)
 
 
 @dataclass(frozen=True)
 class SolidMesh:
-    """A solid's display mesh: ``vertices`` (n, 3) m in its frame, ``triangles`` (k, 3), outward-facing."""
+    """A solid's display mesh: ``vertices`` (n, 3) m in its frame, ``triangles`` (k, 3), outward-facing.
+
+    ``exact``: it matches the solid lumen traces, to its flat faces (``matches``); ``note``: why not; ``refused``: why
+    lumen does not trace the solid ("": it does).
+    """
 
     vertices: np.ndarray
     triangles: np.ndarray
-    exact: bool = True
-    note: str = ""
+    exact: bool
+    note: str
+    refused: str
 
 
 def _orient(loop):
@@ -52,14 +62,17 @@ def _orient(loop):
 
 def _triangulate(loops):
     """Return triangles (k, 3) indexing the concatenated loops (outer CCW, holes CW)."""
-    if _mf is not None:
-        return np.asarray(_mf.triangulate([np.asarray(lp, float) for lp in loops]), np.int64).reshape(-1, 3)
-    p = np.asarray(loops[0], float)  # a fan: correct for a convex outer loop without holes
-    return np.array([(0, i, i + 1) for i in range(1, len(p) - 1)], np.int64)
+    return np.asarray(_mf.triangulate([np.asarray(lp, float) for lp in loops]), np.int64).reshape(-1, 3)
 
 
 def _arc_segments(dphi, fixed=None, seg=SEGMENTS):
     return fixed if fixed else max(MIN_SEGMENTS, math.ceil(seg * dphi / TWOPI))
+
+
+def require():
+    """Raise ImportError when the view extra is not installed."""
+    if _mf is None:
+        raise ImportError("lumen.viewer needs manifold3d: install lumen's view extra (pip install -e '.[view]')")
 
 
 def segments_for(uses):
@@ -87,12 +100,9 @@ def lathe(loops, startphi=0.0, deltaphi=TWOPI, sides=None, radial=1.0, seg=SEGME
         ring = np.stack([np.outer(np.cos(phis), r), np.outer(np.sin(phis), r), np.broadcast_to(z, (rings, k))], -1)
         verts.append(ring.reshape(-1, 3))
         idx = base + np.arange(rings * k).reshape(rings, k)
-        for j in range(n):
-            j1 = (j + 1) % rings
-            for i in range(k):
-                i1 = (i + 1) % k
-                a, b, c, d = idx[j, i], idx[j, i1], idx[j1, i1], idx[j1, i]
-                tris += [(a, b, c), (a, c, d)]
+        a, d = idx[:n], idx[(np.arange(n) + 1) % rings]
+        b, c = np.roll(a, -1, axis=1), np.roll(d, -1, axis=1)
+        tris += [np.stack(q, -1).reshape(-1, 3) for q in ((a, b, c), (a, c, d))]
         base += rings * k
     v = np.concatenate(verts)
     if not full:  # the two phi caps: the loops triangulated in (r, z)
@@ -109,8 +119,8 @@ def lathe(loops, startphi=0.0, deltaphi=TWOPI, sides=None, radial=1.0, seg=SEGME
             return out
 
         first, last = ring_index(cap, 0), ring_index(cap, rings - 1)
-        tris += [tuple(t) for t in first[:, ::-1]] + [tuple(t) for t in last]
-    return _closed(v, np.asarray(tris, np.int64))
+        tris += [first[:, ::-1], last]
+    return _closed(v, np.concatenate(tris))
 
 
 def _closed(v, t):
@@ -130,13 +140,7 @@ def _signed_volume(v, t):
 
 
 def _hull(points):
-    p = np.asarray(points, float)
-    if _mf is not None:
-        return _mf.Manifold.hull_points(p)
-    from scipy.spatial import ConvexHull
-
-    h = ConvexHull(p)
-    return _closed(p, np.asarray(h.simplices, np.int64))
+    return _mf.Manifold.hull_points(np.asarray(points, float))
 
 
 def _arc(r, t0, t1, n):
@@ -151,8 +155,8 @@ def _sphere_loop(rmin, rmax, t0, dt, seg=SEGMENTS):
     return [_orient(outer + inner)]
 
 
-def _profile_curve(fn, hz, rmin_fn=None):
-    z = np.linspace(-hz, hz, CURVE_POINTS)
+def _profile_curve(fn, hz, seg, rmin_fn=None):
+    z = np.linspace(-hz, hz, seg // 2 + 1)
     outer = [(fn(q), q) for q in z]
     inner = [(rmin_fn(q), q) for q in z[::-1]] if rmin_fn else [(0.0, hz), (0.0, -hz)]
     return [_orient(outer + inner)]
@@ -177,9 +181,19 @@ def _ring(r_in, r_out, hz):
 
 
 def _tube(s, g, seg):
-    hz = g("z") / 2
-    m = lathe(_ring(g("rmin"), g("rmax"), hz), g("startphi"), g("deltaphi", TWOPI), seg=seg)
-    return _cut_tube(m, s, hz) if s.type == "cutTube" else m
+    return lathe(_ring(g("rmin"), g("rmax"), g("z") / 2), g("startphi"), g("deltaphi", TWOPI), seg=seg)
+
+
+def _cut_tube(s, g, seg):
+    """Return G4CutTubs: a tube long enough for both cuts, cut by its planes (outward normals ``low``, ``high``)."""
+    hz, rmax = g("z") / 2, g("rmax")
+    cuts = [(np.array([g(f"{end}{k}") for k in "XYZ"]), z) for end, z in (("low", -hz), ("high", hz))]
+    cuts = [(n / np.linalg.norm(n), z) for n, z in cuts]
+    reach = hz + max(rmax * math.hypot(n[0], n[1]) / max(abs(n[2]), CUT_NORMAL_FLOOR) for n, _ in cuts)
+    m = _manifold(lathe(_ring(g("rmin"), rmax, reach), g("startphi"), g("deltaphi", TWOPI), seg=seg))
+    for n, z in cuts:
+        m = m.trim_by_plane(tuple(-n), float(-n[2] * z))  # keep n . (x - (0, 0, z)) <= 0
+    return m
 
 
 def _cone(s, g, seg):
@@ -195,9 +209,9 @@ def _polycone(s, g, seg):
 def _polyhedra(s, g, seg):
     n, dphi = int(g("numsides")), g("deltaphi", TWOPI)
     full = dphi <= 0 or dphi >= TWOPI - PHI_FULL
-    radial = 1.0 / math.cos(0.5 * (TWOPI if full else dphi) / n)  # GDML's radii are apothems: to the corners
-    loops = _planes_loop(s.planes, s.type == "genericPolyhedra")
-    return lathe(loops, g("startphi"), dphi, sides=n, radial=radial, seg=seg)
+    generic = s.type == "genericPolyhedra"  # its (r, z) points are the corners; a polyhedra's radii are apothems
+    radial = 1.0 if generic else 1.0 / math.cos(0.5 * (TWOPI if full else dphi) / n)
+    return lathe(_planes_loop(s.planes, generic), g("startphi"), dphi, sides=n, radial=radial, seg=seg)
 
 
 def _sphere(s, g, seg):
@@ -212,32 +226,43 @@ def _torus(s, g, seg):
 
 
 def _elcone(s, g, seg):
-    zm, zc = g("zmax"), g("zcut")
+    zm = g("zmax")
+    zc = min(g("zcut"), zm)  # G4EllipticalCone: |z| <= min(zcut, zmax)
     return _scale_xy(lathe([_orient([(0, -zc), (zm + zc, -zc), (zm - zc, zc), (0, zc)])], seg=seg), g("dx"), g("dy"))
 
 
 def _paraboloid(s, g, seg):
     hz, rl, rh = g("dz"), g("rlo"), g("rhi")
     k1, k2 = (rh * rh - rl * rl) / (2 * hz), (rh * rh + rl * rl) / 2
-    return lathe(_profile_curve(lambda z: math.sqrt(max(0.0, k1 * z + k2)), hz), seg=seg)
+    return lathe(_profile_curve(lambda z: math.sqrt(max(0.0, k1 * z + k2)), hz, seg), seg=seg)
 
 
 def _hype(s, g, seg):
     hz, to, ti = g("z") / 2, math.tan(g("outst")), math.tan(g("inst"))
     rin = (lambda z: math.sqrt(g("rmin") ** 2 + (ti * z) ** 2)) if (g("rmin") > 0 or ti > 0) else None
-    return lathe(_profile_curve(lambda z: math.sqrt(g("rmax") ** 2 + (to * z) ** 2), hz, rin), seg=seg)
+    return lathe(_profile_curve(lambda z: math.sqrt(g("rmax") ** 2 + (to * z) ** 2), hz, seg, rin), seg=seg)
+
+
+def _ellipsoid(s, g, seg):
+    """Return G4Ellipsoid: both cuts 0 is no cut, otherwise they are clamped to [-cz, cz]."""
+    cz, lo, hi = g("cz"), g("zcut1"), g("zcut2")
+    if lo == 0.0 and hi == 0.0:
+        lo, hi = -cz, cz
+    t0, t1 = (math.acos(max(-1.0, min(1.0, z / cz))) for z in (hi, lo))  # on the unit sphere
+    loop = [_orient([(0.0, math.cos(t0)), *_arc(1.0, t0, t1, max(MIN_SEGMENTS, seg // 2)), (0.0, math.cos(t1))])]
+    return _scale_xy(lathe(loop, seg=seg), g("ax"), g("by"), cz)
 
 
 PRIMITIVES = {
     "box": lambda s, g, seg: _hull([(i * g("x") / 2, j * g("y") / 2, k * g("z") / 2)
                                     for i in (-1, 1) for j in (-1, 1) for k in (-1, 1)]),
-    "tube": _tube, "cutTube": _tube, "cone": _cone, "polycone": _polycone, "genericPolycone": _polycone,
+    "tube": _tube, "cutTube": _cut_tube, "cone": _cone, "polycone": _polycone, "genericPolycone": _polycone,
     "polyhedra": _polyhedra, "genericPolyhedra": _polyhedra, "sphere": _sphere,
     "orb": lambda s, g, seg: lathe(_sphere_loop(0.0, g("r"), 0.0, math.pi, seg), seg=seg),
     "torus": _torus,
     "eltube": lambda s, g, seg: _scale_xy(lathe(_ring(0.0, 1.0, g("dz")), seg=seg), g("dx"), g("dy")),
     "elcone": _elcone,
-    "ellipsoid": lambda s, g, seg: _ellipsoid((g("ax"), g("by"), g("cz")), g("zcut1"), g("zcut2"), seg),
+    "ellipsoid": _ellipsoid,
     "paraboloid": _paraboloid, "hype": _hype,
     **dict.fromkeys(("trd", "para", "trap", "arb8", "tet"), lambda s, g, seg: _hull(_polytope_vertices(s))),
     "xtru": lambda s, g, seg: _xtru(s.vertices, s.sections),
@@ -284,34 +309,6 @@ def _polytope_vertices(s):
     return out
 
 
-def _ellipsoid(axes, zcut1, zcut2, seg=SEGMENTS):
-    ax, by, cz = axes
-    mesh = _scale_xy(lathe(_sphere_loop(0.0, 1.0, 0.0, math.pi, seg), seg=seg), ax, by, cz)
-    if zcut1 == 0.0 and zcut2 == 0.0:
-        return mesh
-    lo, hi = max(-cz, zcut1 if zcut1 != 0.0 else -cz), min(cz, zcut2 if zcut2 != 0.0 else cz)
-    if _mf is None:
-        return mesh
-    m = _manifold(mesh)
-    if m is None:
-        return mesh
-    return m.trim_by_plane((0, 0, 1), lo).trim_by_plane((0, 0, -1), -hi)
-
-
-def _cut_tube(mesh, s, hz):
-    """Return a tube cut by G4CutTubs's planes (outward normals ``low``, ``high`` through z = -hz, +hz)."""
-    m = _manifold(mesh) if _mf is not None else None
-    if m is None:
-        return mesh
-    lo = np.array([s.params.get(k, 0.0) for k in ("lowX", "lowY", "lowZ")], float)
-    hi = np.array([s.params.get(k, 0.0) for k in ("highX", "highY", "highZ")], float)
-    for n, z in ((lo, -hz), (hi, hz)):
-        if np.linalg.norm(n) > 0:
-            n = n / np.linalg.norm(n)
-            m = m.trim_by_plane(tuple(-n), float(-n[2] * z))  # keep n . (x - (0, 0, z)) <= 0
-    return m
-
-
 def _xtru(verts, sections):
     poly = _orient(verts)
     k = len(poly)
@@ -330,25 +327,23 @@ def _xtru(verts, sections):
 
 def _manifold(mesh):
     """Return a manifold3d.Manifold of (vertices, triangles), or None when they do not bound a solid."""
-    if _mf is None:
-        return None
     if isinstance(mesh, _mf.Manifold):
         return mesh
     v, t = mesh
-    m = _mf.Manifold(_mf.Mesh(np.ascontiguousarray(v, np.float32), np.ascontiguousarray(t, np.uint32)))
+    m = _mf.Manifold(_mf.Mesh64(np.ascontiguousarray(v, np.float64), np.ascontiguousarray(t, np.uint64)))
     return m if m.status() == _mf.Error.NoError and not m.is_empty() else None
 
 
 def _arrays(mesh):
-    if _mf is not None and isinstance(mesh, _mf.Manifold):
-        out = mesh.to_mesh()
+    if isinstance(mesh, _mf.Manifold):
+        out = mesh.to_mesh64()
         return np.asarray(out.vert_properties, np.float64)[:, :3], np.asarray(out.tri_verts, np.int64)
     return mesh
 
 
 def _transform(mesh, lin, t):
     lin, t = np.asarray(lin, float), np.asarray(t, float)
-    if _mf is not None and isinstance(mesh, _mf.Manifold):
+    if isinstance(mesh, _mf.Manifold):
         return mesh.transform(np.ascontiguousarray(np.column_stack([lin, t]), np.float64))
     v, tri = mesh
     v = v @ lin.T + t
@@ -365,61 +360,118 @@ def _concat(meshes):
     return np.concatenate(vs), np.concatenate(ts)
 
 
+def _inside(v, t, x):
+    """Return whether each point of ``x`` (n, 3) lies in a closed mesh: the parity of the faces above it."""
+    p = v[t]
+    lo, hi = p[..., :2].min(1), p[..., :2].max(1)
+    q, k = np.nonzero(np.all((lo <= x[:, None, :2]) & (x[:, None, :2] <= hi), axis=2))
+    a, e, f = p[k, 0], p[k, 1] - p[k, 0], p[k, 2] - p[k, 0]
+    d = x[q] - a
+    det = e[:, 0] * f[:, 1] - e[:, 1] * f[:, 0]
+    det = np.where(det == 0.0, np.inf, det)  # a vertical face is never crossed
+    s = (d[:, 0] * f[:, 1] - d[:, 1] * f[:, 0]) / det
+    r = (e[:, 0] * d[:, 1] - e[:, 1] * d[:, 0]) / det
+    above = (s >= 0) & (r >= 0) & (s + r <= 1) & np.isfinite(det) & (s * e[:, 2] + r * f[:, 2] > d[:, 2])
+    return np.bincount(q[above], minlength=len(x)) % 2 == 1
+
+
+def _on_mesh(v, t, n, rng):
+    """Return ``n`` points uniform over a mesh's area."""
+    a, b, c = v[t[:, 0]], v[t[:, 1]], v[t[:, 2]]
+    area = np.linalg.norm(np.cross(b - a, c - a), axis=1)
+    k = rng.choice(len(t), n, p=area / area.sum())
+    s, r = np.sqrt(rng.random((n, 1))), rng.random((n, 1))
+    return (1 - s) * a[k] + s * (1 - r) * b[k] + s * r * c[k]
+
+
+def _ball(tol):
+    """Return the offsets that probe a point's neighbourhood: 0, and the axes and diagonals at tol / 2 and tol."""
+    u = np.concatenate([np.eye(3), -np.eye(3), so.corners(-np.ones(3), np.ones(3))])
+    u /= np.linalg.norm(u, axis=1, keepdims=True)
+    return np.concatenate([np.zeros((1, 3)), 0.5 * tol * u, tol * u])
+
+
+def matches(v, t, solid, box) -> bool:
+    """Return whether a closed mesh of ``CHECK_SEGMENTS`` faces per turn bounds the solid lumen traces (in ``box``).
+
+    Every point in their common box is in both or in neither, and lumen's surface passes by every point of the mesh,
+    within the sagitta of the flat faces (``CHECK_SAGITTAS``); ``CHECK_POINTS`` points of each.
+    """
+    inside, rng = solid.inside_np, np.random.default_rng(0)
+    lo, hi = np.minimum(box[0], v.min(0)), np.maximum(box[1], v.max(0))
+    curved = any(lf.kind != "q" or lf.has_q for lf in solid.leaves)
+    rel = CHECK_SAGITTAS * (1.0 - math.cos(math.pi / CHECK_SEGMENTS)) if curved else CHECK_FLAT
+    ball = _ball(rel * np.maximum(abs(lo), abs(hi)).max())
+
+    def near(x):
+        q = inside((x[:, None] + ball).reshape(-1, x.shape[1])).reshape(len(x), len(ball))
+        return q.any(1) & ~q.all(1)
+
+    x = rng.uniform(lo, hi, (CHECK_POINTS, len(lo)))
+    x = x[_inside(v, t, x) != inside(x)]
+    return bool(near(x).all() and near(_on_mesh(v, t, CHECK_POINTS, rng)).all())
+
+
 class Tessellator:
-    """The display meshes of a detector file's solids, each solid tessellated once."""
+    """The display meshes of a detector file's solids, each solid tessellated and checked once."""
 
     def __init__(self, df, uses=None):
-        self.df = df
+        self.df, self.mapper = df, SolidMapper(df)
         self.uses = _uses(df, uses or {})
         self._built: dict = {}
 
     def solid(self, name) -> SolidMesh:
-        """Return the display mesh of a solid (``SolidMesh``)."""
-        mesh, exact, note = self._build(name)
+        """Return the display mesh of a solid (``SolidMesh``), compared with the solid lumen traces."""
+        mesh, note = self._build(name, None)
         v, t = _arrays(mesh)
-        return SolidMesh(np.asarray(v, np.float32), np.asarray(t, np.uint32), exact, note)
+        traced, refused = self._traced(name)
+        note = note or refused or self._difference(name, traced)
+        return SolidMesh(np.asarray(v, np.float32), np.asarray(t, np.uint32), not note, note, refused)
 
-    def _build(self, name):
-        if name not in self._built:
+    def _traced(self, name):
+        """Return (the solid lumen traces: its ``Compiled``, None for a mesh; why lumen does not trace it, "")."""
+        try:
+            node = self.mapper.solid(name)
+            return (None if isinstance(node, sc.Mesh) else (so.Compiled(node), so.node_bbox(node))), ""
+        except Exception as err:  # whatever stops the lowering stops the conversion
+            return None, f"lumen does not trace this solid: {err}"
+
+    def _difference(self, name, traced):
+        fine, note = self._build(name, CHECK_SEGMENTS)
+        if note or traced is None or matches(*_arrays(fine), *traced):  # a mesh: the triangles drawn are lumen's
+            return note
+        return "not matched to the solid lumen traces"
+
+    def _build(self, name, seg):
+        """Return (mesh, note) of a solid at ``seg`` faces per turn (None: by its number of uses)."""
+        key = (name, seg)
+        if key not in self._built:
             try:
-                self._built[name] = self._make(self.df.solids[name])
-            except Exception as err:
+                self._built[key] = self._make(self.df.solids[name], seg)
+            except Exception as err:  # drawn as a marker, with the reason
                 box = _hull([(i, j, k) for i in (-MM, MM) for j in (-MM, MM) for k in (-MM, MM)])
-                self._built[name] = (box, False, f"not drawn ({type(err).__name__}: {err}); a 2 mm marker")
-        return self._built[name]
+                self._built[key] = (box, f"not drawn ({type(err).__name__}: {err}); a 2 mm marker")
+        return self._built[key]
 
-    def _make(self, s):
-        if s.type in ("union", "subtraction", "intersection"):
-            return self._boolean(s)
-        if s.type == "multiUnion":
-            parts = [self._part(r, tr) for r, tr in zip(s.refs, s.transforms, strict=True)]
-            exact = all(p[1] for p in parts)
-            ms = [_manifold(p[0]) for p in parts]
-            if _mf is not None and all(m is not None for m in ms):
-                return _mf.Manifold.batch_boolean(ms, _mf.OpType.Add), exact, _join(p[2] for p in parts)
-            return _concat([p[0] for p in parts]), False, "multi-union drawn as its overlapping parts"
+    def _make(self, s, seg):
+        if s.type in ("union", "subtraction", "intersection", "multiUnion"):
+            return self._boolean(s, seg)
         if s.type == "scaledSolid":
-            mesh, exact, note = self._build(s.refs[0])
-            return _transform(mesh, np.diag(np.asarray(s.scale, float)), np.zeros(3)), exact, note
-        exact = not (s.type == "arb8" and _twisted(s))
-        seg = segments_for(self.uses.get(s.name, 1))
-        return primitive(s, self.df, seg), exact, "" if exact else "twisted arb8 drawn as its convex hull"
+            mesh, note = self._build(s.refs[0], seg)
+            return _transform(mesh, np.diag(np.asarray(s.scale, float)), np.zeros(3)), note
+        return primitive(s, self.df, seg or segments_for(self.uses.get(s.name, 1))), ""
 
-    def _part(self, ref, tr):
-        mesh, exact, note = self._build(ref)
-        return _transform(mesh, *boolean_pose(tr)), exact, note
-
-    def _boolean(self, s):
-        (a, ea, na), (b, eb, nb) = (self._part(r, tr) for r, tr in zip(s.refs, s.transforms, strict=True))
-        ma, mb = _manifold(a), _manifold(b)
-        note = _join((na, nb))
-        if ma is not None and mb is not None:
-            out = ma + mb if s.type == "union" else (ma - mb if s.type == "subtraction" else ma ^ mb)
-            return out, ea and eb, note
-        why = "manifold3d not installed" if _mf is None else "an operand is not a closed surface"
-        if s.type == "union":
-            return _concat([a, b]), False, _join((note, f"union drawn as both operands ({why})"))
-        return a, False, _join((note, f"{s.type} drawn as its first operand ({why})"))
+    def _boolean(self, s, seg):
+        parts = [(self._build(r, seg), boolean_pose(tr)) for r, tr in zip(s.refs, s.transforms, strict=True)]
+        meshes = [_transform(m, *pose) for (m, _), pose in parts]
+        note = "; ".join(dict.fromkeys(n for (_, n), _ in parts if n))
+        solids = [_manifold(m) for m in meshes]
+        union = s.type in ("union", "multiUnion")
+        if any(m is None for m in solids):
+            what = "its operands" if union else "its first operand"
+            return _concat(meshes) if union else meshes[0], f"drawn as {what} (one is not a closed surface)"
+        op = _mf.OpType.Add if union else (_mf.OpType.Subtract if s.type == "subtraction" else _mf.OpType.Intersect)
+        return _mf.Manifold.batch_boolean(solids, op), note
 
 
 def _uses(df, lv_uses):
@@ -437,15 +489,3 @@ def _uses(df, lv_uses):
         if solid and n:
             add(solid, n)
     return out
-
-
-def _join(notes):
-    return "; ".join(dict.fromkeys(n for n in notes if n))
-
-
-def _twisted(s):
-    """Return whether an arb8's side faces are twisted (its top and bottom quadrilaterals are not parallel)."""
-    v = np.array([[s.params.get(f"v{i}x", 0.0), s.params.get(f"v{i}y", 0.0)] for i in range(1, 9)], float)
-    e1, e2 = v[1:4] - v[0:3], v[5:8] - v[4:7]
-    cross = e1[:, 0] * e2[:, 1] - e1[:, 1] * e2[:, 0]
-    return bool(np.any(np.abs(cross) > TWIST_REL * max(np.finfo(float).tiny, float(np.abs(v).max()) ** 2)))
