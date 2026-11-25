@@ -466,11 +466,12 @@ class Stage:
     prec: object = rules.FLOAT32  # the navigator's precision
 
 
-def prepare(scene, own=None, precision="float32") -> Stage:
+def prepare(scene, own=None, precision="float32", instances=None) -> Stage:
     """Return the class-free Stage of a lowered Scene in ``precision`` ("float32" or "float64"); ``own``: its
-    Ownership if already known (a Stage's ``own``, of the same precision)."""  # noqa: D205, D209
+    Ownership if already known (a Stage's ``own``, of the same precision); ``instances``: the scene's
+    ``scene.instances``, if already listed."""  # noqa: D205, D209
     prec = rules.precision(precision)
-    V, kinds, meshes = _volumes(scene, sc.instances(scene))
+    V, kinds, meshes = _volumes(scene, sc.instances(scene) if instances is None else instances)
     n = len(V["kind"])
     if n == 0:
         raise ValueError("navigator: a scene without volumes")
@@ -498,13 +499,14 @@ class Classes(NamedTuple):
     canon: tuple  # per class, the class it is interchangeable with
 
 
-def build(scene, classes: Classes | None = None, precision="float32"):
+def build(scene, classes: Classes | None = None, precision="float32", instances=None):
     """Return the NavArrays of a lowered Scene (``lumen.geometry.scene``): ``finish(prepare(scene, precision=))``.
 
     ``classes``: the classes reported, and the transparent volumes dissolved (module docstring); None: a label's
     medium is the class reported, nothing dissolved. ``precision``: the navigator's, "float32" or "float64".
+    ``instances``: the scene's ``scene.instances``, if already listed.
     """
-    return finish(prepare(scene, precision=precision), classes)
+    return finish(prepare(scene, precision=precision, instances=instances), classes)
 
 
 def finish(st: Stage, classes: Classes | None = None):

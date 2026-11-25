@@ -248,6 +248,7 @@ def nav_arrays(scene, **options):
     """  # noqa: D205
     digest = scene_digest(scene)
     precision = options.pop("precision", "float32")
+    instances = options.pop("instances", None)  # the scene's own listing, if made: not a build option
     extra = {} if precision == "float32" else {"precision": precision}
     k = key(scene, {**options, **extra}, digest)
     path = _env.cache_dir() / "build" / f"{KIND}-{k}"
@@ -256,7 +257,7 @@ def nav_arrays(scene, **options):
     # the ownership's own entry: its contact tolerance is the precision's
     own_path = _env.cache_dir() / "build" / f"{OWN}-{key(scene, extra, digest)}"
     own = _load(own_path) if (own_path / "meta.json").is_file() else None
-    stage = navigator_build.prepare(scene, own, precision)
+    stage = navigator_build.prepare(scene, own, precision, instances)
     if own is None:
         with directory(own_path) as tmp:
             _save(stage.own, tmp)

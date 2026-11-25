@@ -119,7 +119,7 @@ class Navigator:
         """Return the navigator of a lowered Scene; ``cache``: read or write the cache (``lumen.geometry.cache``).
 
         ``options``: the build's (``navigator_build.build``): ``classes``, ``precision`` ("float32", the default, or
-        "float64").
+        "float64"), ``instances`` (the scene's ``scene.instances``, if already listed).
         """
         if cache:
             from lumen.geometry import cache as build_cache

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from lumen.build import library as optics_library
 from lumen.build import lookup, lowering, pack, spec
 from lumen.build import tree as volume_tree
+from lumen.geometry import scene as sc
 from lumen.models import model_table
 from lumen.sensors import group_model
 
@@ -37,6 +38,7 @@ class Parts:
     reads: tuple
     knots: dict
     models: dict  # the medium models passed to the build, by name (lumen.models)
+    nav_instances: object = None  # the navigator scene's ``scene.instances``, when the build listed them
 
 
 def build(df, sensor_set, models=()) -> Parts:
@@ -45,11 +47,13 @@ def build(df, sensor_set, models=()) -> Parts:
     table = model_table(models)
     loaded = lowering.lower(df, detector=df.detector_volume, sensors=sensor_set.is_sensor)
     nav_scene = lowering.split_unions(loaded.scene)
-    tree, insts = volume_tree.tree_from_geometry(loaded.scene, loaded.media)
+    T = loaded.instances if loaded.instances is not None else sc.instances(loaded.scene)
+    tree, insts = volume_tree.tree_from_geometry(loaded.scene, loaded.media, T)
     library, bindings, key_rows = optics_library.library_and_bindings(df, tree, sensor_set, table)
     optics = lookup.compile(library, tree, bindings)
     named, reads, knots = pack.leaf_map(optics, library, key_rows)
-    return Parts(loaded.scene, nav_scene, tree, tuple(insts), library, optics, key_rows, named, reads, knots, table)
+    return Parts(loaded.scene, nav_scene, tree, tuple(insts), library, optics, key_rows, named, reads, knots, table,
+                 T if nav_scene is loaded.scene else None)  # fmt: skip
 
 
 def group_settings(g) -> dict:

@@ -577,11 +577,13 @@ class _Lowering:
 # ======================================================================================================= loading
 @dataclass
 class Loaded:
-    """A lowered detector: the scene, material name -> medium id, sensor id -> instance path."""
+    """A lowered detector: the scene, material name -> medium id, sensor id -> instance path, and the scene's
+    ``scene.instances`` when the sensors' numbering listed them (else None)."""  # noqa: D205, D209
 
     scene: sc.Scene
     media: dict[str, int]
     sensors: dict[int, str] = field(default_factory=dict)
+    instances: sc.Instances | None = None
 
 
 def lower(df, detector=None, sensors=None):
@@ -605,10 +607,10 @@ def lower(df, detector=None, sensors=None):
     out of A, and A is placed before those siblings (docs/dev/decisions.md, 14).
     """
     low = _Lowering(df, detector)
-    scene, sen = low.run(), {}
+    scene, sen, T = low.run(), {}, None
     if sensors is not None:
-        scene, sen = assign_sensors(scene, sensors)
-    return Loaded(scene, dict(low.mats), sen)
+        scene, sen, T = _assign_sensors(scene, sensors)
+    return Loaded(scene, dict(low.mats), sen, T)
 
 
 def assign_sensors(scene, is_sensor):
@@ -623,6 +625,11 @@ def assign_sensors(scene, is_sensor):
     tuple
         (the new Scene, {sensor id: instance path name}).
     """
+    return _assign_sensors(scene, is_sensor)[:2]
+
+
+def _assign_sensors(scene, is_sensor):
+    """Return ``assign_sensors``' (Scene, ids) and the new Scene's ``scene.instances``."""
 
     def relabel(m):
         if m is not None and is_sensor(m.label.volume) and not isinstance(m.solid, sc.Mesh):
@@ -634,7 +641,7 @@ def assign_sensors(scene, is_sensor):
     out = dataclasses.replace(scene, definitions=defs)
     T = sc.instances(out)  # the volume tree's order and PV names, so an id is its sensor's PV name
     ids = [i for i, d in enumerate(T.defn) if defs[d].member is not None and defs[d].member.label.sensor == sc.PATH]
-    return out, {k: T.name(out, i) for k, i in enumerate(ids)}
+    return out, {k: T.name(out, i) for k, i in enumerate(ids)}, T
 
 
 # ============================================================================================ exact normalisation

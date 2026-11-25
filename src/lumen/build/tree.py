@@ -192,15 +192,16 @@ def _material_names(media):
     return names
 
 
-def tree_from_geometry(scene, media) -> tuple:
+def tree_from_geometry(scene, media, T=None) -> tuple:  # noqa: N803 -- T the instance table
     """Return (the Tree, the member world instances) of a lowered Scene and its media (material name -> medium id).
 
     The Tree holds the outside PV, then one PV per member world instance (material: the GDML material name); the
     instances are ``Instance`` records in the canonical order. One pass over the canonical order: a member's mother PV
     is the nearest instance above it with a member, and its PATH sensor id the count of PATH members before it.
+    ``T``: the scene's ``scene.instances``, if already listed.
     """
     names = _material_names(media)
-    T = sc.instances(scene)
+    T = sc.instances(scene) if T is None else T
     defs, n = scene.definitions, len(T.defn)
     inner: list = [None] * n  # per instance: the PV its daughters' mother is (its own, or the enclosing one)
     insts, path_id = [], 0
