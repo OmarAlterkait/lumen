@@ -71,8 +71,9 @@ def test_a_mesh_material_absorbing_within_the_band_where_it_is_is_bound_opaque(t
 
 @pytest.mark.parametrize(("absorption", "opaque"), [(1e-11, True), (1e-6, False)])
 def test_an_opaque_material_offers_no_light_to_sources(tmp_path_factory, absorption, opaque):
-    """A mesh holds no point: light born in an opaque mesh started outside it and reflected off its face (ANNIE's steel
-    frame). Its RINDEX is no parameter, so a Cherenkov source in it is refused and an event's steps in it are left out."""
+    """A mesh holds no point: light born in an opaque mesh started outside it and reflected off its face (ANNIE's
+    steel frame). Its RINDEX is no parameter, so a Cherenkov source in it is refused and an event's steps in it are
+    left out."""
     from lumen.build import spec
 
     toy = _mesh_toy(read_toy(tmp_path_factory), absorption)

@@ -2,15 +2,15 @@
 
 Keys come from the detector file and from the sensor set (each group's model fields). A file key is a parameter where
 the built optics reads it (``Parts.key_rows``: the library's one record of where each packed value comes from), or, on a
-material that is not bound opaque, where a light source reads it (``lumen.rules.keys.SOURCE_KEYS``): a key nothing reads (a surface's EFFICIENCY
-where no sensor is bound, GROUPVEL) is no parameter, so no calibration can carry a value pack would refuse. Its
-derivative is available where its method is (``lumen.params.PENDING``): every read is the value itself
+material that is not bound opaque, where a light source reads it (``lumen.rules.keys.SOURCE_KEYS``): a key nothing reads
+(a surface's EFFICIENCY where no sensor is bound, GROUPVEL) is no parameter, so no calibration can carry a value pack
+would refuse. Its derivative is available where its method is (``lumen.params.PENDING``): every read is the value itself
 (``library.DIRECT``) or a JAX function of it (a derived Rayleigh table). What each Geant4 property means is in
-``lumen.rules.keys.PARAMS``; a key it does not
-list is a dimensionless value of unknown range. A value the model never reads is not a parameter (structure decides,
-never the value: docs/explanation/parameters.md): the Mie constants of a material without MIEHG, a Mie forward ratio of
-0 or 1 whose other lobe the material lacks (``lumen.rules.optics.mie_constants``), and a surface's sigma_alpha or polish
-where its reading samples no facet (``lumen.rules.optics.reads_value``).
+``lumen.rules.keys.PARAMS``; a key it does not list is a dimensionless value of unknown range. A value the model never
+reads is not a parameter (structure decides, never the value: docs/explanation/parameters.md): the Mie constants of a
+material without MIEHG, a Mie forward ratio of 0 or 1 whose other lobe the material lacks
+(``lumen.rules.optics.mie_constants``), and a surface's sigma_alpha or polish where its reading samples no facet
+(``lumen.rules.optics.reads_value``).
 """
 
 from __future__ import annotations
