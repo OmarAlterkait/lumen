@@ -105,6 +105,11 @@ gdml/units.py | <module> | * | 60 | published | CLHEP SystemOfUnits.h values (ci
 geometry/bvh.py | <module> | 16 | 1 | choice | stated in place: SAH bins per axis
 geometry/bvh.py | <module> | 8 | 1 | choice | stated in place: a rotation shared by at least this many daughters (or by all) may be a frame group
 geometry/bvh.py | <module> | 4.0 | 1 | choice | stated in place: ... when its daughters' world boxes are at least this times their own (summed surface areas)
+geometry/bvh.py | _mix | 30 | 1 | published | the splitmix64 finalizer's shifts and multipliers (Steele, Lea and Flood, OOPSLA 2014)
+geometry/bvh.py | _mix | 27 | 1 | published | the splitmix64 finalizer's shifts and multipliers (Steele, Lea and Flood, OOPSLA 2014)
+geometry/bvh.py | _mix | 31 | 1 | published | the splitmix64 finalizer's shifts and multipliers (Steele, Lea and Flood, OOPSLA 2014)
+geometry/bvh.py | _mix | 13787848793156543929 | 1 | published | the splitmix64 finalizer's shifts and multipliers (Steele, Lea and Flood, OOPSLA 2014)
+geometry/bvh.py | _mix | 10723151780598845931 | 1 | published | the splitmix64 finalizer's shifts and multipliers (Steele, Lea and Flood, OOPSLA 2014)
 geometry/cache.py | <module> | 16 | 1 | choice | stated in place: a stored sequence's length from which the cache writes it as arrays
 geometry/clearance.py | _leaf_eval | 4.0 | 1 | structural | exact math (quadratic formula's 4ac)
 geometry/clearance.py | bound | 10 | 1 | choice | no stated reason in place

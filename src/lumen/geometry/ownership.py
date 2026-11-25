@@ -38,6 +38,7 @@ import numpy as np
 
 from lumen.geometry import scene as sc
 from lumen.geometry import solids as so
+from lumen.geometry.bvh import row_groups
 from lumen.rules import navigation as rules
 from lumen.rules.tolerances import CONVEX_TOL, FLOAT64_TINY, PIECES, POSE_ULPS, SAME_POSE, SPLITS
 
@@ -296,8 +297,8 @@ class Proofs:
             out |= same
         # poses equal to SAME_POSE share one proof (the first's): the key is the pose on a SAME_POSE grid
         key = np.c_[ki, ko, np.rint(L.reshape(-1, 9) / SAME_POSE), np.rint(t / SAME_POSE)]
-        uk, first, inv = np.unique(key, axis=0, return_index=True, return_inverse=True)
-        inv = inv.ravel()
+        first, inv = row_groups(key)
+        uk = key[first]
         got = np.zeros(len(uk), bool)
         todo = []
         for j in range(len(first)):
@@ -513,14 +514,16 @@ def _tolerance(cw, hw, zero=False, prec=rules.FLOAT32):
     return POSE_ULPS * np.finfo(float).eps * scale if zero else rules.contact(scale, prec)
 
 
-def _meet(boxes, a, b, u=None, zero=False):
+def _meet(boxes, a, b, u=None, zero=False, depth=None):
     """Return per pair (a[k], b[k]) whether they may share a point deeper than the contact tolerance: their oriented
     boxes overlap that deep, and (``u`` given) each solid may hold a point of the common box (b's box in a's frame
-    met with a's, shrunk by the tolerance)."""  # noqa: D205, D209
+    met with a's, shrunk by the tolerance). ``depth``: the pairs' ``_obb_depth``, if known."""  # noqa: D205, D209
     c, h, cw, hw, R = boxes
     prec = rules.FLOAT32 if u is None else u.prec
     tol = np.maximum(_tolerance(cw[a], hw[a], zero, prec), _tolerance(cw[b], hw[b], zero, prec))
-    ok = _obb_depth(cw[a], h[a], R[a], cw[b], h[b], R[b]) > tol
+    if depth is None:
+        depth = _obb_depth(cw[a], h[a], R[a], cw[b], h[b], R[b])
+    ok = depth > tol
     if u is None or not ok.any():
         return ok
     k = np.flatnonzero(ok)
@@ -544,23 +547,31 @@ def _meet(boxes, a, b, u=None, zero=False):
     return ok
 
 
-def _sibling_pairs(u, boxes, zero=False):
+def _sibling_pairs(u, boxes, zero=False, near=None):
     """Return the sibling pairs (i < j) whose oriented boxes overlap deeper than the contact tolerance (``zero``: any).
 
     Per mother, its daughters' boxes are swept in the frame most of them share (the wires of one plane), then tested
-    as oriented boxes.
+    as oriented boxes. ``near``: the swept pairs (``_swept``) and their ``_obb_depth``, if known.
     """
-    c, h, _, _, _ = boxes
+    P, depth = _swept(u, boxes) if near is None else near
+    return P[_meet(boxes, P[:, 0], P[:, 1], u, zero, depth)] if len(P) else P
+
+
+def _swept(u, boxes):
+    """Return the sibling pairs (i < j) whose boxes overlap in the frame most of their mother's daughters share (the
+    sweep of ``_sibling_pairs``), and their oriented boxes' ``_obb_depth``."""  # noqa: D205, D209
+    c, h, cw, _, R = boxes
     par = np.asarray(u.parent)
     out = []
     order = np.argsort(par, kind="stable")
     bounds = np.flatnonzero(np.r_[True, par[order][1:] != par[order][:-1], True])
-    for g0, g1 in zip(bounds[:-1], bounds[1:], strict=True):
-        s = order[g0:g1]
-        if len(s) < 2:
-            continue
-        _, inv, cnt = np.unique(u.R[s].reshape(len(s), 9), axis=0, return_inverse=True, return_counts=True)
-        Rm = u.R[s][np.flatnonzero(inv.ravel() == np.argmax(cnt))[0]]
+    for g in np.flatnonzero(np.diff(bounds) >= 2):
+        s = order[bounds[g] : bounds[g + 1]]
+        rows = u.R[s].reshape(len(s), 9)
+        first, inv = row_groups(rows)
+        cnt = np.bincount(inv)
+        top = np.flatnonzero(cnt == cnt.max())  # the most shared rotation, the least of them in np.unique's row order
+        Rm = u.R[s][first[top[np.lexsort((rows[first[top]] + 0.0).T[::-1])[0]]]]
         M = np.einsum("ji,njk->nik", Rm, u.R[s])
         cg = np.einsum("nij,nj->ni", M, c[s]) + u.t[s] @ Rm
         hg = np.einsum("nij,nj->ni", np.abs(M), h[s])
@@ -568,7 +579,8 @@ def _sibling_pairs(u, boxes, zero=False):
         if len(p):
             out.append(s[p])
     P = np.sort(np.concatenate(out), 1) if out else np.zeros((0, 2), np.int64)
-    return P[_meet(boxes, P[:, 0], P[:, 1], u, zero)] if len(P) else P
+    a, b = P[:, 0], P[:, 1]
+    return P, _obb_depth(cw[a], h[a], R[a], cw[b], h[b], R[b]) if len(P) else np.zeros(0)
 
 
 def hole_kinds(scene, defs):
@@ -690,12 +702,13 @@ def _clips(u, boxes, proofs):
     return tuple(clips)
 
 
-def _linked(u, boxes, proofs):
+def _linked(u, boxes, proofs, near=None):
     """Return (the linked sibling pairs (i < j), the pairs deeper than the contact tolerance): boxes meeting deeper
-    than the tolerance (``_sibling_pairs``), the lowered holes' ``forced`` pairs apart, the pairs proved apart out."""  # noqa: D205, D209
+    than the tolerance (``_sibling_pairs``; ``near`` its sweep, if known), the lowered holes' ``forced`` pairs apart,
+    the pairs proved apart out."""  # noqa: D205, D209
     n = len(u.parent)
     forced = _pair_key(np.sort(np.asarray(u.forced, np.int64).reshape(-1, 2), 1), n)
-    P = _sibling_pairs(u, boxes)
+    P = _sibling_pairs(u, boxes, near=near)
     P = P[~np.isin(_pair_key(P, n), forced)]
     deep = np.union1d(_pair_key(P, n), forced)  # deeper than the tolerance: linked, or proved apart (pair keys)
     return P[~proofs.apart(P[:, 0], P[:, 1])], deep  # a link proved apart shares no point
@@ -719,8 +732,9 @@ def resolve(u):
     boxes = _boxes(u)
     proofs = Proofs(u)
     forced = np.asarray(u.forced, np.int64).reshape(-1, 2)
-    P, deep = _linked(u, boxes, proofs)
-    T = _sibling_pairs(u, boxes, zero=True)
+    near = _swept(u, boxes)
+    P, deep = _linked(u, boxes, proofs, near)
+    T = _sibling_pairs(u, boxes, zero=True, near=near)
     T = T[~np.isin(_pair_key(T, n), deep)].reshape(-1, 2)
     pos, own = owners_of(proofs, P, forced)
     pairs = np.concatenate([own, forced])

@@ -210,6 +210,32 @@ def build_many(lo, hi, bounds, leaf_size=LEAF_SIZE, bins=BINS):
     return out
 
 
+def _mix(x):
+    """Return a 64-bit integer hash of each of ``x`` (uint64): the splitmix64 finalizer."""
+    x = x ^ (x >> np.uint64(30))
+    x = x * np.uint64(0xBF58476D1CE4E5B9)
+    x = x ^ (x >> np.uint64(27))
+    x = x * np.uint64(0x94D049BB133111EB)
+    return x ^ (x >> np.uint64(31))
+
+
+def row_groups(rows):
+    """Return (per group its first row's index, per row its group) of the equal rows of a float array (m, k), equal as
+    ``np.unique(rows, axis=0)`` compares them (-0.0 is 0.0); the groups in no particular order. One hash per row,
+    the rows of one hash checked equal (rows told apart only by sorting them where two hashes meet)."""  # noqa: D205, D209
+    r = np.asarray(rows, float).reshape(len(rows), -1) + 0.0
+    with np.errstate(over="ignore"):
+        h = np.zeros(len(r), np.uint64)
+        for col in np.ascontiguousarray(r.T).view(np.uint64):
+            h = _mix(h ^ col)
+    first, inv = np.unique(h, return_index=True, return_inverse=True)[1:]
+    inv = inv.ravel()
+    if not np.array_equal(r[first[inv]], r):  # two rows of one hash differ
+        first, inv = np.unique(r, axis=0, return_index=True, return_inverse=True)[1:]
+        inv = inv.ravel()
+    return first, inv
+
+
 def _surface_terms(h):
     return h[:, 0] * h[:, 1] + h[:, 1] * h[:, 2] + h[:, 2] * h[:, 0]
 
@@ -228,11 +254,12 @@ def frame_groups_all(R, hb, vm, km, min_group=MIN_GROUP, gain=GROUP_GAIN):  # no
     if not N:
         return np.zeros(0, np.int64), 0, np.zeros((0, 3, 3)), np.zeros(0, bool)
     rows = np.column_stack([vm.astype(np.float64), R[km].reshape(N, 9)])  # equal rotations (each box is its own)
-    _, inv, cnt = np.unique(rows, axis=0, return_inverse=True, return_counts=True)
-    inv = inv.ravel()
+    first, inv = row_groups(rows)  # np.unique(rows, axis=0)'s groups, numbered in its order: the rows sorted
+    rank = np.empty(len(first), np.int64)
+    rank[np.lexsort((rows[first] + 0.0).T[::-1])] = np.arange(len(first))
+    first[rank], inv = first.copy(), rank[inv]
+    cnt = np.bincount(inv, minlength=len(first))
     G = len(cnt)
-    first = np.full(G, N, np.int64)
-    np.minimum.at(first, inv, np.arange(N))
     nk = np.bincount(vm)
     Rg = R[km[first]]
     eye = np.eye(3)
