@@ -336,6 +336,10 @@ def sibling_order(place, before, forced):
     n = len(place)
     edges = [(int(a), int(b)) for a, b in np.asarray(before, np.int64).reshape(-1, 2)]
     edges += [(int(f), int(h_)) for h_, f in np.asarray(forced, np.int64).reshape(-1, 2)]
+    if not edges:  # every unit free from the start: the placement order, the lower index first
+        pos = np.zeros(n, np.int64)
+        pos[np.lexsort((np.arange(n), place))] = np.arange(n)
+        return pos
     nxt = [[] for _ in range(n)]
     deg = np.zeros(n, np.int64)
     for a, b in set(edges):
@@ -591,33 +595,60 @@ def hole_pairs(holed, flag, parent, lo, hi):
     return np.asarray(out, np.int64).reshape(-1, 2)
 
 
+def _depths(parent):
+    """Return per unit its depth: 0 without a mother, one more than its mother's."""
+    parent = np.asarray(parent, np.int64)
+    depth = np.zeros(len(parent), np.int64)
+    up = parent.copy()
+    on = up >= 0
+    while on.any():
+        depth[on] += 1
+        up[on] = parent[up[on]]
+        on = up >= 0
+    return depth
+
+
 def _preorder(parent, pos):
-    """Return per unit its index in the depth-first order of the tree, each mother's daughters by ``pos``."""
+    """Return per unit its index in the depth-first order of the tree, each mother's daughters by ``pos``: the order of
+    the units' chains of ``pos`` from their top ancestor down (a mother first, its chain being the shorter)."""  # noqa: D205, D209
+    parent, pos = np.asarray(parent, np.int64), np.asarray(pos, np.int64)
     n = len(parent)
-    ch = [[] for _ in range(n + 1)]
-    for i in np.argsort(pos, kind="stable"):
-        ch[int(parent[i]) if parent[i] >= 0 else n].append(int(i))
+    depth = _depths(parent)
+    key = np.full((int(depth.max(initial=0)) + 1, n), -1, np.int64)  # key[d, i]: pos of i's ancestor at depth d
+    up, lv = np.arange(n), depth.copy()
+    on = np.flatnonzero(up >= 0)
+    while len(on):
+        key[lv[on], on] = pos[up[on]]
+        up[on], lv[on] = parent[up[on]], lv[on] - 1
+        on = on[up[on] >= 0]
     out = np.zeros(n, np.int64)
-    stack, k = list(reversed(ch[n])), 0
-    while stack:
-        i = stack.pop()
-        out[i] = k
-        k += 1
-        stack.extend(reversed(ch[i]))
+    out[np.lexsort(key[::-1])] = np.arange(n)
     return out
 
 
-def _below(u):
-    """Return per unit the units below it (volumes: a contiguous depth-first range; meshes: by their mother)."""
-    n = len(u.parent)
-    ch = [[] for _ in range(n)]
-    for i, p in enumerate(u.parent):
-        if p >= 0:
-            ch[int(p)].append(i)
-    out = [None] * n
-    for i in range(n - 1, -1, -1):
-        out[i] = np.asarray(sorted(ch[i] + [x for c in ch[i] for x in out[c]]), np.int64)
+def _below(u, units):
+    """Return per unit of ``units`` the units below it (every descendant), ascending."""
+    parent = np.asarray(u.parent, np.int64)
+    n = len(parent)
+    kids = np.flatnonzero(parent >= 0)
+    kids = kids[np.argsort(parent[kids], kind="stable")]
+    start = np.searchsorted(parent[kids], np.arange(n + 1))  # unit i's daughters: kids[start[i]:start[i + 1]]
+    out = []
+    for a in np.asarray(units, np.int64).tolist():
+        stack, got = [a], []
+        while stack:
+            i = stack.pop()
+            ch = kids[start[i] : start[i + 1]]
+            got.append(ch)
+            stack.extend(ch.tolist())
+        out.append(np.sort(np.concatenate(got)))
     return out
+
+
+def _pair_key(pairs, n):
+    """Return a pair's key (a, b) -> a (n + 1) + b, for pairs of units out of ``n``."""
+    pairs = np.asarray(pairs, np.int64).reshape(-1, 2)
+    return pairs[:, 0] * (n + 1) + pairs[:, 1]
 
 
 def _clips(u, boxes, proofs):
@@ -626,17 +657,21 @@ def _clips(u, boxes, proofs):
     c, h, cw, hw, R = boxes
     n = len(u.parent)
     tol = _tolerance(cw, hw, prec=u.prec)
+    parent = np.asarray(u.parent, np.int64)
     clips = [()] * n
-    depth = np.zeros(n, np.int64)
-    for i in range(n):  # volumes before their daughters; meshes last
-        depth[i] = depth[u.parent[i]] + 1 if u.parent[i] >= 0 else 0
+    clipped = np.zeros(n, bool)  # the units with an ancestor in their clips
+    depth = _depths(parent)
     for lv in range(1, int(depth.max(initial=0)) + 1):
-        pv = [(int(v), int(m)) for v in np.flatnonzero(depth == lv)
-              for m in (int(u.parent[v]), *clips[int(u.parent[v])])]  # fmt: skip
-        if not pv:
+        vs = np.flatnonzero(depth == lv)
+        if not len(vs):
             continue
-        v_, m_ = np.array([x[0] for x in pv]), np.array([x[1] for x in pv])
-        inside = np.zeros(len(pv), bool)
+        # per unit its mother, then the ancestors its mother is not proved inside: (v, m) in v's order, then m's
+        more = [(v, k + 1, m) for v in vs[clipped[parent[vs]]].tolist() for k, m in enumerate(clips[int(parent[v])])]
+        v_ = np.r_[vs, np.array([x[0] for x in more], np.int64)]
+        m_ = np.r_[parent[vs], np.array([x[2] for x in more], np.int64)]
+        o_ = np.lexsort((np.r_[np.zeros(len(vs), np.int64), np.array([x[1] for x in more], np.int64)], v_))
+        v_, m_ = v_[o_], m_[o_]
+        inside = np.zeros(len(v_), bool)
         for k in np.unique(u.kind[m_]):
             sel = np.flatnonzero(u.kind[m_] == k)
             Rm = np.transpose(R[m_[sel]], (0, 2, 1))
@@ -646,23 +681,23 @@ def _clips(u, boxes, proofs):
                                                                                          0.0))  # fmt: skip
         rest = np.flatnonzero(~inside)
         inside[rest] = proofs(v_[rest], m_[rest], "inside")
-        out = {}
-        for (v, m), ok in zip(pv, inside, strict=True):
-            if not ok:
-                out.setdefault(v, []).append(m)
-        for v, ms in out.items():
-            clips[v] = tuple(sorted(ms))
+        out = np.flatnonzero(~inside)
+        out = out[np.lexsort((m_[out], v_[out]))]
+        vv, mm = v_[out].tolist(), m_[out].tolist()
+        for a, b in zip(*np.unique(v_[out], return_index=True, return_counts=True)[1:], strict=True):
+            clips[vv[a]] = tuple(mm[a : a + b])
+        clipped[v_[out]] = True
     return tuple(clips)
 
 
 def _linked(u, boxes, proofs):
     """Return (the linked sibling pairs (i < j), the pairs deeper than the contact tolerance): boxes meeting deeper
     than the tolerance (``_sibling_pairs``), the lowered holes' ``forced`` pairs apart, the pairs proved apart out."""  # noqa: D205, D209
-    forced = np.asarray(u.forced, np.int64).reshape(-1, 2)
+    n = len(u.parent)
+    forced = _pair_key(np.sort(np.asarray(u.forced, np.int64).reshape(-1, 2), 1), n)
     P = _sibling_pairs(u, boxes)
-    fset = {tuple(sorted(map(int, p))) for p in forced}
-    P = np.array([p for p in P if tuple(map(int, p)) not in fset], np.int64).reshape(-1, 2)
-    deep = {tuple(map(int, p)) for p in P} | fset  # deeper than the tolerance: linked, or proved apart
+    P = P[~np.isin(_pair_key(P, n), forced)]
+    deep = np.union1d(_pair_key(P, n), forced)  # deeper than the tolerance: linked, or proved apart (pair keys)
     return P[~proofs.apart(P[:, 0], P[:, 1])], deep  # a link proved apart shares no point
 
 
@@ -685,25 +720,29 @@ def resolve(u):
     proofs = Proofs(u)
     forced = np.asarray(u.forced, np.int64).reshape(-1, 2)
     P, deep = _linked(u, boxes, proofs)
-    T = np.array([p for p in _sibling_pairs(u, boxes, zero=True) if tuple(map(int, p)) not in deep],
-                 np.int64).reshape(-1, 2)  # fmt: skip
+    T = _sibling_pairs(u, boxes, zero=True)
+    T = T[~np.isin(_pair_key(T, n), deep)].reshape(-1, 2)
     pos, own = owners_of(proofs, P, forced)
     pairs = np.concatenate([own, forced])
     prio = _preorder(np.asarray(u.parent), pos)
-    below = _below(u)
-    owners = [set() for _ in range(n)]
-    for a, b in pairs:
-        owners[int(a)].add(int(b))
+    links = pairs
     if len(pairs):  # below a non-owner: the units its owner may meet
-        d = np.concatenate([below[int(a)] for a, _ in pairs])
-        w = np.repeat(pairs[:, 1], [len(below[int(a)]) for a, _ in pairs])
+        below = _below(u, pairs[:, 0])
+        d = np.concatenate(below)
+        w = np.repeat(pairs[:, 1], [len(b) for b in below])
         meet = _meet(boxes, d, w, u) if len(d) else np.zeros(0, bool)
         k = np.flatnonzero(meet)
         meet[k] = ~proofs.apart(d[k], w[k])
-        for k_, b in zip(d[meet], w[meet], strict=True):
-            owners[int(k_)].add(int(b))
+        links = np.concatenate([pairs, np.stack([d[meet], w[meet]], 1)])
+    owners = [()] * n
+    links = np.unique(np.asarray(links, np.int64).reshape(-1, 2), axis=0)  # (unit, owner) once each, by unit, owner
+    starts, counts = np.unique(links[:, 0], return_index=True, return_counts=True)[1:]
+    for a, b, k in zip(links[starts, 0].tolist(), starts.tolist(), counts.tolist(), strict=True):
+        owners[a] = tuple(links[b : b + k, 1].tolist())
     clips = _clips(u, boxes, proofs)
-    protrude = [(v, int(u.parent[v])) for v in range(n) if u.parent[v] >= 0 and int(u.parent[v]) in clips[v]]
-    return Ownership(prio=prio, owners=tuple(tuple(sorted(x)) for x in owners), clips=clips, pairs=pairs,
+    protrude = [
+        (v, int(u.parent[v])) for v, cl in enumerate(clips) if cl and u.parent[v] >= 0 and int(u.parent[v]) in cl
+    ]
+    return Ownership(prio=prio, owners=tuple(owners), clips=clips, pairs=pairs,
                      forced=np.r_[np.zeros(len(own), bool), np.ones(len(forced), bool)],
                      protrude=np.asarray(protrude, np.int64).reshape(-1, 2), thin=T)  # fmt: skip
