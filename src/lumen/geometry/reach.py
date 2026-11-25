@@ -214,8 +214,9 @@ class ReachGeometry:
         far = lax.cond(cand, lambda _: _meets(R, self.report["tree_nodes"], x, inv, tout), lambda _: jnp.bool_(True),
                        None)  # fmt: skip
         # past s by the navigator's own look-ahead: a round starting before s reads its first change up to GRAZE K_ON
-        # bands ahead (the on-face rule, Navigator._on_face) in a window min(best, t_max) + band; t_max must not cut it
-        look = (rules.GRAZE * rules.K_ON + 2) * rules.band(jnp.max(jnp.abs(x)) + s)  # float32: s is
+        # bands ahead (the on-face rule, Navigator._on_face) in a window min(best, t_max) + band; t_max must not cut it;
+        # float32's band in either precision: s comes from the float32 boxes
+        look = (rules.GRAZE * rules.K_ON + 2) * rules.band(jnp.max(jnp.abs(x)) + s)
         tm = lax.stop_gradient(jnp.where(cand & ~far, jnp.minimum(jnp.asarray(t_max, self.nav.F), s + look), t_max))
         return self.inner.query(gp, x, d, cls, tm, vol=vol, last=last, sn=sn, s_at=s_at)
 

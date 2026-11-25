@@ -327,11 +327,11 @@ Launches still add in float32: `chunk` changes results at that rounding only.
 
 ## 29. The navigator's precision is a load option
 
-**Decision (0.2, user 2026-11-21).** `lumen.load(..., precision="float64")` runs the navigator in float64: its
-coordinates and frames, CSG tables, roots and intervals, its tolerances (the band, 8 eps64 |x| plus the 1 nm floor:
-the floor at any detector scale) and the photon's position. The physics stays float32. float32 is the default. float64
-needs JAX's 64-bit mode, on before any array is made; `load` refuses it otherwise. Conversion is unchanged: decision
-9's refusal stays at float32's band.
+**Proposed (0.2, the contributor's proposal of 2026-11-21; the user has not confirmed it).**
+`lumen.load(..., precision="float64")` runs the navigator in float64: its coordinates and frames, CSG tables, roots
+and intervals, its tolerances (the band, 8 eps64 |x| plus the 1 nm floor: the floor at any detector scale) and the
+photon's position. The physics stays float32. float32 is the default. float64 needs JAX's 64-bit mode, on before any
+array is made; `load` refuses it otherwise. Conversion is unchanged: decision 9's refusal stays at float32's band.
 **Why.** float32's band at a decision is that of the photon's ray, its start's largest coordinate plus the distance
 travelled (`geometry/navigate.py`, `geometry/csg.py`), so a coating a few bands thick where it sits is tracked or not
 depending on where each photon came from. Measured on a coating under a gas volume against exact float64 geometry,
@@ -342,6 +342,15 @@ SiPMs against nexus. In float64 every configuration is right and NEXT-100 agrees
 +20 % (S1) and +19 % (S2) time against a float32 that tracks those coatings on an A100 (14.3 s and 13.8 s against 11.9 s
 and 11.6 s), 3.4 times float32's S2 time on an RTX 2080 Ti (float64 at 1/32 of float32's rate). JAX's 64-bit mode alone
 leaves a float32 run bit for bit.
+**Why the navigator and not only the position.** Measured on the same geometry at 5 m: float32's band there is
+4.8 um and the on-face tolerance 19 um, while a 3 um TPB coating is 0.63 band thick, and rays from 5 m away at 0 and
+45 deg to its face are located in the backing (in float64, in the coating). The float32 crossing distance itself is
+accurate to 0 ulps of the coordinate at normal incidence and 1 ulp at 75 deg, but its error grows with the ray's
+length to the face: 15 ulps (7.2 um) at 89 deg and 54 (26 um, 8.6 coatings) at 89.9 deg. So no float32 tolerance both
+resolves such a coating and still recognises the photon's own face at a grazing angle, and a float64 position with
+float32 roots would not help: the roots, the intervals and the tolerances are what must be float64. Keeping the
+position relative to a nearby frame would shrink the band with the local coordinates, but not the 1 / sin(theta)
+growth, and it would have to reach every frame, source and deposit.
 **Where.** `rules/navigation.py` (`Precision`, `band`), `geometry/navigator_build.py`, `geometry/csg_build.py`,
 `geometry/ownership.py`, `geometry/cache.py`, `geometry/navigate.py`, `geometry/csg.py`, `transport/step.py`,
 `transport/state.py`, `api.py` (`load`); `tests/unit/test_precision.py`.

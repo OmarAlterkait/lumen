@@ -6,8 +6,11 @@
 
 The records are ``lumen.format.schema`` Material and Surface records: energies in eV, values in the unit
 ``schema.PROPERTY_UNITS`` gives each key (lengths in m, times in ns, GROUPVEL in m / ns, ISOTHERMAL_COMPRESSIBILITY in
-m3 / MeV, yields per MeV). Geant4 semantics are those of
-G4OpBoundaryProcess, G4OpWLS and G4OpRayleigh in Geant4 10.7.4 and 11.2.2 (the code paths used here are the same).
+m3 / MeV, yields per MeV). Geant4 semantics are those of G4OpBoundaryProcess, G4OpWLS and G4OpRayleigh in
+Geant4 11.3.0. Geant4 10.7.4 differs on one path read here: there a dielectric_dielectric surface with TRANSMITTANCE
+replaces the Fresnel transmission coefficient with it (G4OpBoundaryProcess::DielectricDielectric,
+"if(theTransmittance > 0.) TransCoeff = theTransmittance"), so TRANSMITTANCE acts twice; Geant4 11 removed that and
+keeps the Fresnel ratio, which lumen follows.
 
 Tables are linear in photon ENERGY between their knots and clamped to the end values outside
 (G4PhysicsVector::Value): ``laws.tabulated``, one shared law per output quantity. RINDEX is ``laws.geant4_rindex``: the
