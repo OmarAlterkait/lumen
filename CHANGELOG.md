@@ -25,7 +25,11 @@ now, and what to do.
   start's coordinates plus the distance travelled, so a coating a few um thick at metres from the origin was stepped
   over or mis-tracked by photons that came from far: NEXT-100's TPB left its S2 light 8 % low at the PMTs and 10 % at
   the SiPMs against nexus. In float64 NEXT-100 agrees with nexus to 0.4 %, at +20 % (S1) and +19 % (S2) time on an
-  A100 against a float32 that tracks those coatings, and 3.4 times float32's S2 time on an RTX 2080 Ti. float64 needs
+  A100 against a float32 that tracks those coatings. Measured again against Geant4 11.3.0 on NEXT-100's own GDML
+  (`tools/g4ref`, 1e6 photons from each of four points in the active gas and one in the EL gap): in float64 Geant4
+  over lumen is 0.99 to 1.06 per sensor group, in float32 1.13 to 1.87, worst from the far end of the drift, where
+  the photons' paths are longest; float64 costs 5.4 times float32's time on an RTX 2080 Ti (WCTE, both speeds).
+  float64 needs
   JAX's 64-bit mode (`JAX_ENABLE_X64=1`), and `load` refuses it otherwise; with the mode on, float32 runs are unchanged.
   The build cache keys a navigator by its precision (docs/dev/decisions.md, 29).
 - **Skin sensors**: a `border_into` group's volume that no border sensor enters and whose own skin detects has that

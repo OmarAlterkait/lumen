@@ -188,7 +188,10 @@ whether a photon is located inside follows step * cos(theta) < T, with step the 
 configuration. A coating standing in the gas is entered in 71 % of the configurations from 1.5 to 5 m away. NEXT-100's
 TPB (2 to 5.4 um, 2.5 to 8.5 bands where it sits) left its S2 light 8 % low at the PMTs and 10 % at the SiPMs against
 nexus. In float64 every configuration is right but those with a 36 nm coating and a re-emission 3.6 nm from its face,
-and NEXT-100 agrees with nexus to 0.4 %.
+and NEXT-100 agrees with nexus to 0.4 %. Against Geant4 11.3.0 on NEXT-100's own GDML (`tools/g4ref`, 1e6 photons
+from each of four points in the active gas and one in the EL gap), Geant4 over lumen is 0.99 to 1.06 per sensor group
+in float64 and 1.13 to 1.87 in float32, worst from the far end of the drift: 1.47 at the PMTs and 1.87 at the SiPMs
+from 0.4 m below the top of the active volume, against 1.13 and 1.15 from the EL gap.
 
 **The limit.** In float32, a volume a few bands thick at the scale of the photons' paths (4 bands: 3.8 um per metre
 of start coordinate plus path) is not tracked for every photon. Load a detector with such coatings in float64
