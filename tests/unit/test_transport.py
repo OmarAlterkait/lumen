@@ -326,3 +326,23 @@ def test_a_moment_squares_each_photons_sum_over_its_records():
     np.testing.assert_allclose(np.asarray(out["charge2:0"]), ch2, rtol=1e-5)
     per_record = np.bincount(x["sensor"].astype(int), add * add, 4)
     assert np.all(np.asarray(out["arrival2"]) > per_record * (1 + 1e-3))  # the photons' sums, not the records'
+
+
+def test_the_health_s_own_launch_adds_the_photons_fates_exactly():
+    """The photon loop returns each photon's fates and ``run._health_sums`` adds them in a launch of its own: exact
+    sums, the same whatever the order the rows come in, where a float32 running sum loses the small ones."""
+    from lumen import run
+
+    n = 1 << 12
+    rows = np.full((n, len(run.HEALTH_SUMS)), 2.0**-4, np.float32)
+    rows[0] = 2.0**20
+    a = run._health_sums(jnp.asarray(rows), "xla")
+    b = run._health_sums(jnp.asarray(rows[::-1].copy()), "xla")
+    for k in run.HEALTH_SUMS:
+        assert np.asarray(a[k]).tolist() == np.asarray(b[k]).tolist(), k
+    exact = np.float32(rows[:, 0].astype(np.float64).sum())  # the exact sum, in the output's float32
+    assert np.asarray(a[run.HEALTH_SUMS[0]]).sum() == exact
+    running = np.float32(0.0)
+    for v in rows[:, 0]:
+        running = np.float32(running + v)
+    assert running != exact  # a float32 running sum does not reach it

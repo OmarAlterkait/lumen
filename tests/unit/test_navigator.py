@@ -815,3 +815,56 @@ def test_a_scan_reads_its_leaves_once_as_it_would_compute_them_at_every_endpoint
     for a, b in zip(cached, scan(), strict=True):
         np.testing.assert_array_equal(a, b)
     assert np.any(cached[0])  # some rays change membership
+
+
+@pytest.mark.parametrize("name", ["nest", "bool", "wires", "coincident"])
+def test_a_walk_testing_children_at_their_parent_finds_what_an_unpruned_walk_finds(name, toys, monkeypatch):
+    """The BVH walk tests a node's children at their parent and drops a stack entry beyond a nearer event. With every
+    box taken as met (no node left out), the walk visits every item of the group and finds, bit for bit, the same
+    events: the pruning only leaves out items the ray cannot meet."""
+    nav = toys(name)[1]
+    rng = np.random.default_rng(17)
+    n = 512
+    vol = rng.integers(0, nav.n, n).astype(np.int32)
+    lo, hi = np.asarray(nav.lo_w, np.float64), np.asarray(nav.hi_w, np.float64)
+    x = lo[vol] + rng.uniform(-0.1, 1.1, (n, 3)) * (hi[vol] - lo[vol])
+    d = rng.normal(size=(n, 3))
+    d /= np.linalg.norm(d, axis=1, keepdims=True)
+
+    def run():
+        loc = jax.jit(jax.vmap(nav.locate))(jnp.asarray(x, F32))
+        q = jax.jit(jax.vmap(lambda p, u, v: nav.query(p, u, v, t_max=F32(10.0))))
+        out = q(jnp.asarray(x, F32), jnp.asarray(d, F32), loc)
+        return [np.asarray(loc)] + [np.asarray(out[k]) for k in ("t", "hit", "vol_after", "vol_before", "item")]
+
+    pruned = run()
+    met = navigate.Navigator._meets
+    monkeypatch.setattr(navigate.Navigator, "_meets", lambda self, *a: (jnp.bool_(True), met(self, *a)[1]))
+    for a, b in zip(pruned, run(), strict=True):
+        np.testing.assert_array_equal(a, b)
+    assert np.any(pruned[2])  # some rays cross something
+
+
+@pytest.mark.parametrize("name", ["nest", "wires", "coincident"])
+def test_the_daughter_a_ray_scan_finds_holds_the_ray(name, toys):
+    """``_settle`` goes down into the daughter ``_find_ray`` found without testing its solid again: ``_find_ray``
+    returns only a daughter whose solid holds the ray (``ray_holds``), never one whose box alone does."""
+    nav = toys(name)[1]
+    parent = np.asarray(nav.host["parent"])[: nav.n]
+    v = int(np.bincount(parent[parent < nav.n]).argmax())  # the volume with the most daughters
+    rng = np.random.default_rng(13)
+    n = 2048
+    lo, hi = np.asarray(nav.lo_w, np.float64)[v], np.asarray(nav.hi_w, np.float64)[v]
+    o = lo + rng.uniform(-0.1, 1.1, (n, 3)) * (hi - lo)
+    d = rng.normal(size=(n, 3))
+    d /= np.linalg.norm(d, axis=1, keepdims=True)
+
+    def one_(o_, d_):
+        f = nav._find_ray(I32(v), o_, d_, F32(0.0), I32(-1), F32(0.0))
+        return f, nav.ray_holds(jnp.clip(f, 0, nav.n - 1), o_, d_, F32(0.0))
+
+    f, holds = jax.jit(jax.vmap(one_))(jnp.asarray(o, F32), jnp.asarray(d, F32))
+    f, holds = np.asarray(f), np.asarray(holds)
+    found = (f >= 0) & (f < nav.n)
+    assert found.any(), (v, f)
+    assert holds[found].all(), f[found & ~holds]
