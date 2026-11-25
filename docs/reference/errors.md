@@ -367,6 +367,7 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `lumen: a jitted function traced with an object that no longer exists` | `ReferenceError` | `lumen._core.static` |
 | `(a message built at run time)` | `_closure_error` | `lumen.api` |
 | `<out> exists: a detector file is never overwritten (pass overwrite=True)` | `FormatError` | `lumen.api` |
+| `<what>: precision="float64" needs JAX's 64-bit mode, which is off: set JAX_ENABLE_X64=1 before starting Python, or call jax.config.update("jax_enable_x64", True) before any JAX array is made` | `ValueError` | `lumen.api` |
 | `Light.event: event <e> of <events>` | `IndexError` | `lumen.api` |
 | `Light.event: this light has no event axis (simulate(..., events=E))` | `ValueError` | `lumen.api` |
 | `Light: no histograms of sensor group <name>; the modelled groups are <groups>` | `KeyError` | `lumen.api` |
@@ -382,7 +383,6 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `load(parts=): <target>: <model> is neither a medium model (lumen.medium_model) nor one of lumen's own (<MEDIA>)` | `LibraryError` | `lumen.api` |
 | `load(parts=): <whole> is given two parts; one per material in 0.2` | `ValueError` | `lumen.api` |
 | `load(parts=): a phase function is given for one material's channel, materials/<M>/<channel>, not <target>` | `ValueError` | `lumen.api` |
-| `load: precision="float64" needs JAX's 64-bit mode, which is off: set JAX_ENABLE_X64=1 before starting Python, or call jax.config.update("jax_enable_x64", True) before any JAX array is made` | `ValueError` | `lumen.api` |
 | `no detector file at <path> (a detector is its file: convert it first, lumen.convert)` | `FileNotFoundError` | `lumen.api` |
 | `save_calibration: give a directory (LUMEN_DETECTORS is not set)` | `ValueError` | `lumen.api` |
 | `simulate: <bad> photon(s) have a label outside the events [0, <n_ev>)` | `ValueError` | `lumen.api` |
@@ -440,7 +440,6 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `border sensor <s> (<a> -> <z>): <pre> is not a sensor PV, so a detection leaving it has no sensor index to go to` | `DescriptionError` | `lumen.build.lookup` |
 | `border surface <s> (<a> -> <b>): the volumes neither touch (mother/daughter, siblings) nor meet across a coincident face (a daughter's face on its mother's): Geant4 would never cross it; check the border's physvols` | `OpticsError` | `lumen.build.lookup` |
 | `border surface <s> (<a> -> <z>) into sensor PV <post>: ambiguous (the sensor's surface type is the boundary of a sensor; a border may name the sensor itself when its binding has entry='border')` | `DescriptionError` | `lumen.build.lookup` |
-| `border surface <s> (<pre> -> <post>): no instance of one has an instance of the other in the tree` | `DescriptionError` | `lumen.build.lookup` |
 | `border surface <s> (<pre> -> <post>): unknown physvol <n>` | `DescriptionError` | `lumen.build.lookup` |
 | `column <c>: only (energy, value) tables are packed, not <law>` | `OpticsError` | `lumen.build.lookup` |
 | `internal: a group pair counted as touching without a border has no such pair` | `OpticsError` | `lumen.build.lookup` |

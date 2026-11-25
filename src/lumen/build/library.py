@@ -449,10 +449,11 @@ def border_bindings(df, tree) -> dict:
 
     A GDML physvol name is every world instance placed by that physvol (``Tree.physvol``); a border applies to each
     adjacent (mother/daughter or sibling) instance pair of its two physvols (``lookup.border_instances``: never
-    enumerated), and between two physvols that never touch directly to their nearest instances, where they meet
-    across coincident faces (``lookup.nearest_instances``). At the detector volume's boundary this is Geant4's own
-    binding: a daughter -> the detector placement, the detector placement -> its mother (or the sibling enclosing
-    it, ``outside_volume``) and that volume -> the detector placement are bound, the mother as the tree's outside
+    enumerated), and between two physvols that never touch directly, where they meet across coincident faces
+    (``lookup`` refuses one that no coincident face joins when the optics compile). At the detector volume's
+    boundary this is Geant4's own binding: a daughter -> the detector placement, the detector placement -> its
+    mother (or the sibling enclosing it, ``outside_volume``) and that volume -> the detector placement are bound,
+    the mother as the tree's outside
     (the last never crossed: the outside holds no photon). A border whose first volume lies outside the kept
     detector is dropped with a warning: Geant4 consults a border only for a photon in its first volume, and lumen
     tracks no light outside. Fail closed otherwise when a border matches nothing (the detector placement -> a
@@ -474,9 +475,7 @@ def border_bindings(df, tree) -> dict:
             a, b = OUTSIDE_PV, b  # ... and from that mother into the detector
         if a not in have or b not in have:
             return None
-        # touching instances, or volumes that meet only across coincident faces (``lookup.nearest_instances``;
-        # one that no coincident face joins is refused when the optics compile)
-        return (a, b) if lookup.border_instances(tree, a, b)[0] or lookup.nearest_instances(tree, a, b) else None
+        return (a, b)  # touching, or across coincident faces (one that no coincident face joins: refused by lookup)
 
     out, dropped = {}, []
     for border in df.borders:

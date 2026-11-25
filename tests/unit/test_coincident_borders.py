@@ -9,13 +9,14 @@ between skipped):
 - the border is read on the crossing it names, both ways, and nowhere else (a second coated tube without borders
   keeps the default interface);
 - coincident faces compose through opaque volumes (coating -> mask -> board -> gas);
+- it is read on its own physvols alone, also where two of one logical volume lie side by side, and between cousins;
 - a border between volumes that no coincident face joins is refused when the optics compile.
 """
 
 import pytest
 from test_surfaces import compile_, kern, tree
 
-from lumen.build.lookup import OpticsError, nearest_instances
+from lumen.build.lookup import OpticsError
 from lumen.surfaces import types
 
 TUBE = (
@@ -46,7 +47,6 @@ def test_a_border_across_a_coincident_face_is_read_both_ways_and_nowhere_else():
     assert o.class_of["Coat"] != o.class_of["Coat2"]
     k, origin, _ = kern(o, "World", "Coat2")
     assert k is types.DIELECTRIC and origin is None
-    assert nearest_instances(t, "Active", "Coat") == frozenset({("Active", "Coat")})
 
 
 def test_a_daughter_against_its_mothers_sibling_is_a_coincident_border():
@@ -64,10 +64,46 @@ def test_coincident_faces_compose_through_opaque_volumes():
     assert kern(o, "World", "Coat")[1] == "surface:refl2"
 
 
+def test_the_chain_composes_where_the_opaque_volumes_are_two_classes():
+    """A skin on the mask makes it and the board two classes: (mask -> gas via the board) is then a derived leg only."""
+    o = compile_(tree(*BOARD), skins={"MaskLV": "black"},
+                 borders={("Coat", "World"): "refl", ("World", "Coat"): "refl2"})  # fmt: skip
+    assert o.class_of["Mask"] != o.class_of["Board"]
+    assert kern(o, "Coat", "World")[1] == "surface:refl" and kern(o, "World", "Coat")[1] == "surface:refl2"
+
+
+def test_a_border_is_its_physvols_own():
+    """Two coatings of one logical volume side by side in one holder, two gas slabs of one logical volume: the borders
+    (Up1 -> Coat1), (Up2 -> Coat2) say nothing of Up1 -> Coat2 (Geant4 10.7.4: a toy keeps 0.789 of the light, 0.986
+    were it a border too)."""
+    t = tree(("World", "WorldLV", "Water", None), ("Hold", "HoldLV", "Steel", "World"),
+             ("Coat1", "CoatLV", "Acrylic", "Hold"), ("Coat2", "CoatLV", "Acrylic", "Hold"),
+             ("Up1", "UpLV", "Water", "World"), ("Up2", "UpLV", "Water", "World"))  # fmt: skip
+    o = compile_(t, borders={("Up1", "Coat1"): "refl", ("Up2", "Coat2"): "refl"})
+    for u, c in (("Up1", "Coat1"), ("Up2", "Coat2")):
+        assert kern(o, u, c)[1] == "surface:refl"
+    for u, c in (("Up1", "Coat2"), ("Up2", "Coat1")):
+        assert kern(o, u, c)[0] is types.DIELECTRIC, (u, c)
+
+
+def test_cousins_share_a_border_across_two_coincident_faces():
+    t = tree(("World", "WorldLV", "Water", None), ("Hold", "HoldLV", "Steel", "World"),
+             ("Coat", "CoatLV", "Acrylic", "Hold"), ("Frame", "FrameLV", "Steel", "World"),
+             ("In", "InLV", "Water", "Frame"))  # fmt: skip
+    o = compile_(t, borders={("In", "Coat"): "refl"})
+    assert kern(o, "In", "Coat")[1] == "surface:refl"
+
+
 def test_a_border_no_coincident_face_joins_is_refused():
-    """two coatings in two tubes: neither touches the other, nor across one face (a daughter's on its mother's)"""
+    """The mask inside the board inside the gas, bordered to the world outside all of it: no chain of coincident
+    faces reaches it, so no crossing can read the border and the optics refuse it.
+
+    A border is read on any crossing between its own physvols, as Geant4's G4LogicalBorderSurface is, so a pair whose
+    chain does compose is accepted even where the two instances are far apart (the coatings of two identical tubes
+    compose through the tubes' own class): the navigator never reports that crossing, so the light is the same.
+    """
     with pytest.raises(OpticsError, match="neither touch .* nor meet across a coincident face"):
-        compile_(tree(*TUBE), borders={("Coat", "Coat2"): "refl"})
+        compile_(tree(*BOARD), borders={("Mask", "World"): "refl"})
 
 
 # ---------------------------------------------------------------------------------------------- through simulate

@@ -12,7 +12,7 @@ Three inputs, all plain Python (``lumen.build.library`` makes them from a detect
     Bindings   attach a library to one tree by EXACT names: materials -> media, skin surfaces (LV -> surface), border
                surfaces (ordered physvol pair -> surface: every touching instance pair of the two, as Geant4's
                G4LogicalBorderSurface, never expanded into instance pairs; between physvols that never touch directly,
-               their nearest instances, met across coincident faces) and sensors (LV or PV -> sensor type, expected
+               where they meet across coincident faces) and sensors (LV or PV -> sensor type, expected
                count)
 
 ``resolve`` checks all three against each other and fails closed. Each ordered PV pair (pre, post) that may touch --
@@ -144,52 +144,6 @@ def _touching(tree, xs, ys):
     return tuple(out)
 
 
-def _depths(tree) -> dict:
-    """Return each PV's depth in the tree (the root's 0)."""
-    depth = {}
-    for n in tree.order:  # mothers first
-        m = tree.by_name[n].mother
-        depth[n] = 0 if m is None else depth[m] + 1
-    return depth
-
-
-def _nearest(tree, depth, xs, ys) -> set:
-    """Return the pairs (x, y): each x of ``xs`` with the ys nearest it in the tree (the least sum of the two depths
-    below their common ancestor). Linear in the instances: each y marks its ancestors with its height below them."""  # noqa: D205, D209
-    best: dict = {}  # ancestor -> (least height of a y below it, those ys)
-    for y in ys:
-        z, h = y, 0
-        while z is not None:
-            b = best.get(z)
-            if b is None or h < b[0]:
-                best[z] = (h, [y])
-            elif h == b[0]:
-                b[1].append(y)
-            z, h = tree.by_name[z].mother, h + 1
-    out = set()
-    for x in xs:
-        z, up, found = x, 0, None
-        while z is not None:
-            if z in best and (found is None or up + best[z][0] < found[0]):
-                found = (up + best[z][0], best[z][1])
-            z, up = tree.by_name[z].mother, up + 1
-        if found is not None:
-            out |= {(x, y) for y in found[1] if y != x}
-    return out
-
-
-def nearest_instances(tree, a: str, b: str) -> frozenset:
-    """Return the instance pairs (x, y) of physvols a -> b nearest each other in the volume tree, from both sides.
-
-    A border surface between volumes that never touch as mother/daughter or siblings is crossed where they meet across
-    coincident faces (a coating inside a tube against the gas beside the tube; G4LogicalBorderSurface binds any two
-    physical volumes): it holds between each instance of one and the instances of the other nearest it.
-    """
-    xs, ys = tree.instances_of.get(a, ()), tree.instances_of.get(b, ())
-    depth = _depths(tree)
-    return frozenset(_nearest(tree, depth, xs, ys) | {(x, y) for y, x in _nearest(tree, depth, ys, xs)})
-
-
 def border_instances(tree, a: str, b: str):
     """Return the world instances of a border's physvols a -> b that touch: (a's with a neighbour among b's, b's with
     one among a's). Linear in the instances: a border names a physvol pair, never its instance pairs."""  # noqa: D205, D209
@@ -241,20 +195,18 @@ class Description:
     sensor: Mapping[str, str | None]  # PV -> sensor type (None)
     borders: Mapping[tuple[str, str], str]
     sensor_entry: Mapping[str, str] = field(default_factory=dict)  # sensor PV -> "any" | "border" | "skin"
-    # (pre PV, post PV) -> surface of the borders whose physvols never touch directly: their nearest instance pairs,
-    # crossed across coincident faces (``nearest_instances``)
-    coincident: Mapping[tuple[str, str], str] = field(default_factory=dict)
+    # the borders (physvol pairs) whose physvols never touch directly: crossed only across coincident faces
+    coincident: frozenset = frozenset()
 
     def border(self, pre, post):
         """Return the border surface (or sensor) of the crossing between PVs pre -> post, None: none (``Bindings``).
 
         A border of touching physvols holds where its instances touch (mother/daughter, siblings); one of physvols
-        that meet only across coincident faces holds between their nearest instances (``coincident``).
+        that never do (``coincident``) wherever the photon steps from one straight into the other.
         """
-        s = self.borders.get((self.tree.physvol(pre), self.tree.physvol(post)))
-        if s is None:
-            return None
-        return s if relation(self.tree, pre, post) is not None else self.coincident.get((pre, post))
+        key = (self.tree.physvol(pre), self.tree.physvol(post))
+        s = self.borders.get(key)
+        return s if s is None or key in self.coincident or relation(self.tree, pre, post) is not None else None
 
     def enters_sensor(self, pre, post):
         """Return whether the crossing pre -> post meets post's sensor type."""
@@ -294,9 +246,6 @@ def _check_borders(library, tree, b):
             what = "both a library surface and a library sensor" if s in library.surfaces else \
                 "not a library surface or sensor"  # fmt: skip
             raise DescriptionError(f"border ({pre!r} -> {post!r}): {s!r} is {what}")
-        if not border_instances(tree, pre, post)[0] and not nearest_instances(tree, pre, post):
-            raise DescriptionError(f"border surface {s!r} ({pre!r} -> {post!r}): no instance of one has an "
-                                   "instance of the other in the tree")  # fmt: skip
 
 
 def _bind_sensors(library, tree, b):
@@ -361,8 +310,7 @@ def resolve(library: Library, tree, bindings: Bindings) -> Description:
     skin = {n: b.skins.get(tree.by_name[n].lv) for n in tree.order}
     _check_sensor_borders(library, tree, b, sensor, entry, skin)
     medium = {n: b.materials[tree.by_name[n].material] for n in tree.order}
-    coincident = {xy: s for (pre, post), s in sorted(b.borders.items()) if not border_instances(tree, pre, post)[0]
-                  for xy in nearest_instances(tree, pre, post)}  # fmt: skip
+    coincident = frozenset(pq for pq in b.borders if not border_instances(tree, *pq)[0])
     return Description(library, tree, b, medium, skin, {n: sensor.get(n) for n in tree.order}, dict(b.borders), entry,
                        coincident)  # fmt: skip
 
@@ -570,7 +518,7 @@ def _class_name(sig):
     if sensor is not None:
         s += f"|sensor:{sensor}"
     for partner, d, surf in roles:
-        s += f"|lv:{surf}" if d == "lv" else f"|border:{surf}{'->' if d == 'out' else '<-'}[{partner}]"
+        s += f"|pv:{surf}" if d == "pv" else f"|border:{surf}{'->' if d == 'out' else '<-'}[{partner}]"
     return s
 
 
@@ -618,14 +566,14 @@ def _classes(tree, d):
     A border surface binds a physvol pair, so a bordered PV's signature holds its border roles; the partner enters by
     its CLASS, refined to a fixed point, not by its PV name (2000 identical PMTs, each glass bordering its own
     interior, are two classes, not 4000). Once stable the numbering repeats, so the roles name the final classes.
-    The PVs of a border across coincident faces (``Description.coincident``) keep their logical volume among their
-    roles: its pairs are no adjacency, so refinement alone could merge them with a mutual border elsewhere of the same
-    surface between volumes of the same media (NEXT-100's outer gas and its SiPM board coating with the board's hole
-    gas and its wall coating), a class then holding a bordered and a plain crossing into one class.
+    The PVs of a border across coincident faces (``Description.coincident``) keep their physvol among their roles: such
+    a border is read on any crossing between its physvols, so a class holding two of them could hold a bordered and a
+    plain crossing into one class (NEXT-100's outer gas and its SiPM board coating with the board's hole gas and its
+    wall coating; two coatings of one logical volume, each bordering its own gas, side by side under one of them).
     """
     bord = [(border_instances(tree, a, b), (a, b), s) for (a, b), s in d.borders.items()]
     base = {n: (d.medium[n], d.skin[n], d.sensor[n]) for n in tree.order}
-    pinned = {n: (-1, "lv", tree.by_name[n].lv) for xy in d.coincident for n in xy}
+    pinned = {n: (-1, "pv", pv) for pq in d.coincident for pv in pq for n in tree.instances_of[pv]}
     sigs, class_of = _classify(tree.order, {n: base[n] + ((pinned[n],) if n in pinned else (),)
                                             for n in tree.order})  # fmt: skip
     while True:
@@ -635,9 +583,6 @@ def _classes(tree, d):
                 roles[x] |= {(c, "out", s) for c in cs}
             for y, cs in _partner_classes(tree, ys, xs, class_of).items():
                 roles[y] |= {(c, "in", s) for c in cs}
-        for (x, y), s in d.coincident.items():  # a border across coincident faces: its nearest instance pairs
-            roles[x].add((class_of[y], "out", s))
-            roles[y].add((class_of[x], "in", s))
         sig_of = {n: base[n] + (tuple(sorted(roles[n])),) for n in tree.order}
         prev, (sigs, class_of) = len(sigs), _classify(tree.order, sig_of)
         if len(sigs) == prev:
@@ -792,7 +737,7 @@ class _Regions:
 # but it carries a longer chain (a coating in a mask in a board, against the gas: coating -> gas via the mask, the mask
 # -> gas via the board). A class pair also adjacent directly keeps its direct surface (the report lists any that would
 # differ). A candidate with no valid surface is left unresolved and listed: crossed, the photon is reported lost. A
-# border surface between physvols that never touch directly is read on the candidate of its nearest instances
+# border surface between physvols that never touch directly is read on the candidate between them
 # (``Description.coincident``), a pass leg or not: Geant4 consults it only where it steps from one straight into the
 # other, across an exactly coincident face. One no candidate reads is refused.
 
@@ -806,12 +751,14 @@ class _Coincident:
         self.inside = {(c[n], c[t.by_name[n].mother]) for n in t.order if t.by_name[n].mother is not None}
         self.via, self.shadowed, self.unresolved, self.prenote = {}, [], {}, []
         self.bordered: dict = {}  # class pair -> an instance pair of a border across coincident faces
-        for x, y in sorted(regions.d.coincident):
-            self.bordered.setdefault((c[x], c[y]), (x, y))
+        for a, b in sorted(regions.d.coincident):  # each physvol's classes are its own (``_classes``)
+            for x in {c[x]: x for x in t.instances_of[a]}.values():
+                for y in {c[y]: y for y in t.instances_of[b]}.values():
+                    self.bordered.setdefault((c[x], c[y]), (x, y))
         self.read: set = set()  # the class pairs resolved on such a border
 
     def _relation(self, p, b, q, rp, rq):
-        return boundary.coincident((p, b) in self.inside, (q, b) in self.inside, rp, rq)
+        return boundary.coincident((p, b) in self.inside, (q, b) in self.inside, rp, rq, bool(self.bordered))
 
     def _through_pass(self, p, b, q, fb, fq):
         names = self.r.class_names
@@ -885,11 +832,10 @@ class _Coincident:
 def _check_coincident_borders(tree, d, class_of, read):
     """Refuse a border surface between physvols that never touch directly and that no coincident face joins (``read``:
     the class pairs resolved on such a border)."""  # noqa: D205, D209
-    met: dict = {}
-    for (x, y), s in sorted(d.coincident.items()):
-        key = (tree.physvol(x), tree.physvol(y), s)
-        met[key] = met.get(key, False) or (class_of[x], class_of[y]) in read
-    for (a, b, s), ok in sorted(met.items()):
+    for a, b in sorted(d.coincident):
+        pairs = {(x, y) for x in {class_of[n] for n in tree.instances_of[a]}
+                 for y in {class_of[n] for n in tree.instances_of[b]}}  # fmt: skip
+        ok, s = bool(pairs & read), d.borders[(a, b)]
         if not ok:
             raise OpticsError(f"border surface {s!r} ({a!r} -> {b!r}): the volumes neither touch (mother/daughter, "
                               "siblings) nor meet across a coincident face (a daughter's face on its mother's): Geant4 "

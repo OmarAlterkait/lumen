@@ -196,6 +196,12 @@ of start coordinate plus path) is not tracked for every photon. Load a detector 
 nm are tracked, at about +20 % time on an A100 and 3.4 times on an RTX 2080 Ti (docs/dev/decisions.md, 29). The
 conversion still refuses a WLS box thinner than float32's band where it sits (decision 9).
 
+A gap below the band is merged the same way: the float32 navigator steps from one volume straight into the other, so
+it reads the surface of that pair where Geant4 enters the volume between. Measured on a tube whose coating lies on
+the active gas over half its length and is sunk by 1 nm over the other half, with a mirror border on the coating and
+a point source in the gas: float32 keeps 0.5063 of the light, as much as the flush geometry, where float64 keeps
+0.0385. In float64 a gap above its 1 nm floor is resolved.
+
 ## The hit likelihood's no-record integral
 
 **What.** `hits_nll` integrates the expected light times its recorded share r over each stretch without a hit (a

@@ -5,7 +5,7 @@
 
 ``v`` (``lumen.build.lookup.Description``) gives per placed volume (PV) its medium, material, skin surface and
 sensor, the border surface of an ordered PV pair (``border(pre, post)``: its physvols' border, where they touch, or
-for physvols that meet only across coincident faces between their nearest instances), the
+for physvols that meet only across coincident faces on any crossing between them), the
 library entries and which media are opaque. For an ordered crossing (pre, post), in Geant4's order:
 
 1. entering a sensor PV whose rule is "any entry" (or across the border bound to its sensor, or where Geant4 picks
@@ -109,16 +109,19 @@ def crossing(v, pre, post, rel):
     return stype, origin, reason, side
 
 
-def coincident(inside_pb, inside_qb, rp, rq):
+def coincident(inside_pb, inside_qb, rp, rq, across=False):
     """Return "outward" / "inward" when p -> q via b is a coincident face, else None.
 
     ``inside_pb``: p is a daughter of b; ``inside_qb``: q is; ``rp`` the relations of b to p met so far, ``rq`` those
-    of q to b.
+    of q to b. ``across`` (a detector with a border read across coincident faces): also "across", out of one volume and
+    into another across a face both share (cousins: p in b, b's face on its sibling's, q in that).
     """
     if inside_pb and rq & set(OUTWARD) and rp & {"mother", "outward"}:
         return "outward"
     if inside_qb and rp & set(INWARD) and rq & {"daughter", "inward"}:
         return "inward"
+    if across and ((inside_qb and rp & {"outward", "across"}) or (inside_pb and rq & {"inward", "across"})):
+        return "across"
     return None
 
 
