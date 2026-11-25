@@ -20,20 +20,45 @@ def package(monkeypatch, tmp_path):
 
 
 def test_a_package_name_resolves_to_its_gdml_recipe_and_inputs(package, tmp_path):
-    assert api._is_package("toy_package:toy") and not api._is_package(str(tmp_path))
-    gdml, recipe, inputs = api._package_detector("toy_package:toy", None, None, tmp_path)
-    assert (
-        gdml == tmp_path / "gdml/toy.gdml" and recipe == "RECIPE" and inputs == {"mapping": tmp_path / "gdml/map.json"}
-    )
+    assert api.is_package_detector("toy_package:toy") and not api.is_package_detector(str(tmp_path))
+    with api.package_detector("toy_package:toy", data=tmp_path) as entry:
+        assert entry == api.DetectorEntry("RECIPE", tmp_path / "gdml/toy.gdml", {"mapping": tmp_path / "gdml/map.json"})
 
 
 def test_a_package_name_refuses_a_recipe_an_unknown_name_and_a_stray_data(package, tmp_path):
     with pytest.raises(ValueError, match="names its own recipe"):
-        api._package_detector("toy_package:toy", "R", None, tmp_path)
-    with pytest.raises(ValueError, match="no detector 'nope'"):
-        api._package_detector("toy_package:nope", None, None, tmp_path)
+        api.convert("toy_package:toy", "R", tmp_path / "x.lumen", data=tmp_path)
+    with pytest.raises(ValueError, match="no detector 'nope'"), api.package_detector("toy_package:nope", data=tmp_path):
+        pass
     with pytest.raises(ValueError, match="data directory of a detector package"):
         api.convert(tmp_path / "x.gdml", "R", tmp_path / "x.lumen", data=tmp_path)
+
+
+def test_a_package_detector_is_what_its_prepare_yields_while_open(package, tmp_path):
+    """``package_detector`` (what the viewer reads) gives the files ``convert`` converts, and closes the package's
+    ``prepare`` (which may remove a decompressed GDML) when its own context closes."""
+    import contextlib
+
+    events = []
+
+    @contextlib.contextmanager
+    def prepare(recipe, gdml, inputs):
+        events.append("open")
+        yield f"made from {recipe}", tmp_path / "decompressed.gdml", inputs
+        events.append("closed")
+
+    package.prepare = prepare
+    with api.package_detector("toy_package:toy", data=tmp_path) as entry:
+        assert (entry.recipe, entry.gdml, events) == ("made from RECIPE", tmp_path / "decompressed.gdml", ["open"])
+    assert events == ["open", "closed"]
+
+
+def test_the_viewer_reads_a_package_s_detector_as_convert_does(package, tmp_path):
+    from lumen.viewer import scene
+
+    with scene.resolve("toy_package:toy", data=tmp_path) as (gdml, recipe, inputs, name):
+        assert (gdml, recipe, inputs, name) == (tmp_path / "gdml/toy.gdml", "RECIPE",
+                                                {"mapping": tmp_path / "gdml/map.json"}, "toy_package:toy")  # fmt: skip
 
 
 def test_compare_reads_a_package_s_manifest(package):

@@ -99,3 +99,13 @@ print(water["status"], water["channels"])         # medium ['refraction', 'absor
 ```
 
 `view.payload` is the JSON the page draws; `view.errors` lists the steps that failed (the page still shows the rest).
+
+A detector package's detector is read as `lumen.convert` reads it, with `lumen.api.package_detector`, which you can
+call too:
+
+```python
+from lumen import api
+
+with api.package_detector("lumen_wc:sk") as entry:  # api.is_package_detector("lumen_wc:sk") is True
+    print(entry.gdml, entry.recipe.name)              # the GDML converted and the recipe, while the context is open
+```

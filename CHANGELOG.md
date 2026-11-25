@@ -12,6 +12,9 @@ now, and what to do.
   every material, surface and sensor group, the surface of each crossing, what lumen refuses and why, the tables
   against wavelength (`--range` shades the light's). Every drawn solid is compared with the solid lumen traces. It
   needs the `view` extra (`manifold3d`); three.js r128 ships with it (docs/howto/viewer.md).
+- **`lumen.api.package_detector("package:name")`**: a detector package's detector as `lumen.convert` converts it (its
+  recipe, GDML file and inputs, through the package's `prepare`, while the context is open), and
+  `lumen.api.is_package_detector`, for a tool that reads a package's detector the way lumen does.
 
 ## 0.2.1 (2026-11-23)
 
