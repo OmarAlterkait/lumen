@@ -333,3 +333,4 @@ viewer/scene.py | <module> | 3000000 | 1 | choice | stated in place: placed copi
 viewer/scene.py | <module> | 200 | 1 | choice | stated in place: a surface's borders listed at most (display only)
 viewer/server.py | <module> | 8765 | 1 | choice | stated in place: the page's default port
 viewer/server.py | <module> | 6 | 1 | choice | stated in place: the scene's gzip level
+viewer/server.py | <module> | 16 | 1 | choice | stated in place: the token's random bytes

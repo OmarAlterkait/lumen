@@ -873,5 +873,6 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `recipe <spec>: <path> is not a Python file` | `ValueError` | `lumen.viewer.scene` |
 | `recipe <spec>: give FILE.py:NAME` | `ValueError` | `lumen.viewer.scene` |
 | `up: <up> is not one of <AXES>` | `ValueError` | `lumen.viewer.scene` |
+| `<text>: letters, digits, '-' and '_' only` | `ArgumentTypeError` | `lumen.viewer.server` |
 | `not JSON: <__name__>` | `TypeError` | `lumen.viewer.server` |
 <!-- end of the generated messages -->

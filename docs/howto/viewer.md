@@ -24,6 +24,11 @@ number than 8765 (0: any free one); a port already in use is reported at once, b
 cluster node, run it there and forward 8765 from your laptop (`ssh -L 8765:127.0.0.1:8765 <node>`), then open the
 address on the laptop.
 
+The address ends in a random token, `http://127.0.0.1:8765/<token>/`, new each time: the page and its scene are
+served only under it, so another user of a shared machine, who can reach the port but not read your terminal, gets
+nothing. Open the address as printed; `--token` sets the token yourself (letters, digits, `-` and `_`), to keep a
+bookmark across restarts.
+
 A large detector takes minutes (Hyper-K, 19,620 sensors: four). To look again later without reading the file again,
 write the scene once and serve it from the file:
 
