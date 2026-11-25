@@ -6,7 +6,8 @@ are ``code_digest`` and ``scene_digest``.
 A key is the sha256 of what the product is built from and of the code that builds it:
 
 - **content**: a canonical digest of the input (``scene_digest``: every definition, member, solid tree, label and
-  placement; object sharing is part of it, since the navigator numbers kinds by distinct solid);
+  placement; object sharing is part of it, since the navigator numbers kinds by distinct solid; a definition's
+  placements are digested by value, all at once);
 - **options**: the build's settings;
 - **code**: the source of the modules that build it -- its entry modules and every lumen module they import,
   transitively, lazy imports included (``code_closure``; read from the import statements, never listed by hand) --
@@ -28,6 +29,7 @@ from __future__ import annotations
 import ast
 import dataclasses
 import hashlib
+import itertools
 import json
 import re
 from functools import lru_cache
@@ -39,12 +41,14 @@ import numpy as np
 from lumen import _env
 from lumen.format.atomic import directory
 from lumen.geometry import navigator_build
+from lumen.geometry import scene as sc
 
 ROOT = Path(__file__).resolve().parents[1]  # the lumen package
 MODULE = re.compile(r"lumen(\.[A-Za-z_]\w*)*")  # a module name
 NAV_CODE = ("lumen.geometry.navigator_build", "lumen.geometry.cache")  # what builds and stores the arrays
 KIND = "nav"  # the entry's prefix: build/nav-<key>
 OWN = "own"  # the scene's ownership (the class-free stage's costly part): build/own-<key>
+PACK_MIN = 16  # a stored sequence of at least this many strings, ints or int sequences is written as arrays
 
 
 # ------------------------------------------------------------------------------------------------- digests
@@ -163,7 +167,19 @@ class _Digest:
         else:
             fields = dict(vars(x))
         self.put("o", type(x).__name__.encode())
+        if isinstance(x, sc.Definition):
+            self.placements(fields.pop("placements"))
         self.walk(fields)
+
+    def placements(self, pls):
+        """Digest a definition's placements by value, each field of all of them at once."""
+        self.put("P", str(len(pls)).encode())
+        if pls:
+            self.put("pd", "\0".join(p.definition for p in pls).encode())
+            self.put("pn", "\0".join(p.name for p in pls).encode())
+            self.put("pR", np.stack([np.asarray(p.R, float).reshape(3, 3) for p in pls]).tobytes())
+            self.put("pt", np.stack([np.asarray(p.t, float).reshape(3) for p in pls]).tobytes())
+            self.put("ps", np.asarray([p.source for p in pls], np.int64).tobytes())
 
 
 def scene_digest(scene) -> str:
@@ -197,10 +213,53 @@ def _encode(x, arrays: dict):
     if isinstance(x, dict):
         return {"m": [[_encode(k, arrays), _encode(v, arrays)] for k, v in x.items()]}
     if isinstance(x, (tuple, list)):
-        return {"t" if isinstance(x, tuple) else "l": [_encode(v, arrays) for v in x]}
+        tag = "t" if isinstance(x, tuple) else "l"
+        packed = _pack(x, arrays) if len(x) >= PACK_MIN else None
+        return {tag: [_encode(v, arrays) for v in x]} if packed is None else {tag: [], **packed}
     if x is None or isinstance(x, (bool, int, float, str)):
         return x
     raise TypeError(f"the navigator cache cannot store a {type(x).__name__}")
+
+
+def _array(arrays: dict, a) -> str:
+    name = f"a{len(arrays)}"
+    arrays[name] = a
+    return name
+
+
+def _pack(x, arrays: dict) -> dict | None:
+    """Return a sequence of strings, of ints, or of int tuples (or lists) stored as arrays; None for any other."""
+    if all(type(v) is str for v in x):
+        blob = "\0".join(x)
+        return {"strs": _array(arrays, np.frombuffer(blob.encode(), np.uint8))} if blob.count("\0") == len(x) - 1 \
+            else None  # fmt: skip
+    try:
+        if all(type(v) is int for v in x):
+            return {"ints": _array(arrays, np.asarray(x, np.int64))}
+        inner = type(x[0])
+        if inner in (tuple, list) and all(type(v) is inner and all(type(w) is int for w in v) for v in x):
+            lens = np.fromiter(map(len, x), np.int64, len(x))
+            flat = np.fromiter(itertools.chain.from_iterable(x), np.int64, int(lens.sum()))
+            return {"rag": [_array(arrays, lens), _array(arrays, flat)], "inner": "t" if inner is tuple else "l"}
+    except OverflowError:  # an int beyond int64
+        return None
+    return None
+
+
+def _unpack(x, arrays) -> list | None:
+    """Return the items of a sequence ``_pack`` stored, None for any other."""
+    if "strs" in x:
+        return arrays[x["strs"]].tobytes().decode().split("\0")
+    if "ints" in x:
+        return arrays[x["ints"]].tolist()
+    if "rag" in x:
+        lens, flat = arrays[x["rag"][0]].tolist(), arrays[x["rag"][1]].tolist()
+        inner, items, p = tuple if x["inner"] == "t" else list, [], 0
+        for n in lens:
+            items.append(inner(flat[p : p + n]))
+            p += n
+        return items
+    return None
 
 
 def _decode(x, arrays):
@@ -219,7 +278,9 @@ def _decode(x, arrays):
         return getattr(importlib.import_module(module), name)(**{k: _decode(v, arrays) for k, v in x["f"].items()})
     if "m" in x:
         return {_decode(k, arrays): _decode(v, arrays) for k, v in x["m"]}
-    items = [_decode(v, arrays) for v in x.get("t", x.get("l", []))]
+    items = _unpack(x, arrays)
+    if items is None:
+        items = [_decode(v, arrays) for v in x.get("t", x.get("l", []))]
     return tuple(items) if "t" in x else items
 
 
