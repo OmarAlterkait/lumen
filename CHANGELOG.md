@@ -34,7 +34,8 @@ now, and what to do.
   thread's local memory). They are made once per run, outside the loop, with the step's other operands
   (`Operands.emission`), and a re-emission looks them up: the same draws and weights to float32 rounding (a
   normalisation's sum is rounded in another order). NEXT-100's S1 takes 12.7 us per photon on an A100 (was 13.5) and
-  its loop 0.7 kB of local memory per thread (was 4.7 kB).
+  its loop 0.7 kB of local memory per thread (was 4.7 kB). `lumen.media.spectra.density` still reads the two knots of
+  one energy's interval, so a source's wavelength draw inside the loop keeps no table of its own.
 - **The navigator's BVH walk**: a node's two children were each tested when the walk reached them, the farther pushed
   whether or not the ray met its box: 42 % of the node visits of a NEXT-100 query in its gas volume (1340 daughters)
   were boxes the ray missed, each reading three boxes. The children are now tested at their parent and only those the

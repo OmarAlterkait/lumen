@@ -73,8 +73,13 @@ def cumulative(arrays, lam):
 
 def density(energy, intensity, at):
     """Return the normalised density (1/eV) of Geant4's sampler of a table at photon energies ``at``: 0 outside the
-    table's span (never its end values)."""  # noqa: D205, D209
-    return on_intervals(energy, interval_density(energy, intensity), at)
+    table's span (never its end values). Reads the two knots of each energy's interval, not the whole table's
+    ``interval_density``, so a caller inside the photon loop (a source's wavelength draw) holds no table of its
+    own."""  # noqa: D205, D209
+    e, s = jnp.asarray(energy, F32), jnp.asarray(intensity, F32)
+    tot = jnp.sum((s[1:] + s[:-1]) * (e[1:] - e[:-1]))
+    i = _interval(e, at)
+    return jnp.where((at >= e[0]) & (at <= e[-1]), (s[i] + s[i + 1]) / tot, 0.0)
 
 
 def interval_density(energy, intensity):
@@ -88,8 +93,12 @@ def on_intervals(energy, values, at):
     """Return the value of the knot interval holding each photon energy ``at`` (``values`` one per interval of the
     knots ``energy``): 0 outside the knots' span."""  # noqa: D205, D209
     e = jnp.asarray(energy, F32)
-    i = jnp.clip(jnp.searchsorted(e, at, side="right") - 1, 0, e.shape[0] - 2)
-    return jnp.where((at >= e[0]) & (at <= e[-1]), values[i], 0.0)
+    return jnp.where((at >= e[0]) & (at <= e[-1]), values[_interval(e, at)], 0.0)
+
+
+def _interval(e, at):
+    """Return the index of the knot interval holding each photon energy ``at``."""
+    return jnp.clip(jnp.searchsorted(e, at, side="right") - 1, 0, e.shape[0] - 2)
 
 
 def _zero_intervals(e, s):
@@ -113,8 +122,12 @@ def covered(energy, intensity, e):
 
 def covered_density(energy, intensity, at, e):
     """Return the density (1/eV) ``covered`` draws from at photon energies ``at`` (``density`` where nothing is
-    covered)."""  # noqa: D205, D209
-    return on_intervals(energy, covered_interval_density(energy, intensity, e), at)
+    covered). Reads the knots of each energy's interval, as ``density`` does."""  # noqa: D205, D209
+    en, s = jnp.asarray(energy, F32), jnp.asarray(intensity, F32)
+    p = density(en, s, at)
+    zero, Z = _zero_intervals(en, s)
+    inside = (at >= en[0]) & (at <= en[-1]) & zero[_interval(en, at)]
+    return jnp.where(Z > 0.0, (1.0 - e) * p + e * inside.astype(F32) / jnp.where(Z > 0.0, Z, 1.0), p)
 
 
 def covered_interval_density(energy, intensity, e):

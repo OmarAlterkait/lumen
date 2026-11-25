@@ -69,3 +69,21 @@ def test_wls_draw_conserves_energy_as_g4opwls():
         assert float(np.ravel(kept)[0]) == 0.0 or np.all(lam >= lam_in * (1 - 1e-5))  # kept 0: a dropped photon
         if found.sum() > 1000:
             assert ks_2samp(lam, first).pvalue > stats.ALPHA / stats.SUITE_TESTS  # the two samples' laws
+
+
+def test_a_density_at_one_energy_is_the_whole_table_s_interval_density():
+    """``density`` reads the two knots of each energy's interval and ``interval_density`` holds every interval's
+    value: a re-emission that keeps the table (``EmissionRecord.tables``) and a source that reads one energy in the
+    photon loop get the same number, bit for bit, inside the table and 0 outside it. Same for ``covered_density``."""
+    energy = np.array([2.5, 2.6, 2.75, 2.9, 3.0, 3.1, 3.4])
+    intensity = np.array([0.0, 0.3, 1.0, 0.0, 0.0, 0.2, 0.0])  # a knot interval without mass: covered draws there
+    at = jnp.asarray(np.r_[np.linspace(2.4, 3.5, 1101), energy], F32)
+    e = F32(0.1)
+    np.testing.assert_array_equal(
+        np.asarray(spectra.density(energy, intensity, at)),
+        np.asarray(spectra.on_intervals(energy, spectra.interval_density(energy, intensity), at)),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(spectra.covered_density(energy, intensity, at, e)),
+        np.asarray(spectra.on_intervals(energy, spectra.covered_interval_density(energy, intensity, e), at)),
+    )
