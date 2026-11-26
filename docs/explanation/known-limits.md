@@ -205,7 +205,9 @@ of start coordinate plus path) is not tracked for every photon. Load a detector 
 (`lumen.load(..., precision="float64")`): its band is its 1 nm floor at any detector scale, so volumes down to tens of
 nm are tracked, at about +20 % time on an A100 and 3.4 times on an RTX 2080 Ti (docs/dev/decisions.md, 29). Its recipe
 can say so once and for all (`Recipe(..., precision="float64")`): the detector file carries it, `lumen.load` uses it
-when you pass no precision, and loading that detector in float32 warns. The
+when you pass no precision, and loading that detector in float32 warns. A run says how much of its light met such
+a layer: `light.health.pushed`, the weight the stuck rule pushed past two faces closer than the band (0 where every
+layer is resolved; NEXT-100 from the drift centre, 0.052 in float32 and 0 in float64). The
 conversion still refuses a WLS box thinner than float32's band where it sits (decision 9).
 
 A gap below the band is merged the same way: the float32 navigator steps from one volume straight into the other, so

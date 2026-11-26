@@ -172,7 +172,8 @@ class Deposit(NamedTuple):
     analog law. The weight accounting (``lumen.api.Health``): ``distance_cut``, ``absorbed_bulk``,
     ``absorbed_surface`` (``state.Next.fates``), ``rouletted`` (the roulette's net) and ``reweighted`` (the event's
     expected continuing weight minus the weight it goes on with: the drawn direction's and outcome's live / proposal
-    factors, 0 in expectation).
+    factors, 0 in expectation). ``pushed``: the photon's weight when the stuck rule pushes it (``_recover``), once per
+    run of zero-length steps; not a fate.
     """
 
     sensor: jax.Array
@@ -187,6 +188,7 @@ class Deposit(NamedTuple):
     absorbed_surface: jax.Array
     rouletted: jax.Array
     reweighted: jax.Array
+    pushed: jax.Array
     event: jax.Array
     pair: jax.Array
     label: jax.Array | None = None
@@ -558,10 +560,12 @@ def step(model, ops, ph, key):
                        cls=nx.cls,
                        analog=af.analog, gen=gen)  # fmt: skip
     event, pair = jnp.where(scatter, -2, nx.outcome).astype(I32), cb * jnp.asarray(tables.row_of).shape[0] + c_k
+    # the stuck rule pushed this photon at the step's start (_recover): a layer the navigator does not resolve
+    pushed = jnp.where(ph.alive & (ph.nz == navigation.ZERO_STEPS_BEFORE_PUSH), ph.w, 0.0)
     dep = Deposit(sensor=jnp.where(at_if, sensor_dep, -1), q=dep_q, time=time, lam=ph.lam, lost=lost,
                   abandoned=af.abandoned, escaped=escaped, distance_cut=distance_cut, absorbed_bulk=a_bulk,
-                  absorbed_surface=a_surf, rouletted=af.rouletted, reweighted=reweighted, event=event, pair=pair,
-                  share=share, **local)  # fmt: skip
+                  absorbed_surface=a_surf, rouletted=af.rouletted, reweighted=reweighted, pushed=pushed,
+                  event=event, pair=pair, share=share, **local)  # fmt: skip
     if tables.born_pair is not None:
         ph2, dep = _born(model, ops, ph, ph2, dep)
     return ph2, dep

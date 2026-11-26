@@ -137,6 +137,13 @@ seven detectors' float32 arrays and the NEXT toy's fractions are unchanged, bit 
   `TRUTH_SEEDS` runs at the seeds `seed` .. `seed + TRUTH_SEEDS - 1`. This is the recipe `coverage` fits its toys from,
   so toy data never come from a seed the fit itself runs at; `coverage` calls it now, once per toy (each toy's truth is
   the mean of its own eight other seeds, so a coverage's numbers move slightly).
+- **`Light.health.pushed`: the light a run pushed through a layer it does not resolve.** A photon between two faces
+  closer than the navigator's band (a coating thinner than a few bands at float32) takes zero-length steps between
+  them until the stuck rule pushes it past both, so nothing in the layer (a WLS shift, an absorption) happens to it.
+  The weight of the photons pushed, once per run of zero-length steps, is now counted (not a fate: the balance is
+  unchanged). It is 0 where every layer is resolved; above 0 the detector needs `precision="float64"`. Measured:
+  NEXT-100 pushes 0.052 of its light in float32 from the drift centre and 0.027 from the EL gap, none in float64; the
+  NEXT toy's `wls` case 0.33 in float32 and none in float64. The light itself, and every other output, is unchanged.
 
 - **The GDML viewer**: `python -m lumen.viewer FILE.gdml` (or a package's `package:name`, or `--recipe FILE.py:NAME`)
   converts and loads the detector and serves a page with its geometry in 3D and what lumen built: the reading of

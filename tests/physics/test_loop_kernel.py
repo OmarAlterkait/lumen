@@ -31,7 +31,9 @@ from lumen.readout.grid import Grid
 from lumen.record import Photons
 from lumen.transport import step as steps
 
-TEMP_PER_PHOTON = 64  # bytes XLA may allocate per photon around the kernel (measured: 5 on SBND's charge path)
+# bytes XLA may allocate per photon around the kernel (measured: 5 on SBND's charge path; here 61.3, and 65.3 since
+# the photon's health carries health.pushed: one float more)
+TEMP_PER_PHOTON = 72
 
 
 def rows(n):

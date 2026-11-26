@@ -458,6 +458,12 @@ class Health(NamedTuple):
     weight exactly (to float32 rounding per step) at the reference values (``balance``). ``arrivals`` is a tally of
     the detected share of ``absorbed_surface``, not a fate of its own.
 
+    ``pushed``: the weight of the photons the stuck rule pushed (``lumen.rules.navigation``), once per run of
+    zero-length steps, not a fate. A photon stuck between two faces closer than the navigator resolves (a layer
+    thinner than a few bands at its precision) is pushed along its direction past both, so nothing in the layer
+    happens to it; 0 where the navigator resolves every layer the photons meet. Above 0, part of the light went
+    through layers the run did not track: load the detector in float64 (docs/explanation/known-limits.md).
+
     ``records``: the deposit records its launches appended; ``records_dropped``, ``records_mismatch``: records past
     the capacity and photons whose two passes differed (either makes the outputs NaN; 0 in a run that fits).
     ``nonfinite``: exact-sum cells that are NaN; ``invalid``: traced values a concrete one would be refused for.
@@ -472,6 +478,7 @@ class Health(NamedTuple):
     absorbed_surface: Any
     rouletted: Any
     reweighted: Any
+    pushed: Any
     records: Any
     records_dropped: Any
     records_mismatch: Any

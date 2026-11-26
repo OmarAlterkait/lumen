@@ -146,3 +146,26 @@ def test_float32_loses_the_light_of_a_shifting_coating_and_float64_does_not(tmp_
     for g, least in (("pmt", 1.03), ("sipm", 1.5)):
         ratio = ref[g] / got[g][0]
         assert ratio > least, (g, got[g], ref[g], ratio)
+
+
+@pytest.mark.slow
+def test_a_run_counts_the_light_it_pushes_through_a_layer_it_does_not_resolve(tmp_path):
+    """A photon between the two faces of the ``wls`` coating, closer than float32 resolves, takes zero-length steps
+    until the stuck rule pushes it past both: the run counts that weight in ``health.pushed``.
+
+    Measured at this test's 2^16 photons from the source by the SiPM board (start weight 1): float32 pushes 0.33,
+    float64, which resolves the coating, none; on NEXT-100 (2^20 photons, 171.96 nm) float32 pushes 0.052 from the
+    drift centre and 0.027 from the EL gap, float64 none. Before the count a run did not say so.
+    """
+    import lumen
+    from lumen import units
+    from lumen.sources import Point
+
+    def pushed(det):
+        light = lumen.simulate(det, Point(SOURCES[1], n_photons=1.0, lam=units.wavelength_of(ENERGY_EV)),
+                               samples=1 << 16, seed=11)  # fmt: skip
+        return float(np.sum(np.asarray(light.health.pushed)))
+
+    assert pushed(_detector(tmp_path, "wls")) > 0.2
+    with enable_x64():
+        assert pushed(_detector(tmp_path, "wls", "float64")) == 0.0

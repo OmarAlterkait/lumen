@@ -58,7 +58,8 @@ the float32 resolution of the coordinates, the **band**. The rules, each with th
 - **Stuck rule.** After ``ZERO_STEPS_BEFORE_PUSH`` zero-length steps in a row the photon is pushed
   ``PUSH_DISTANCE_TOLERANCES`` bands along its direction and located afresh; at ``ZERO_STEPS_BEFORE_KILL`` it is
   abandoned (G4Navigator's fActionThreshold_NoZeroSteps = 10, fAbandonThreshold_NoZeroSteps = 25; Geant4 pushes
-  100 kCarTolerance).
+  100 kCarTolerance). The weight pushed is counted (``Light.health.pushed``): a photon between two faces closer
+  than the band (a sub-band layer) reaches the push, and nothing in that layer happens to it.
 
 Notes
 -----

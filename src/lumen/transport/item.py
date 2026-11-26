@@ -16,9 +16,10 @@ import jax.numpy as jnp
 from lumen.transport import state
 from lumen.transport.step import geometry
 
-# the fates a step adds to its photon's totals (lumen.api.Health.FATES; "truncated" is run's)
+# the fates a step adds to its photon's totals (lumen.api.Health.FATES; "truncated" is run's), and the weight the
+# stuck rule pushed (not a fate)
 HEALTH = ("lost", "abandoned", "escaped", "distance_cut", "absorbed_bulk", "absorbed_surface", "rouletted",
-          "reweighted")  # fmt: skip
+          "reweighted", "pushed")  # fmt: skip
 
 
 def start_photon(model, ops, row):

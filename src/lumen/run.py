@@ -76,7 +76,7 @@ OVERFLOW = (
     "fixed_point_overflow"  # the stats key of the exact sums' count of NaN bins (a non-finite emit, a passed top)
 )
 DEPOSIT_WEIGHTS = ("q", "lost", "abandoned", "escaped", "distance_cut", "absorbed_bulk", "absorbed_surface",
-                   "rouletted", "reweighted", "share")  # a Deposit's weights (None: off)  # fmt: skip
+                   "rouletted", "reweighted", "pushed", "share")  # a Deposit's weights (None: off)  # fmt: skip
 RECORDS = "deposits"  # the photon loop's records output (``tallymap.Records``)
 SCHEDULE = "step"  # tallymap refills a lane per step, not per photon: 1.09-1.39x faster for lumen (L40S)
 MIN_BLOCKS = 8  # tallymap caps the loop kernel's registers so that this many blocks fit an SM (outputs unchanged)
