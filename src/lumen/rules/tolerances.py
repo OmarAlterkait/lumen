@@ -2,9 +2,11 @@
 
 Two error models; a tolerance either follows from one of them or is a choice, said so here.
 
-**1. float32 at run time: the band.** The navigator works in float32; a root and its point each carry about one ulp
-per operation. The band at a coordinate scale (m) is ``band(scale) = BAND_ULPS eps32 scale + BAND_FLOOR``
-(``lumen.rules.navigation.band``: ``BAND`` = 9.5e-7 per metre). From it:
+**1. The navigator's precision at run time: the band.** The navigator works in float32, or in float64 where a
+detector is loaded so (``lumen.load(..., precision="float64")``); a root and its point each carry about one ulp per
+operation. The band at a coordinate scale (m) is ``band(scale, prec) = BAND_ULPS eps scale + BAND_FLOOR``, eps the
+precision's (``lumen.rules.navigation.band``: 9.5e-7 per metre in float32; in float64 the floor at any detector scale).
+From it:
 
 - in bands: ``K_ON`` (a face this close perpendicularly is the one the photon sits on; also the contact tolerance),
   ``ZERO_STEP_BANDS`` (a crossing this close is a zero-length step: below one ulp), ``FACET_BEHIND_BANDS`` (a start

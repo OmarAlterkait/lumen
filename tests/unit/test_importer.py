@@ -211,7 +211,8 @@ NAME_REFERENCES = {("DetectorFile", "world"), ("DetectorFile", "detector_volume"
                    ("Skin", "volume"), ("Border", "surface"), ("Border", "pv1"), ("Border", "pv2"),
                    ("Component", "ref"), ("Solid", "refs"), ("Solid", "mesh")}  # fmt: skip
 # and those that do not (a record's own name, renamed with it, or a value)
-NOT_REFERENCES = {("DetectorFile", "name"), ("DetectorFile", "report"), ("Element", "formula"), ("Material", "state"),
+NOT_REFERENCES = {("DetectorFile", "name"), ("DetectorFile", "report"), ("DetectorFile", "precision"),
+                  ("Element", "formula"), ("Material", "state"),
                   ("Component", "kind"), ("Solid", "type"), ("Surface", "type"), ("Surface", "model"),
                   ("Surface", "finish"), ("OpticsModel", "name"), ("OpticsModel", "origin"), ("OpticsModel", "note"),
                   ("Property", "key"), ("Property", "origin"), ("Property", "note"), ("Skin", "origin"),

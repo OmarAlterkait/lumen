@@ -350,7 +350,7 @@ solid's exit and the first daughter entry. Traversal is detached; only the winni
 
 | Module | Rules | Geant4 source |
 |---|---|---|
-| `rules/navigation.py` | the float32 tolerance (one form, `band(scale)`, with named multiples); surface identity (`K_ON`, `GRAZE`); a point → one owner, level by level (`geometry/ownership.py`: a solid proved inside its sibling, else the one placed first): a sibling (of a volume or an ancestor) ahead of it in the rule's order whose box may meet it and that is not proved apart is a candidate, an ancestor it is not proved inside a candidate whose face is an exit, the containment tests deciding at run time; every tie (entry, relocation) → the first in the rule's order (`prio`); a volume holds a point only if none of its owners does; facet rule; stuck rule | G4Navigator, G4VoxelNavigation, G4TessellatedSolid |
+| `rules/navigation.py` | the tolerance in the navigator's precision, float32 or float64 (`Precision`; one form, `band(scale, prec)`, with named multiples); surface identity (`K_ON`, `GRAZE`); a point → one owner, level by level (`geometry/ownership.py`: a solid proved inside its sibling, else the one placed first): a sibling (of a volume or an ancestor) ahead of it in the rule's order whose box may meet it and that is not proved apart is a candidate, an ancestor it is not proved inside a candidate whose face is an exit, the containment tests deciding at run time; every tie (entry, relocation) → the first in the rule's order (`prio`); a volume holds a point only if none of its owners does; facet rule; stuck rule | G4Navigator, G4VoxelNavigation, G4TessellatedSolid |
 | `rules/boundary.py` | the surface at an ordered crossing (pre, post): (1) entering an "any entry" sensor volume → its surface; (2) the border surface for (pre, post); (3) skins: post's then pre's if post is pre's daughter, else pre's then post's; (4) material default: both with RINDEX → Fresnel, post without → absorbed. SameMaterial skip for polished or ground finishes only; exit sensors credited to the volume left; counting sensors count on every face | G4OpBoundaryProcess, G4LogicalBorderSurface, G4LogicalSkinSurface |
 | `rules/optics.py` | units; tables linear in photon energy and clamped; Geant4's group velocity; Rayleigh as G4OpRayleigh computes it (Water's, or from ISOTHERMAL_COMPRESSIBILITY); WLS and scintillation keys (Geant4 10 and 11); MIEHG and its constants; the (type, model, finish) → surface type table; the surface readers | G4MaterialPropertiesTable, G4OpBoundaryProcess, G4OpRayleigh, G4OpMieHG, G4OpWLS |
 
@@ -491,6 +491,7 @@ model maps each `opticalsurface` (type, model, finish) to one of them.
 | UNIFIED_METAL_NORMAL | the same at sigma_alpha 0 (GetFacetNormal returns the normal: the lobe is the spike) | the Geant4 form of LArSoft's reflector |
 | `transmitting(type)` | any dielectric_metal type above with TRANSMITTANCE: T straight on, as DielectricMetal draws it | |
 | GLISUR_METAL | dielectric_metal glisur ground (facet path), `eff` | SBND steel |
+| GLISUR_DIELECTRIC | dielectric_dielectric glisur ground: after the R / T cut the facet path, each facet reflecting or refracting with the Fresnel shares of the photon's state (DielectricDielectric), ending on either side (`SurfaceType.refracts`, `Outcome.far`); `eff` | NEXT-100's TPB coatings |
 | REFLECTOR (PAINTED with `eff` fixed at 0), PHOTOCATHODE, COUNTING | LArSoft reflector; complex-index metal (REALRINDEX + i IMAGINARYRINDEX, tables read at the wavelength); an `any_entry` group's sensors (every entry counted, no surface read) | MicroBooNE, SBND |
 
 One type per Geant4 reading: a sensor is the type with `eff` read from EFFICIENCY (default 0), a surface that is no
@@ -498,7 +499,7 @@ sensor the same type with `eff` fixed at 0 (`types.no_detection`, named `<type>{
 flat or not. A type that gives the same probabilities as another with constants fixed is that type (`types.fixed`;
 the Geant4 finish names stay in the files).
 
-Refused at import with a message: ground dielectric_dielectric, backpainted finishes, complex-index ground metals,
+Refused at import with a message: unified ground dielectric_dielectric, backpainted finishes, complex-index ground metals,
 Geant4's `coated` type, LUT, LUTDAVIS, dichroic, SURFACEROUGHNESS. The surface outcomes have ten indices
 (`surfaces/outcomes.py`). A surface type is the structure of a row, never code: every crossed (type, surface) is a row
 of one parameter table (`build/lookup.SurfaceTable`: a column per parameter, R, T, eff, the reflection split, the lobe
@@ -629,6 +630,7 @@ branches in Python on a parameter value, never closes over a parameter array and
 | geometry import | g4ref `--probe` point location | 100 % |
 | overlaps | the 18 g4ref overlap toys through `simulate`; the placement check (with the sibling pairs closer than the contact tolerance, `thin`) | detected fraction and mean time within errors |
 | Mie | Geant4's G4OpMieHG tables (`tests/data/g4ref_mie`) | the scattering-angle distribution within its errors |
+| facet paths | Geant4 11.3.0's G4OpBoundaryProcess on one interface (`tools/g4ref/boundary.cc`, `tests/data/g4_boundary`) | the last direction's (dz, \|phi\|) distribution within its errors |
 | export | Geant4 10.7.4 round trip on toys | `import(export(df)) == df`; Geant4 hits equal |
 
 | Tier | Content | Target |

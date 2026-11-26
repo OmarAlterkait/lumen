@@ -290,7 +290,8 @@ class DetectorFile:
     are rules, not options (``lumen.build.import_rules``). ``meshes`` holds the tessellated solids' triangle arrays by
     name.
     ``provenance`` records the source file, its sha256, the importer and recipe, and ``report`` every normalisation
-    and decision, in words.
+    and decision, in words. ``precision`` is the navigator precision this detector needs, which its recipe states
+    (``lumen.recipe.Recipe``) and ``lumen.load`` uses when the caller passes none.
     """
 
     name: str = field(metadata={"file": "detector.json"})
@@ -309,6 +310,7 @@ class DetectorFile:
     meshes: dict[str, np.ndarray] = field(default_factory=dict, metadata={"file": "solids.json"})
     provenance: dict = field(default_factory=dict, metadata={"file": "detector.json"})
     report: tuple[str, ...] = field(default=(), metadata={"file": "detector.json"})
+    precision: str = field(default="float32", metadata={"file": "detector.json"})
 
 
 def placements_of(df: DetectorFile, spec: str) -> list[tuple[int, ...]]:

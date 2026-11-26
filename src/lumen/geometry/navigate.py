@@ -38,7 +38,7 @@ from lumen.rules import navigation as rules
 from lumen.rules.tolerances import TINY_DIR
 from lumen.units import HUGE
 
-F32, I32 = jnp.float32, jnp.int32
+I32 = jnp.int32
 STACK = navigator_build.STACK
 sg = lax.stop_gradient
 
@@ -97,7 +97,9 @@ class Navigator:
 
     def __init__(self, arrays):
         self.arrays = arrays
-        self.E = Csg(arrays.csg)
+        self.prec = rules.precision(arrays.precision)  # float32 or float64: the arrays' dtype, the band
+        self.F, self.I = self.prec.F, self.prec.I
+        self.E = Csg(arrays.csg, self.prec)
         self.host = dict(arrays.host)
         self.n, self.n_mesh, self.chunk = arrays.n, arrays.n_mesh, arrays.chunk
         self.CH0, self.SRF = arrays.ch0, arrays.srf
@@ -114,7 +116,11 @@ class Navigator:
 
     @classmethod
     def from_scene(cls, scene, cache=False, **options):
-        """Return the navigator of a lowered Scene; ``cache``: read or write the cache (``lumen.geometry.cache``)."""
+        """Return the navigator of a lowered Scene; ``cache``: read or write the cache (``lumen.geometry.cache``).
+
+        ``options``: the build's (``navigator_build.build``): ``classes``, ``precision`` ("float32", the default, or
+        "float64").
+        """
         if cache:
             from lumen.geometry import cache as build_cache
 
@@ -223,7 +229,7 @@ class Navigator:
         ``start``: a volume already known (>= 0) is returned as is (the descent's loop starts done, so a caller that
         locates only unknown starts pays nothing for the known ones).
         """
-        x = jnp.asarray(x, F32)
+        x = jnp.asarray(x, self.F)
         known = jnp.bool_(False) if start is None else jnp.asarray(start, I32) >= 0
 
         def body(c):
@@ -290,7 +296,7 @@ class Navigator:
         Nk = D["N"][k]
         s0 = jnp.dot(Nk, od + t_lo * dd - D["V0"][k])
         nd = jnp.dot(Nk, dd)
-        t_k = t_lo - s0 / jnp.where(nd != 0, nd, F32(-1.0))
+        t_k = t_lo - s0 / jnp.where(nd != 0, nd, self.F(-1.0))
         return inside & (det != 0), t_k, nd, s0
 
     def _triangle(self, ctx, i, k0, kn, b):
@@ -303,7 +309,7 @@ class Navigator:
         # the facet rule: met entering it (n . d < 0), a start behind its plane within the tolerance on it; a facet
         # met from clearly behind (a start inside the closed surface, where no volume holds a point as the mesh's) is
         # an entry into the opaque part alike
-        tol = F32(rules.FACET_BEHIND_BANDS) * band
+        tol = self.F(rules.FACET_BEHIND_BANDS) * band
         front = ok & (nd < 0) & (s0 > -tol) & (t_lo - t_k <= band)
         back = ok & (nd > 0) & (s0 < -tol) & (t_k > t_lo)
         t_c = jnp.maximum(t_k, t_lo)
@@ -358,7 +364,7 @@ class Navigator:
         ED = self.E.dev()
         tor = ED["T"]["typ"][ED["K"]["l0"][k] + jnp.maximum(sd[1], 0)] == 2
         t_on = ctx.t_lo + rules.K_ON * ctx.band / jnp.maximum(jnp.abs(sd[3]), 1.0 / rules.GRAZE)
-        t_hi = jnp.where(tor, t_on, F32(HUGE))
+        t_hi = jnp.where(tor, t_on, self.F(HUGE))
         # while the ray is within that face's band its leaf is on the side the photon crossed to, whatever a float32
         # probe there says (Geant4: within kCarTolerance the direction decides)
         lf_on = jnp.where(kn_i, sd[1], I32(-2))
@@ -395,7 +401,7 @@ class Navigator:
         # did; else none
         lf = jnp.where(zero, jnp.where(by_s, sd[1], jnp.where(on, fr["leaf"], I32(-1))), lf)
         f = jnp.where(zero, jnp.where(by_s, sd[2], jnp.where(on, fr["face"], I32(-1))), f)
-        te = jnp.where(zero, ctx.t_lo, jnp.where(h, t, F32(HUGE)))
+        te = jnp.where(zero, ctx.t_lo, jnp.where(h, t, self.F(HUGE)))
         # own is item 0: it sets the best (its exit, HUGE if none); a daughter beats it on a tie (the entry-tie rule)
         wins = rules.entry_wins(te, self.rank(i), b, self.rank(b[1]))
         better = own | (clip & h & (te < b[0])) | (~is_own & (zero | h) & wins)
@@ -463,7 +469,7 @@ class Navigator:
         """
         D = self.dev()
         ctx = ctx._replace(shear=_shear(ctx.dd) if self.n_mesh else None)
-        none = (F32(HUGE), I32(-1), I32(-1), I32(-1), jnp.bool_(False), jnp.bool_(False))
+        none = (self.F(HUGE), I32(-1), I32(-1), I32(-1), jnp.bool_(False), jnp.bool_(False))
         vi_ = I32(0) if vi is None else jnp.asarray(vi, I32)
         g_lo = D["vg0"][v] - jnp.asarray(own, I32)  # one pseudo-group first: the own volume (item 0)
         return lax.fori_loop(g_lo, D["vg1"][v], lambda g, c: self._group(ctx, v, vi_, g, c), none)
@@ -495,13 +501,13 @@ class Navigator:
             def s_of():  # s = d . n_out at the start: one leaf gradient of the item
                 g = self.hit_grad(l_it, jnp.maximum(l_lf, 0), l_fc, od + t_lo * dd)
                 gd = jnp.dot(g, dd)
-                return gd / safe_norm(g) * jnp.where(l_o, F32(1.0), F32(-1.0)), gd < 0
+                return gd / safe_norm(g) * jnp.where(l_o, self.F(1.0), self.F(-1.0)), gd < 0
 
-            s_, en_ = pick(l_kn, s_of, lambda: (F32(0.0), jnp.bool_(False)))
+            s_, en_ = pick(l_kn, s_of, lambda: (self.F(0.0), jnp.bool_(False)))
         else:
             # the event's own normal (against the way in): n_out = +normal for an entry, -normal for an exit
-            s_ = jnp.where(l_kn, jnp.dot(q.snv, dd) * jnp.where(l_e, F32(1.0), F32(-1.0)), F32(0.0))
-            en_ = l_kn & (s_ * jnp.where(l_o, F32(1.0), F32(-1.0)) < 0)
+            s_ = jnp.where(l_kn, jnp.dot(q.snv, dd) * jnp.where(l_e, self.F(1.0), self.F(-1.0)), self.F(0.0))
+            en_ = l_kn & (s_ * jnp.where(l_o, self.F(1.0), self.F(-1.0)) < 0)
         return l_it, (l_kn, l_lf, l_fc, s_, en_)
 
     def _next_volume(self, q, ev, v, vi, step):
@@ -537,11 +543,11 @@ class Navigator:
             it, lf = jnp.where(is_own, vi, uc), jnp.maximum(l_in, 0)
             g = self.hit_grad(it, lf, f_in, x)
             n = g / safe_norm(g)
-            m = surface_id.face_dist(self, it, lf, f_in, x) + rules.RELOCATE_BANDS * rules.step_band(x)
-            return m * jnp.where(jnp.dot(n, q.dd) < 0, F32(-1.0), F32(1.0)) * n
+            m = surface_id.face_dist(self, it, lf, f_in, x) + rules.RELOCATE_BANDS * rules.step_band(x, self.prec)
+            return m * jnp.where(jnp.dot(n, q.dd) < 0, self.F(-1.0), self.F(1.0)) * n
 
         # that step replaces the step along the ray, which clears the face only by its normal component
-        od = q.od + pick(off, past_face, lambda: jnp.zeros(3, F32))
+        od = q.od + pick(off, past_face, lambda: jnp.zeros(3, self.F))
         ray = (od, q.dd, jnp.where(off, t_c, t_c + step))
         return pick(hit & ~(go_in & is_ch), lambda: self._settle(nxt, ray, unit_x, step + band),
                     lambda: (nxt, jnp.bool_(False)))  # fmt: skip
@@ -551,7 +557,7 @@ class Navigator:
         D = self.dev()
         OUT = I32(self.n)
         t_lo, v, last_, _, it, rec, cur, pz = c
-        band = rules.band(q.xa + jnp.abs(t_lo))
+        band = rules.band(q.xa + jnp.abs(t_lo), self.prec)
         vi = jnp.minimum(v, OUT - 1)
         has_own = v < OUT
         # last_: the photon's srf (round 0: the item it sits on, with its face and outward sign when known), then the
@@ -562,7 +568,7 @@ class Navigator:
         hit = t_c < q.tmax
         # the relocation's step past the crossing: the band at the crossing (not at the round's start: the same
         # crossing steps alike however many rounds led to it)
-        step = rules.band(q.xa + jnp.abs(jnp.where(hit, t_c, t_lo)))
+        step = rules.band(q.xa + jnp.abs(jnp.where(hit, t_c, t_lo)), self.prec)
         nxt, moved = self._next_volume(q, (t_c, u_in, is_own, step, hit, l_in, f_in), v, vi, step)
         item = jnp.where(~is_own, u_in, vi)
         after = D["cls"][jnp.where(hit, nxt, v)]
@@ -596,12 +602,13 @@ class Navigator:
         # zero-length invisible crossings in a row (Geant4's zero steps): at ZERO_STEPS_BEFORE_PUSH the step's stuck
         # rule takes over (a straight continue event); every other invisible crossing is followed, however many
         zc = jnp.where(inv & (t_c - t_lo <= rules.ZERO_STEP_BANDS * band), pz[6] + 1, I32(0))
-        pz = (jnp.where(inv & (pz[0] == F32(HUGE)), t_c, pz[0]), jnp.where(inv, t_c, pz[1]), pz[2] + inv.astype(I32),
+        pz = (jnp.where(inv & (pz[0] == self.F(HUGE)), t_c, pz[0]), jnp.where(inv, t_c, pz[1]), pz[2] + inv.astype(I32),
               jnp.where(inv, nxt, pz[3]), hit, jnp.where(inv & (t_c <= q.s_at), nxt, pz[5]), zc,
               jnp.where(hit, v_b, v_in), jnp.where(hit, t_c, t_in))  # fmt: skip
         done = (~hit) | vis | (zc >= rules.ZERO_STEPS_BEFORE_PUSH)
-        rec = jnp.where(hit, jnp.stack([lax.bitcast_convert_type(t_c, I32), item, l_in, f_in, z_in.astype(I32), v_b,
-                                        vis.astype(I32)]), rec)  # fmt: skip
+        # the record: t's bits in the integer of the navigator's width, then the event's integers
+        rec = jnp.where(hit, jnp.stack([lax.bitcast_convert_type(t_c, self.I)] + [a.astype(self.I) for a in (
+            item, l_in, f_in, z_in, v_b, vis)]), rec)  # fmt: skip
         return (jnp.where(moved, t_c + step, t_c), jnp.where(hit, nxt, v), item, done, it + 1, rec,
                 jnp.where(hit, after, cur), pz)  # fmt: skip
 
@@ -609,7 +616,9 @@ class Navigator:
         """Return the query's outputs from the last round's record: the live t, the normal, the surface met."""
         D = self.dev()
         vol, cls0, v_after, rounds, rec, cls_after, pz = end
-        bt, bi, bl, bf, zero, vb = lax.bitcast_convert_type(rec[0], F32), rec[1], rec[2], rec[3], rec[4] > 0, rec[5]
+        bt = lax.bitcast_convert_type(rec[0], self.F)
+        bi, bl, bf, zero, vb = (rec[1].astype(I32), rec[2].astype(I32), rec[3].astype(I32), rec[4] > 0,
+                                rec[5].astype(I32))  # fmt: skip
         # hit = a visible crossing, or (cont) zero-length invisible crossings in a row: a straight event at the last
         # crossing; a scan that ends on invisible crossings and then nothing is no hit
         vis_end = rec[6] == 1
@@ -620,7 +629,7 @@ class Navigator:
             bt = surface_id.mesh_plane_t(self, (live, bi, bl, bt), q.od, q.dd, q.xa)
         # the live t of every event on a known face, a zero-length one too
         lt = hit & (bl >= 0)
-        bt_live = jnp.where(lt, self.live_t(bi, bl, bf, o, d, jnp.where(lt, bt, F32(HUGE))), bt)
+        bt_live = jnp.where(lt, self.live_t(bi, bl, bf, o, d, jnp.where(lt, bt, self.F(HUGE))), bt)
         g_hit = self.hit_grad(bi, jnp.maximum(bl, 0), bf, o + jnp.where(bt_live < HUGE, bt_live, 0.0) * d)
         nrm = g_hit / safe_norm(g_hit)
         # a face known (a zero-length event on the face sat on too). A zero-length event at the start with no face
@@ -662,18 +671,19 @@ class Navigator:
         ``vol_at`` is the volume the ray is in there (past the invisible crossings before it), as the walk found it.
         """
         D = self.dev()
-        o, d = jnp.asarray(o, F32), jnp.asarray(d, F32)
+        o, d = jnp.asarray(o, self.F), jnp.asarray(d, self.F)
         od, dd = sg(o), sg(d)
         vol = jnp.asarray(vol, I32)
         cls0 = D["cls"][vol]
-        snv = None if sn is None else sg(jnp.asarray(sn, F32))
+        snv = None if sn is None else sg(jnp.asarray(sn, self.F))
         V = None if vertex_tab is None else jnp.asarray(vertex_tab)
-        s_q = F32(HUGE) if s_at is None else sg(jnp.asarray(s_at, F32))
+        s_q = self.F(HUGE) if s_at is None else sg(jnp.asarray(s_at, self.F))
         kn0 = self.srf_decode(jnp.asarray(last, I32))[4]  # the photon sits on a face it knows (its side's state)
-        q = _Query(od, dd, F32(t_max), jnp.max(jnp.abs(od)), snv, kn0, V, s_q)
-        rec0 = jnp.stack([lax.bitcast_convert_type(F32(HUGE), I32), I32(-1), I32(-1), I32(-1), I32(0), vol, I32(0)])
-        c0 = (F32(0.0), vol, jnp.asarray(last, I32), jnp.bool_(False), I32(0), rec0, cls0,
-              (F32(HUGE), F32(HUGE), I32(0), vol, jnp.bool_(False), vol, I32(0), vol, F32(0.0)))  # fmt: skip
+        q = _Query(od, dd, self.F(t_max), jnp.max(jnp.abs(od)), snv, kn0, V, s_q)
+        rec0 = jnp.stack([lax.bitcast_convert_type(self.F(HUGE), self.I)] + [jnp.asarray(a, self.I) for a in (
+            -1, -1, -1, 0, vol, 0)])  # fmt: skip
+        c0 = (self.F(0.0), vol, jnp.asarray(last, I32), jnp.bool_(False), I32(0), rec0, cls0,
+              (self.F(HUGE), self.F(HUGE), I32(0), vol, jnp.bool_(False), vol, I32(0), vol, self.F(0.0)))  # fmt: skip
         _, v_after, _, _, rounds, rec, cls_after, pz = lax.while_loop(lambda c: ~c[3], lambda c: self._round(q, c), c0)
         out = self._finish(q, o, d, (vol, cls0, v_after, rounds, rec, cls_after, pz))
         return dict(out, rounds=rounds)
@@ -688,7 +698,7 @@ def surface_at(nav, cx, x, d):
     """
     t_q, hit, win = cx["t"], cx["hit"], cx["win"]
     it, lf, fc = win[0], win[1], win[2]
-    x, d = jnp.asarray(x, F32), jnp.asarray(d, F32)
+    x, d = jnp.asarray(x, nav.F), jnp.asarray(d, nav.F)
     live = hit & (lf >= 0)  # a zero-length event on a known face too (the query's)
     t0 = sg(t_q)
     t = jnp.where(live, nav.live_t(it, lf, fc, x, d, jnp.where(live, t0, HUGE)), t0)

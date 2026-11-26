@@ -41,6 +41,9 @@ class Lobe:
     path: Callable | None = None
     facet_logpdf: Callable | None = None
     facet_proposal_logpdf: Callable | None = None  # one facet's density ``path`` draws from, when not ``facet_logpdf``
+    refracts: bool = (
+        False  # a facet path that refracts too (``lumen.surfaces.facets``, dielectric): its own path record
+    )
     pol_sample: Callable | None = None
     pol_logpdf: Callable | None = None
     # the one defensive mixture (lumen.transport.estimator): {parameter: role} the parameters that can zero a part of

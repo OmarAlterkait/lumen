@@ -335,7 +335,7 @@ def test_a_manifest_s_reverse_flag_is_honoured(monkeypatch):
     """The reverse row runs when the manifest says ``"reverse": true``; the command's flag only overrides it."""
     from lumen.compare import cli
 
-    monkeypatch.setattr(gradients.lumen, "load", lambda path: None)
+    monkeypatch.setattr(gradients.lumen, "load", lambda path, **kw: None)
     monkeypatch.setattr(gradients, "_Runs", lambda det, spec, o: types.SimpleNamespace(det=det, p0=None))
     monkeypatch.setattr(gradients, "families", lambda det, p: [])
     monkeypatch.setattr(gradients, "_reverse", lambda name, runs, fams: records.row("gradients", name, "reverse", 0.0))

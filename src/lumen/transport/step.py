@@ -248,10 +248,10 @@ def _recover(model, ops, ph):
     After ZERO_STEPS_BEFORE_PUSH zero-length crossings the photon is pushed past the band and located there: its volume
     and its class (the medium the step reads) are those of the point it lands on.
     """
-    b0 = navigation.step_band(sg(ph.x))
+    nav = geometry(model, ops).nav
+    b0 = navigation.step_band(sg(ph.x), nav.prec)
     stuck = ph.alive & (ph.nz >= navigation.ZERO_STEPS_BEFORE_PUSH)
     x = jnp.where(stuck, ph.x + navigation.PUSH_DISTANCE_TOLERANCES * b0 * sg(ph.d), ph.x)
-    nav = geometry(model, ops).nav
     vol = nav.locate(sg(x), start=jnp.where(stuck, -1, ph.vol)).astype(I32)  # the descent only where pushed
     cls = jnp.where(stuck, nav.dev()["cls"][vol], ph.cls).astype(I32)
     return ph._replace(x=x, vol=vol, cls=cls, srf=jnp.where(stuck, -1, ph.srf)), b0
@@ -260,7 +260,8 @@ def _recover(model, ops, ph):
 def _query(model, ops, ph, s):
     """Return the next visible crossing (the navigator's dict).
 
-    ``s``: the free path; ``vol_at`` / ``cls_at`` are the volume and class the ray is in there.
+    ``s``: the free path; ``vol_at`` / ``cls_at`` are the volume and class the ray is in there. The physics reads the
+    crossing in float32; ``t`` stays in the navigator's precision, for the position (``_surface_event``).
     """
     geom = geometry(model, ops)
     # a geometry that accepts the free path may stop the query just past it where the crossing beyond cannot deposit
@@ -269,7 +270,7 @@ def _query(model, ops, ph, s):
     r = geom.query(None, ph.x, ph.d, ph.cls, ops.controls.max_distance, vol=ph.vol, last=ph.srf, sn=ph.sn, s_at=s, **sf)
     keys = ("t", "hit", "normal", "cls_after", "sensor", "cls_before", "cls_start", "t_pass0", "t_pass1",
             "vol_after", "vol_before", "vol_start", "item", "cont", "vol_at", "cls_at")  # fmt: skip
-    return {k: r[k] for k in keys}
+    return {k: r[k].astype(F32) if k != "t" and jnp.issubdtype(r[k].dtype, jnp.floating) else r[k] for k in keys}
 
 
 def _straight_if(cont, probs):
@@ -337,7 +338,7 @@ def _step_context(model, ops, ph, key):
     mu_r = jnp.sum(mu_c_r)
     s = sg(-jnp.log(rand["path"][0]) / jnp.maximum(mu_r, FLOOR32))  # the free path at the reference event rate
     q = _query(model, ops, ph, s)
-    dist = q["t"]
+    dist = q["t"].astype(F32)
     zero = sg(dist) <= navigation.ZERO_STEP_BANDS * b0  # a zero-length step: below one float32 ulp of the coordinates
     surf = _surface(model, q, zero)
     row, cont = surf
@@ -369,13 +370,13 @@ def _surface_event(model, ops, ph, sc):
     width = {"tables": ops.tables["unified"]}
     lb = se.Lobes(wi=ph.d, n=nrm, er=ctx["er"], ei=ctx["ei"], width={"sigma_alpha": sc.live_eval.sigma_alpha, **width},
                   width_ref={"sigma_alpha": sc.sigma_r, **width}, rand=sc.rand["lobe"],
-                  shared=ops.reference is None)  # fmt: skip
+                  shared=ops.reference is None, idx=(ctx["n1"], ctx["n2"]))  # fmt: skip
     cross = (ph.d, nrm, ctx["n1"] / ctx["n2"], (ctx["er"], ctx["ei"], sc.live_eval.amps8))
     out = se.outcome_direction(tables, sc.row, os_, cross, lb)
     d_new = unit(out.d)  # no norm drift over many bounces
-    far = jnp.asarray(FAR_SIDE)[os_] & sc.drawn
+    far = (jnp.asarray(FAR_SIDE)[os_] | out.far) & sc.drawn  # a dielectric facet path's side is its own
     ok = q["hit"] & sc.drawn & (sc.row >= 0)
-    x_hit = ph.x + sc.dist * ph.d
+    x_hit = ph.x + q["t"] * ph.d  # in the navigator's precision (``_query``)
     # at the reference every live / reference ratio is 1: the reached share (where it is defined), the attenuation at
     # the reference, the outcome at the probabilities it is drawn from, the lobe's density drawn from over itself
     r_o = jnp.where(sc.drawn, safe_div(sc.p_draw[os_], sc.p_proposal[os_]), 0.0)
@@ -390,7 +391,7 @@ def _surface_event(model, ops, ph, sc):
     nx = state.Next(x=x_hit, d=d_new, w=w_if * out.w, cls=jnp.where(far, q["cls_after"], q["cls_before"]),
                     ok=ok, lam=ph.lam, dtime=sc.dist / sc.v_g,
                     sn=q["normal"].astype(F32), outcome=o.astype(I32), er=out.er, ei=out.ei,
-                    reemitted=jnp.bool_(False), fates=fates)  # fmt: skip
+                    reemitted=jnp.bool_(False), fates=fates, far=far)  # fmt: skip
     return nx, wr
 
 
@@ -427,12 +428,13 @@ def _bulk(model, ops, ph, sc):
         return state.Next(x=x_n, d=d_n, w=ph.w * w * rl * b.yield_w * w_j, cls=next_cls,
                           ok=jnp.bool_(True), lam=b.lam, dtime=s / sc.v_g + b.delay + dt_j,
                           sn=q["normal"].astype(F32), outcome=jnp.int32(-1), er=er_n, ei=ei_n,
-                          reemitted=b.reemitted, fates=fates), \
+                          reemitted=b.reemitted, fates=fates, far=jnp.bool_(False)), \
             sg(sg(ph.wr) * w_r * b.yield_r * jnp.exp(-sc.mu_abs_r * L))  # fmt: skip
     return state.Next(x=x_s, d=b.wo, w=ph.w * w * rl * b.yield_w, cls=next_cls,
                       ok=jnp.bool_(True), lam=b.lam, dtime=s / sc.v_g + b.delay,
                       sn=q["normal"].astype(F32), outcome=jnp.int32(-1), er=b.er, ei=b.ei,
-                      reemitted=b.reemitted, fates=fates), sg(sg(ph.wr) * w_r * b.yield_r)  # fmt: skip
+                      reemitted=b.reemitted, fates=fates, far=jnp.bool_(False)), \
+        sg(sg(ph.wr) * w_r * b.yield_r)  # fmt: skip
 
 
 def _event(model, ops, ph, sc):
@@ -491,10 +493,11 @@ def _after(ops, ph, sc, nx, wr, b0, an=None):  # noqa: PLR0913
     return After(alive=alive, w=w_new, wr=wr_new, nz=nz_new, abandoned=abandoned, rouletted=rouletted, analog=an)
 
 
-def _advance(sc, ph, b0):
+def _advance(sc, far, ph, b0):
     """Return (vol, srf, held) after the event: the navigator's state for the next query.
 
-    ``held``: the photon keeps the surface it sat on (a bulk event that did not move it off that face).
+    ``far``: a surface outcome left the photon beyond the surface (``Next.far``). ``held``: the photon keeps the
+    surface it sat on (a bulk event that did not move it off that face).
     """
     q = sc.q
     # a bulk event: the volume the free path ends in (before the first invisible crossing the start's, after the
@@ -502,8 +505,7 @@ def _advance(sc, ph, b0):
     # steps through each crossing); a surface outcome that continues beyond takes the volume after, a reflection the
     # one it was located in
     vol_b = jnp.where(sc.s < q["t_pass0"], q["vol_start"], jnp.where(sc.s > q["t_pass1"], q["vol_before"], q["vol_at"]))
-    after = jnp.asarray(FAR_SIDE)[sc.os_] & sc.drawn
-    vol = jnp.where(sc.scatter, vol_b, jnp.where(after, q["vol_after"], q["vol_before"])).astype(I32)
+    vol = jnp.where(sc.scatter, vol_b, jnp.where(far, q["vol_after"], q["vol_before"])).astype(I32)
     # a bulk event within a zero-length step of the start leaves the photon on the surface it sat on: its point did
     # not move off that face, and the band rules read the face from the photon's state, never from a float32 probe of
     # the point (a re-emission at a face it sits within one ulp of: the side is still the direction's)
@@ -551,7 +553,7 @@ def step(model, ops, ph, key):
         an = _analog_crossing(ph.analog, sg(share), sg(nx.w), at)
     af = _after(ops, ph, sc, nx, wr, b0, an)
     alive = af.alive
-    vol, srf, held = _advance(sc, ph, b0)
+    vol, srf, held = _advance(sc, nx.far, ph, b0)
     gen = None if ph.gen is None else ph.gen + nx.reemitted.astype(I32)
     ph2 = state.Photon(x=nx.x, d=nx.d, t=ph.t + nx.dtime, lam=nx.lam, w=jnp.where(alive, af.w, 0.0),
                        wr=jnp.where(alive, af.wr, 0.0), alive=alive, vertex=ph.vertex + 1, er=nx.er.astype(F32),
@@ -680,7 +682,7 @@ def _frame_fields(model, frame, x, d, n, gen) -> dict:
 
 def _local(model, ops, sc, out_side, ph) -> dict:
     """Return the deposit's local fields at a crossing, in the sensor placement's frame (``_frame_fields``)."""
-    x = ph.x + sc.dist * ph.d
+    x = ph.x + sc.q["t"] * ph.d
     return _frame_fields(model, lambda: sensor_frame(model, ops, sc, out_side), x, ph.d, sc.q["normal"], ph.gen)
 
 

@@ -10,7 +10,12 @@ Conventions, against Geant4 10.7.4 (G4Cerenkov, G4Scintillation, G4OpWLS, G4OpRa
   wavelength shifting are unpolarised.
 - Dielectric interfaces: Fresnel amplitudes (``lumen.surfaces.fresnel``) on the (s, p) basis, s = unit(wi x n),
   p = k x s for each of the incoming, reflected and transmitted k. Complex amplitudes keep the phases of total
-  internal reflection and of absorbing media, which Geant4's real linear vector drops.
+  internal reflection and of absorbing media, which Geant4's real linear vector drops, and the sign of the state's
+  part in the plane of incidence, which Geant4's DielectricDielectric takes as a magnitude (E1_parl = |E1pl|,
+  G4OpBoundaryProcess.cc, 11.3.0). The share reflected at one interface is the same; the state after it is another
+  where both parts are present, so a definite linear state that meets several facets of one rough surface (a GLISUR
+  dielectric facet path) is reflected or refracted with other shares at the later facets. For unpolarised light the
+  first event's law is the same, and the facet paths agree with Geant4's (``tests/unit/test_g4_boundary.py``).
 - A reflector without a complex index is the perfect mirror -E + 2 (E . n) n (``MIRROR``); a backscatter gives -E.
 - Lambertian transmission and re-emission are unpolarised.
 """

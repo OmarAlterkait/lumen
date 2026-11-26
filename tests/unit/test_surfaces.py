@@ -496,8 +496,6 @@ def test_fail_closed_bindings():
         compile_(t, skins={"NoLV": "refl"})
     with pytest.raises(DescriptionError, match="not a library surface"):
         compile_(t, skins={"BoxLV": "gold"})
-    with pytest.raises(DescriptionError, match="never touch"):  # neither mother/daughter nor siblings
-        compile_(tree(*TANK[:2], ("In", "InLV", "Water", "Box"), TANK[2]), borders={("In", "Box2"): "refl"})
     with pytest.raises(DescriptionError, match="unknown physvol"):
         compile_(t, borders={("Box", "Nope"): "refl"})
     bad = library()

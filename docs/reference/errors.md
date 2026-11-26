@@ -121,10 +121,10 @@ or surface.
 
 | Message | Meaning and fix |
 |---|---|
-| `<what>: model <model> is not supported` · `<what>: finish <finish> is not supported` · `<what>: surface type <type> is not supported` | a surface form outside lumen's Geant4 surface types (refused: ground dielectric_dielectric, backpainted finishes, Geant4's `coated` type, LUT, LUTDAVIS, dichroic). Use a supported form |
-| `<what>: ground dielectric_dielectric (facet refraction) is not supported` | as above |
+| `<what>: model <model> is not supported` · `<what>: finish <finish> is not supported` · `<what>: surface type <type> is not supported` | a surface form outside lumen's Geant4 surface types (refused: unified ground dielectric_dielectric, backpainted finishes, Geant4's `coated` type, LUT, LUTDAVIS, dichroic). Use a supported form |
+| `<what>: unified ground dielectric_dielectric (facet refraction) is not supported` | as above (a glisur ground one reads: GLISUR's facet refraction) |
 | `<what>: <key> is not supported` · `<what>: <key> (<why>) is not supported` | a property lumen does not read (SURFACEROUGHNESS, for example). Remove it, or ask for it |
-| `<what>: polish <value> outside [0, <max>] (or exactly 1)` · `<what>: sigma_alpha <value> outside [<min>, <max>] (or exactly 0)` | the opticalsurface `value` is outside the range lumen's facet samplers cover (sigma_alpha 0 is read as Geant4 reads it: the lobe is the spike) |
+| `<what>: polish <value> outside [0, <max>] (or exactly 1)` · `<what>: sigma_alpha <value> outside [<min>, <max>] (or exactly 0)` | the opticalsurface `value` is outside the range lumen's facet samplers cover (sigma_alpha 0 is read as Geant4 reads it: the lobe is the spike; above 1 rad, G4OpticalSurface's default, Geant4's own facet draw departs from the unified distribution: `lumen.rules.choices`, `SIGMA_MAX`) |
 | `<what>: GROUPVEL must hold positive speeds (m / ns)` | a GROUPVEL table times the photons, as in Geant4; fix its values |
 | `<what>: <key> must be a table` · `<what>: <key> must be a constant (G4OpMieHG reads a constant property)` | the property has the wrong shape for what Geant4 reads |
 | `<what>: MIEHG without MIEHG_FORWARD_RATIO: G4OpMieHG aborts (mat202) at the first Mie event; add MIEHG_FORWARD_RATIO` | add the property |
@@ -367,6 +367,7 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `lumen: a jitted function traced with an object that no longer exists` | `ReferenceError` | `lumen._core.static` |
 | `(a message built at run time)` | `_closure_error` | `lumen.api` |
 | `<out> exists: a detector file is never overwritten (pass overwrite=True)` | `FormatError` | `lumen.api` |
+| `<what>: precision="float64" needs JAX's 64-bit mode, which is off: set JAX_ENABLE_X64=1 before starting Python, or call jax.config.update("jax_enable_x64", True) before any JAX array is made` | `ValueError` | `lumen.api` |
 | `Light.event: event <e> of <events>` | `IndexError` | `lumen.api` |
 | `Light.event: this light has no event axis (simulate(..., events=E))` | `ValueError` | `lumen.api` |
 | `Light: no histograms of sensor group <name>; the modelled groups are <groups>` | `KeyError` | `lumen.api` |
@@ -426,6 +427,7 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `material <m> of the tree is not in the detector file` | `LibraryError` | `lumen.build.library` |
 | `material <m>: medium <name> is defined by another material already` | `LibraryError` | `lumen.build.library` |
 | `medium model <name>: return a lumen.media.MediumSpec, not <__name__>` | `ModelError` | `lumen.build.library` |
+| `sensor group <name> (border_into): no border surface leads into its volumes (<mine>) and none has a skin that detects: it would never detect (an any_entry group counts every entry)` | `LibraryError` | `lumen.build.library` |
 | `sensor group <name>: any_entry counts with its setting 'entry_efficiency' or a value set (its sensor model applies the efficiency after tracking)` | `LibraryError` | `lumen.build.library` |
 | `sensor groups <prefix> and <name> share the volume <lv> but read its surfaces differently` | `LibraryError` | `lumen.build.library` |
 | `surface <name>: optics model <name>; a surface is read by Geant4's reading, 'geant4'` | `LibraryError` | `lumen.build.library` |
@@ -436,8 +438,8 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `bindings for materials that do not occur in the tree: <dangling>` | `DescriptionError` | `lumen.build.lookup` |
 | `border (<pre> -> <post>): <s> is <what>` | `DescriptionError` | `lumen.build.lookup` |
 | `border sensor <s> (<a> -> <z>): <pre> is not a sensor PV, so a detection leaving it has no sensor index to go to` | `DescriptionError` | `lumen.build.lookup` |
+| `border surface <s> (<a> -> <b>): the volumes neither touch (mother/daughter, siblings) nor meet across a coincident face (a daughter's face on its mother's): Geant4 would never cross it; check the border's physvols` | `OpticsError` | `lumen.build.lookup` |
 | `border surface <s> (<a> -> <z>) into sensor PV <post>: ambiguous (the sensor's surface type is the boundary of a sensor; a border may name the sensor itself when its binding has entry='border')` | `DescriptionError` | `lumen.build.lookup` |
-| `border surface <s> (<pre> -> <post>): the volumes never touch (not mother/daughter, not siblings)` | `DescriptionError` | `lumen.build.lookup` |
 | `border surface <s> (<pre> -> <post>): unknown physvol <n>` | `DescriptionError` | `lumen.build.lookup` |
 | `column <c>: only (energy, value) tables are packed, not <law>` | `OpticsError` | `lumen.build.lookup` |
 | `internal: a group pair counted as touching without a border has no such pair` | `OpticsError` | `lumen.build.lookup` |
@@ -453,7 +455,7 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `sensor binding <sb>: <sensor> is not a library sensor` | `DescriptionError` | `lumen.build.lookup` |
 | `sensor binding <sb>: LV <lv> does not occur in the tree` | `DescriptionError` | `lumen.build.lookup` |
 | `sensor binding <sb>: PV <pv> does not occur in the tree` | `DescriptionError` | `lumen.build.lookup` |
-| `sensor binding <sb>: entry must be 'any' or 'border'` | `DescriptionError` | `lumen.build.lookup` |
+| `sensor binding <sb>: entry must be 'any', 'border' or 'skin'` | `DescriptionError` | `lumen.build.lookup` |
 | `sensor binding <sb>: give exactly one of lv= or pv=` | `DescriptionError` | `lumen.build.lookup` |
 | `sensor entry <name>: crossings into it have different normal-incidence absorptance (<by_entry> and <a_n> at <lam> nm)` | `OpticsError` | `lumen.build.lookup` |
 | `skin on LV <lv>: <s> is not a library surface` | `DescriptionError` | `lumen.build.lookup` |
@@ -762,6 +764,7 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `recipe <name> needs the inputs <missing>` | `ValueError` | `lumen.recipe` |
 | `recipe input <name>: <p> is not a file (an input is one file, recorded by its sha256)` | `ValueError` | `lumen.recipe` |
 | `<pre> -> <post>: type <name> (<reason>) would put the photon into the opaque medium <medium>` | `BoundaryError` | `lumen.rules.boundary` |
+| `precision <name> is not one of <PRECISIONS>` | `ValueError` | `lumen.rules.navigation` |
 | `<key>: an extinction index is >= 0 (an absorbing medium), got <min>` | `OpticsRefused` | `lumen.rules.optics` |
 | `<what>: <given> without the optics setting scint_finite_rise_time: Geant4 reads a rise time only under its finite-rise-time switch; set it as the Geant4 run does, or drop the key` | `OpticsRefused` | `lumen.rules.optics` |
 | `<what>: <k> (<why>) is not supported` | `OpticsRefused` | `lumen.rules.optics` |
@@ -778,12 +781,12 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `<what>: WLSABSLENGTH without WLSCOMPONENT (G4OpWLS absorbs and emits nothing)` | `OpticsRefused` | `lumen.rules.optics` |
 | `<what>: a complex index on a ground finish (the facet's Fresnel) is not supported` | `OpticsRefused` | `lumen.rules.optics` |
 | `<what>: finish <finish> is not supported` | `OpticsRefused` | `lumen.rules.optics` |
-| `<what>: ground dielectric_dielectric (facet refraction) is not supported` | `OpticsRefused` | `lumen.rules.optics` |
 | `<what>: model <model> is not supported` | `OpticsRefused` | `lumen.rules.optics` |
 | `<what>: polish <value> outside [0, <GLISUR_R_MIN>] (or exactly 1)` | `OpticsRefused` | `lumen.rules.optics` |
 | `<what>: scint_finite_rise_time without <missing>: G4Scintillation reads each emitted component's rise time and aborts without it` | `OpticsRefused` | `lumen.rules.optics` |
 | `<what>: sigma_alpha <value> outside [<SIGMA_MIN>, <SIGMA_MAX>] (or exactly 0)` | `OpticsRefused` | `lumen.rules.optics` |
 | `<what>: surface type <type_> is not supported` | `OpticsRefused` | `lumen.rules.optics` |
+| `<what>: unified ground dielectric_dielectric (facet refraction) is not supported` | `OpticsRefused` | `lumen.rules.optics` |
 | `<what>: wls_time_profile <profile> is not one of G4OpWLS's <WLS_TIME_PROFILES>` | `OpticsRefused` | `lumen.rules.optics` |
 | `opticalsurface <name>: its reading detects nothing` | `OpticsRefused` | `lumen.rules.optics` |
 | `a launch appended <need> deposit records, over its <slots> slots: give records=<need> (or more), or a chunk below <below>` | `RecordsOverflow` | `lumen.run` |
@@ -844,6 +847,7 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `<material>: no <missing> (Geant4 11 emits none or aborts<hint>)` | `KeyError` | `lumen.sources.scintillation` |
 | `<material>: the components' shares <tolist> are not finite and >= 0 (Geant4 divides by the sum of the yields)` | `KeyError` | `lumen.sources.scintillation` |
 | `simulate: speed is 'fast' or 'exact', got <speed>` | `ValueError` | `lumen.speed` |
+| `into_opaque: <name>'s facet path decides its own side` | `ValueError` | `lumen.surfaces.types` |
 | `per_normal: a detecting type with eff, got <name>` | `ValueError` | `lumen.surfaces.types` |
 | `(a message built at run time)` | `AssertionError` | `lumen.testing` |
 | `check_gradient: more than <power_floor> seeds (fewer cannot reject at the checks' level: stats.mean_test)` | `ValueError` | `lumen.tools.check` |

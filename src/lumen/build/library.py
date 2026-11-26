@@ -22,7 +22,9 @@ Skins and borders
     with the sensor set's ``border_into`` groups (``border_library``; a volume several select is read by the first).
 Sensor groups
     ``border_into``: the borders into the group's volumes are sensors through the surface's own detection, as stock
-    Geant4 reads it (``lumen.rules.optics.sensor``; the sensors are named ``<group>:<surface>``).
+    Geant4 reads it (``lumen.rules.optics.sensor``; the sensors are named ``<group>:<surface>``); a volume no border
+    sensor enters whose own skin detects has that skin as its sensor, where Geant4 picks it (``skin_sensors``). A
+    group that binds neither is refused.
     ``any_entry``: a counting sensor on every placement of the group's volumes (no surface is read).
     The efficiency on entry is one rule for both (``entry_efficiency``): 1 when the group has a value set (its sensor
     model counts every absorption entering; the PMT's QE, CE and efficiency apply after tracking, ``lumen.sensors``),
@@ -173,6 +175,44 @@ def _sensor_entry(rec, how, eff=None, exit_=False):
     return dataclasses.replace(e, surface=rec.name, group=how.prefix, exit=exit_)
 
 
+def skin_sensors(df, tree, hows, skins, bordered):
+    """Return (sensors, bindings) of the ``border_into`` volumes whose own skin detects.
+
+    ``bordered``: the LVs a border sensor enters, left as they are. The skin is the sensor where Geant4 picks it
+    (``lookup.SensorBinding`` entry "skin": entering from the mother, or from a volume without a skin), as a nexus
+    photocathode is read with G4OpticalParameters::SetBoundaryInvokeSD. Leaving through it, the skin is the surface,
+    without detection (InvokeSD calls the sensitive detector of the volume entered). A skin that would detect nothing
+    (no EFFICIENCY, and no efficiency of the group's) is no sensor.
+    """
+    n_lv = Counter(tree.by_name[p].lv for p in hows)
+    sensors, sbind = {}, []
+    for p in sorted(hows, key=lambda q: tree.by_name[q].lv):
+        lv = tree.by_name[p].lv
+        s = skins.get(lv)
+        if s is None or lv in bordered or any(b.lv == lv for b in sbind):
+            continue
+        rec = df.surfaces[s]
+        h = hows[p]  # EFFICIENCY by the file's structure, never its value
+        never = h.eff_in is None and "EFFICIENCY" not in rec.properties
+        if never or not rules.geant4_sensor(rec).surface_type.detects:
+            continue
+        k = f"{h.prefix}:{s}"
+        sensors.setdefault(k, _sensor_entry(rec, h, eff=h.eff_in))
+        sbind.append(lookup.SensorBinding(k, n_lv[lv], lv=lv, entry="skin"))
+    return sensors, tuple(sbind)
+
+
+def _check_border_groups(groups, tree, sbind):
+    """Refuse a ``border_into`` group that binds none of its volumes: no border into them, no skin of theirs detects."""
+    bound = {b.lv for b in sbind}
+    for g in (g for g in groups if g.rule == "border_into"):
+        mine = [lv for lv in sorted(set(tree.lv_material)) if g.selects(lv)]
+        if mine and not any(lv in bound for lv in mine):
+            raise LibraryError(f"sensor group {g.name!r} (border_into): no border surface leads into its volumes "
+                               f"({mine[:3]}) and none has a skin that detects: it would never detect (an any_entry "
+                               "group counts every entry)")  # fmt: skip
+
+
 def _counting(tree, groups):
     sensors, sbind, sources, bound = {}, [], {}, set()
     lvs = sorted(set(tree.lv_material))
@@ -213,6 +253,10 @@ def library_and_bindings(df: schema.DetectorFile, tree, sensor_set, models=None)
     surfaces, skins, ssrc = _surfaces(df, tree)
     hows, groups = _border_groups(df, tree, sensor_set.groups)
     sensors, bsurf, borders, sbind = border_library(df, tree, hows)
+    ssens, sskin = skin_sensors(df, tree, hows, skins, {b.lv for b in sbind})
+    sensors.update(ssens)
+    sbind = tuple(sbind) + sskin
+    _check_border_groups(sensor_set.groups, tree, sbind)
     for name, e in bsurf.items():
         if name not in surfaces:
             surfaces[name], ssrc[name] = e, _surface_sources(df.surfaces[name], e.params)
@@ -405,13 +449,15 @@ def border_bindings(df, tree) -> dict:
 
     A GDML physvol name is every world instance placed by that physvol (``Tree.physvol``); a border applies to each
     adjacent (mother/daughter or sibling) instance pair of its two physvols (``lookup.border_instances``: never
-    enumerated). At the detector volume's boundary this is Geant4's own binding: a daughter -> the detector
-    placement, the detector placement -> its mother (or the sibling enclosing it, ``outside_volume``) and that volume
-    -> the detector placement are bound, the mother as the tree's outside (the last never crossed: the outside holds
-    no photon). A border whose first volume lies outside the kept detector is dropped with a warning: Geant4 consults
-    a border only for a photon in its first volume, and lumen tracks no light outside. Fail closed otherwise when a
-    border matches nothing (the detector placement -> a sibling outside it: the outside is one region, see
-    ``outside_volume``).
+    enumerated), and between two physvols that never touch directly, where they meet across coincident faces
+    (``lookup`` refuses one that no coincident face joins when the optics compile). At the detector volume's
+    boundary this is Geant4's own binding: a daughter -> the detector placement, the detector placement -> its
+    mother (or the sibling enclosing it, ``outside_volume``) and that volume -> the detector placement are bound,
+    the mother as the tree's outside
+    (the last never crossed: the outside holds no photon). A border whose first volume lies outside the kept
+    detector is dropped with a warning: Geant4 consults a border only for a photon in its first volume, and lumen
+    tracks no light outside. Fail closed otherwise when a border matches nothing (the detector placement -> a
+    sibling outside it: the outside is one region, see ``outside_volume``).
     """
     lv_of = {p.name: p.volume for p in df.placements}  # physvol -> its LV
     x, det_lv = binding.outside_volume(df), schema.detector_lv(df)
@@ -422,12 +468,14 @@ def border_bindings(df, tree) -> dict:
             return True
         return mname in lv_of and any(df.placements[i].name == dname for i in df.volumes[lv_of[mname]].daughters)
 
-    def key(a, b):  # the tree's physvol pair of a border, None: no world instance pair touches
+    def key(a, b):  # the tree's physvol pair of a border, None: not both in the tree
         if a in have and b not in have and inside(a, b):
             a, b = a, OUTSIDE_PV  # the kept detector against its GDML mother, the tree's outside
         elif a not in have and b in have and inside(b, a):
             a, b = OUTSIDE_PV, b  # ... and from that mother into the detector
-        return (a, b) if a in have and b in have and lookup.border_instances(tree, a, b)[0] else None
+        if a not in have or b not in have:
+            return None
+        return (a, b)  # touching, or across coincident faces (one that no coincident face joins: refused by lookup)
 
     out, dropped = {}, []
     for border in df.borders:

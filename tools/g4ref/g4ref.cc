@@ -77,6 +77,15 @@
 #include "G4ProductionCutsTable.hh"
 #include "G4ProductionCuts.hh"
 #endif
+#if G4VERSION_NUMBER >= 1100
+// Geant4 11 renamed the ordered vector and dropped the two energy-range getters of a material property vector
+using G4PhysicsOrderedFreeVector = G4PhysicsFreeVector;
+#define G4REF_MIN_ENERGY(v) ((v)->Energy(0))
+#define G4REF_MAX_ENERGY(v) ((v)->GetMaxEnergy())
+#else
+#define G4REF_MIN_ENERGY(v) ((v)->GetMinLowEdgeEnergy())
+#define G4REF_MAX_ENERGY(v) ((v)->GetMaxLowEdgeEnergy())
+#endif
 
 #include <algorithm>
 #include <array>
@@ -662,10 +671,17 @@ class Detector : public G4VUserDetectorConstruction {
       auto mpt = m->GetMaterialPropertiesTable();
       if (!mpt) continue;
       std::cout << "[g4ref]   " << m->GetName() << ":";
+#if G4VERSION_NUMBER < 1100
       for (auto& kv : *mpt->GetPropertyMap())
         std::cout << " " << mpt->GetMaterialPropertyNames()[kv.first];
       for (auto& kv : *mpt->GetConstPropertyMap())
         std::cout << " " << mpt->GetMaterialConstPropertyNames()[kv.first] << "(const)";
+#else  // Geant4 11 dropped the maps: ask by name
+      for (const auto& n : mpt->GetMaterialPropertyNames())
+        if (mpt->GetProperty(n)) std::cout << " " << n;
+      for (const auto& n : mpt->GetMaterialConstPropertyNames())
+        if (mpt->ConstPropertyExists(n)) std::cout << " " << n << "(const)";
+#endif
       std::cout << "\n";
     }
     rindexCheck();
@@ -961,7 +977,11 @@ class G4RefCerenkov : public G4Cerenkov {
     const G4double Rfact = 369.81 / (eV * cm);
     if (beta <= 0.0) return 0.0;
     auto cai = (G4PhysicsOrderedFreeVector*)((*thePhysicsTable)(m->GetIndex()));
+#if G4VERSION_NUMBER < 1100
     if (!cai || !cai->IsFilledVectorExist()) return 0.0;
+#else  // Geant4 11: a filled vector is one with knots
+    if (!cai || cai->GetVectorLength() == 0) return 0.0;
+#endif
     const G4double bi = 1.0 / beta, nt = bi;           // threshold index
     G4double sum = 0.0;
     size_t N = Rindex->GetVectorLength();
@@ -1050,8 +1070,8 @@ class G4RefCerenkov : public G4Cerenkov {
     if (nph <= 0 || !GetStackPhotons()) { aParticleChange.SetNumberOfSecondaries(0); return pParticleChange; }
     aParticleChange.SetNumberOfSecondaries(nph);
     if (GetTrackSecondariesFirst() && aTrack.GetTrackStatus() == fAlive) aParticleChange.ProposeTrackStatus(fSuspend);
-    G4double Pmin = Rindex->GetMinLowEdgeEnergy();
-    G4double Pmax = Rindex->GetMaxLowEdgeEnergy();
+    G4double Pmin = G4REF_MIN_ENERGY(Rindex);
+    G4double Pmax = G4REF_MAX_ENERGY(Rindex);
     G4double dp = Pmax - Pmin;
     G4double nMax = Rindex->GetMaxValue();
     G4double BetaInverse = 1. / beta;
@@ -1108,17 +1128,27 @@ class G4RefCerenkov : public G4Cerenkov {
 // (FAST/SLOWCOMPONENT) path copied from G4Scintillation.cc 10.7.4, the only change being the fast count:
 // Binomial(N, min(YIELDRATIO, 1)) (or fExcitationRatio when that is neither 0 nor 1, as 10.7) instead of
 // int(YIELDRATIO N). The enhanced-time-constants path and a finite rise time are refused (not used by the campaign).
+// The binomial path copies Geant4 10.7.4's own members, which Geant4 11 made private: it is built only against
+// 10.7, and on 11 "--scint-split binomial" is refused (the default, stock, forwards to G4Scintillation there).
 class G4RefScintillation : public G4Scintillation {
  public:
   G4RefScintillation() : G4Scintillation("Scintillation") {}
   G4VParticleChange* PostStepDoIt(const G4Track& t, const G4Step& s) override {
     if (S.opt.scintSplit != "binomial") return G4Scintillation::PostStepDoIt(t, s);
+#if G4VERSION_NUMBER < 1100
     return Binomial(t, s);
+#else
+    G4Exception("g4ref", "scintsplit", FatalException,
+                "--scint-split binomial: built against Geant4 11, whose G4Scintillation members are private; "
+                "use Geant4 10.7 for it");
+    return nullptr;
+#endif
   }
   G4VParticleChange* AtRestDoIt(const G4Track& t, const G4Step& s) override {
     if (S.opt.scintSplit != "binomial") return G4Scintillation::AtRestDoIt(t, s);
     return G4RefScintillation::PostStepDoIt(t, s);   // 10.7's AtRestDoIt is its PostStepDoIt
   }
+#if G4VERSION_NUMBER < 1100
  private:
   G4VParticleChange* Binomial(const G4Track& aTrack, const G4Step& aStep) {
     if (GetEnhancedTimeConstants() || GetFiniteRiseTime())
@@ -1221,6 +1251,7 @@ class G4RefScintillation : public G4Scintillation {
     }
     return G4VRestDiscreteProcess::PostStepDoIt(aTrack, aStep);
   }
+#endif
 };
 
 class ISCalcScintillation : public G4RefScintillation {

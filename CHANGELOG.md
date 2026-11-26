@@ -7,6 +7,10 @@ now, and what to do.
 
 ### Results that change
 
+- **A unified ground surface's sigma_alpha reads up to 1 rad** (was 0.707 rad), G4OpticalSurface's default value
+  (nexus's SiPM board mask, for one): four more rows of the unified tables, at their stated accuracy. Above 1 rad the
+  surface is still refused: there Geant4's own facet draw departs from the distribution it states and lumen draws
+  (`lumen.rules.choices`, `SIGMA_MAX`), by at most 8.5e-4 of the facets at 1 rad and 0.15 at 2 rad.
 - **Light born in an opaque mesh is no longer emitted.** A tessellated solid holds no point, so a photon born inside one
   bound opaque (its material absorbs within the band) started in the volume around it and reflected off its face into
   the detector; Geant4 absorbs it where it is born. The emission properties (RINDEX, the scintillation keys) of a
@@ -57,6 +61,46 @@ now, and what to do.
   against wavelength (`--range` shades the light's). Every drawn solid is compared with the solid lumen traces. It
   needs the `view` extra (`manifold3d`); three.js r128 ships with it (docs/howto/viewer.md). The page is served only
   under a random token in its address (`--token` sets it), and a port in use is reported before the detector is read.
+- **The navigator's precision**: `lumen.load(..., precision="float64")` runs the navigator in float64: its
+  coordinates and frames, CSG tables, roots and intervals, its tolerances, and the photon's position. The physics stays
+  float32, and float32 stays the default. float32's tolerance at a decision is the band of the photon's ray, its
+  start's coordinates plus the distance travelled, so a coating a few um thick at metres from the origin was stepped
+  over or mis-tracked by photons that came from far: NEXT-100's TPB left its S2 light 8 % low at the PMTs and 10 % at
+  the SiPMs against nexus. In float64 NEXT-100 agrees with nexus to 0.4 %, at +20 % (S1) and +19 % (S2) time on an
+  A100 against a float32 that tracks those coatings. Measured again against Geant4 11.3.0 on NEXT-100's own GDML
+  (`tools/g4ref`, 1e6 photons from each of four points in the active gas and one in the EL gap): in float64 Geant4
+  over lumen is 0.99 to 1.06 per sensor group, in float32 1.13 to 1.87, worst from the far end of the drift, where
+  the photons' paths are longest; float64 costs 5.4 times float32's time on an RTX 2080 Ti (WCTE, both speeds).
+  float64 needs
+  JAX's 64-bit mode (`JAX_ENABLE_X64=1`), and `load` refuses it otherwise; with the mode on, float32 runs are unchanged.
+  The build cache keys a navigator by its precision (docs/dev/decisions.md, 29).
+- **Skin sensors**: a `border_into` group's volume that no border sensor enters and whose own skin detects has that
+  skin as its sensor, met where Geant4 picks it (entering from the volume's mother, or from a volume without a skin);
+  leaving through it the skin is the surface and detects nothing, as InvokeSD's. nexus's photocathodes and
+  SiPMs read so (G4OpticalParameters::SetBoundaryInvokeSD). A `border_into` group that binds nothing, neither a border
+  into its volumes nor a detecting skin, is refused (it converted with no sensors).
+- **Border surfaces across coincident faces**: a border between volumes that never touch as mother and daughter or as
+  siblings was refused; it now holds where they meet across coincident faces, as Geant4 crosses from one straight
+  into the other (a coating inside a tube against the gas beside it; a coating inside a mask inside a board against
+  the gas, the faces composing through opaque volumes). It is read on any crossing between its own physvols, as
+  Geant4's G4LogicalBorderSurface is, and refused when the optics compile if no coincident face joins them.
+  NEXT-100's TPB coatings read.
+- **GLISUR facet refraction**: a glisur ground dielectric_dielectric surface reads (it was refused), as Geant4's
+  DielectricDielectric draws it: after the REFLECTIVITY / TRANSMITTANCE cut, a facet path whose facets reflect or
+  refract with the Fresnel shares of the photon's own state, ending on either side of the surface. Its polish and both
+  indices are weighted as a path (`surfaces/<S>/polish` is a key). NEXT-100's TPB surfaces read. Between matched
+  indices a facet refraction keeps the direction (`lumen.rules.choices.INDEX_MATCH`); a unified ground
+  dielectric_dielectric surface is still refused. lumen keeps the sign of a state's part in the plane of incidence
+  where Geant4's DielectricDielectric takes its magnitude (`lumen.surfaces.polar`): unpolarised light is reflected and
+  refracted as Geant4 draws it; a definite linear state that meets several facets of one surface is not.
+- **The facet paths against Geant4 on one interface**: `tools/g4ref/boundary.cc` (Geant4 11.3.0) and its histograms in
+  `tests/data/g4_boundary`, which `tests/unit/test_g4_boundary.py` compares with the lobes' own draws.
+- **A recipe states the precision its detector needs**: `Recipe(..., precision="float64")` is stored in the detector
+  file, and `lumen.load` uses it when you pass no `precision`, so a detector whose coatings need float64 (NEXT-100's
+  TPB) is loaded right by itself; a `precision=` you pass still wins, and loading such a detector in float32 warns
+  once (`lumen.api.PrecisionWarning`). A recipe that says nothing, and every detector file written before this,
+  loads in float32 as before. `lumen.compare`'s charge and gradient checks now load at the detector's own precision
+  unless their manifest entry names one.
 - **`lumen.api.package_detector("package:name")`**: a detector package's detector as `lumen.convert` converts it (its
   recipe, GDML file and inputs, through the package's `prepare`, while the context is open), and
   `lumen.api.is_package_detector`, for a tool that reads a package's detector the way lumen does.
