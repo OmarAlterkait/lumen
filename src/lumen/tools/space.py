@@ -8,7 +8,7 @@
 
 Each key enters with its whole value: a number, a per-sensor array, or a table's values (its knot energies stay
 fixed). The transform follows one rule from the key's declared range (``Params.info(key).range``): a lower bound of 0
-(or a length's, just above it) means the logarithm (positive values, fractional steps), anything else the value
+means the logarithm (positive values, fractional steps; a value of 0 there is refused), anything else the value
 itself. A key in ``factors``
 enters as one number instead: the factor on its whole value (``Params.scale``; 1 at ``params``), in log. The tools
 trace only ``x``; every other value of ``params`` is a constant, so changing ``x`` never recompiles.
@@ -21,7 +21,6 @@ from dataclasses import dataclass
 import jax.numpy as jnp
 import numpy as np
 
-from lumen._core import domains
 from lumen.format.calibrations import Table
 
 
@@ -50,7 +49,7 @@ class Space:
 
     def log(self, key) -> bool:
         """Return whether a key is varied in log (a factor, or its declared range starts at 0)."""
-        return key in self.factors or self.base.info(key).range[0] in (0.0, domains.LENGTH[0])  # 0, or just above
+        return key in self.factors or self.base.info(key).range[0] == 0.0
 
     @property
     def sizes(self) -> tuple:

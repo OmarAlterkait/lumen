@@ -108,7 +108,14 @@ seven detectors' float32 arrays and the NEXT toy's fractions are unchanged, bit 
   0), so only the reported `nll` was affected: it now leaves the cell out of its sum as well, and `FitResult.dropped`
   is how many cells were left out. A caller who masked the data by hand to get past the refusal (a dark-sensor floor)
   can drop the mask and read `dropped` instead.
-
+- **A length of 0 is a value now** (`ABSLENGTH`, `RAYLEIGH`, `MIEHG`, `WLSABSLENGTH`: their range is [0, inf), was
+  (0, inf)), the infinite rate Geant4 reads from it - a mean free path of 0, so the photon interacts where it stands,
+  and a table's end value is held beyond its knots. Files really hold such tables: Hyper-K's and IWCD's mPMT gel
+  (`materials/SilGel/ABSLENGTH`) is 0 at both ends. The old range refused them at the load if a zero fell inside the
+  detector's light, refused them in `Params.set` always - which crashed `python -m lumen.compare gradients` on
+  Hyper-K and IWCD - and admitted them in a run. A negative length is still refused. `lumen.tools.Space` still needs
+  positive values for a key it varies in log, and says so. In a run that rate is 1 / (the smallest normal float32), finite, so a
+  path of 0 is not attenuated and a scaled 0 has a derivative of 0 (1 / 0 made both NaN).
 - The validation report's charge section prints every row (the per-source ratios, the per-sensor agreement and the
   arrival times were left out).
 - `load`'s refusal of float64 without JAX's 64-bit mode says when the precision came from the detector's own recipe,

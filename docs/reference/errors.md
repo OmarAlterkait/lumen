@@ -221,7 +221,7 @@ A value set whose status is `unverified`, or which carries a `warning`, loads wi
 | Message | Error | Meaning and fix |
 |---|---|---|
 | `'<key>' is not a parameter of this detector. Did you mean [<keys>]?` | `UnknownParamKey` | a misspelt key, or a property the GDML does not define (adding a property means a new detector file) |
-| `<key> has a value outside [<lo>, <hi>] <unit> or not finite` | `ValueError` | the value is outside the key's allowed range (`params.info(key).range`) or is NaN or infinite; a probability is in [0, 1], a length positive (the file's check, `Params.set` and every run apply one predicate, `lumen._core.domains.admits`) |
+| `<key> has a value outside [<lo>, <hi>] <unit> or not finite` | `ValueError` | the value is outside the key's allowed range (`params.info(key).range`) or is NaN or infinite; a probability is in [0, 1], a length >= 0 (0 is an infinite rate: Geant4 interacts at once) (the file's check, `Params.set` and every run apply one predicate, `lumen._core.domains.admits`) |
 | `<key>: shape <shape> expected, got <shape>` | `ValueError` | a per-sensor value must have one entry per sensor of the group |
 | `<key>: a table property needs a Table` · `<key>: a constant property needs a number` | `ValueError` | give the value in the shape the GDML gave it |
 | `<key>: <n> knots expected, got <shape> values at <shape> energies; a new knot count is a new detector file` | `ValueError` | a calibration keeps the table's energies; to change them, edit the GDML and convert again |

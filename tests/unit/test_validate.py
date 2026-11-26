@@ -249,6 +249,34 @@ def test_the_gradient_families_and_their_values():
     assert float(gradients.at(p, b, 0.1)["surfaces/B/REFLECTIVITY"]) == pytest.approx(0.9)  # inward from the edge
 
 
+def test_a_length_table_with_a_zero_knot_scales_as_one_family():
+    """Hyper-K's mPMT gel (WCSim e2dc7a4): ABSLENGTH 0 at its end knots, a mean free path of 0 (absorbed at once).
+    It is a value of the key, so the family multiplies it as any other table: the 0 knots stay 0 under the scale and
+    the derivative is the table itself, carried by the other knots. It is not at its range's edge: scaling down keeps
+    a 0 at 0."""
+    import jax
+    import jax.numpy as jnp
+
+    from lumen.format.calibrations import Table
+    from lumen.params import Params
+    from lumen.rules.keys import PARAMS
+
+    key = "materials/SilGel/ABSLENGTH"
+    src = lambda c: types.SimpleNamespace(key=key, column=c)  # noqa: E731
+    rows = {("media", "SilGel", "absorption"): src("value"), ("media", "SilGel", "energy"): src("energy")}
+    det = types.SimpleNamespace(parts=types.SimpleNamespace(optics=_Optics(), key_rows=rows))
+    gel = Table(np.array([0.1, 2.034, 4.136, 7.0]), np.array([0.0, 0.975, 0.22, 0.0], np.float32))
+    p = Params({key: gel}, {key: PARAMS["ABSLENGTH"]}, {})
+    fams = gradients.families(det, p)
+    assert [(f[0], f[1], f[2]) for f in fams] == [(key, "mul", None)]
+    for th in (0.0, gradients.H_VALUE, -gradients.H_VALUE):
+        got = np.asarray(gradients.at(p, fams[0], th)[key].value)
+        np.testing.assert_allclose(got, np.asarray(gel.value) * (1.0 + th), rtol=1e-6)
+        assert got[0] == 0.0 and got[-1] == 0.0  # a 0 knot scaled stays 0
+    d = jax.jvp(lambda t: gradients.at(p, fams[0], t)[key].value, (jnp.float32(0.0),), (jnp.float32(1.0),))[1]
+    np.testing.assert_allclose(np.asarray(d), np.asarray(gel.value))  # the derivative: the other knots
+
+
 class _Runs:
     """A fake check: S sensors in G groups, N photons; AD (per photon) and values from functions of the seed."""
 

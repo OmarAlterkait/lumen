@@ -31,7 +31,7 @@ def test_tabulated_is_linear_in_energy_held_beyond_and_checked_at_its_knots():
     np.testing.assert_allclose(lam, HC / e)
     np.testing.assert_allclose(got, v, rtol=1e-6)
     with pytest.raises(laws.LawError, match="out of range at 190.7 nm"):  # 6.5 eV
-        laws.validate(law, {"energy": e, "value": np.array([10.0, 20.0, 15.0, 5.0, 0.0])})
+        laws.validate(law, {"energy": e, "value": np.array([10.0, 20.0, 15.0, 5.0, -1.0])})
     with pytest.raises(laws.LawError, match="no points"):  # a law in closed form names where it is checked
         laws.validate(helpers.power("length"), dict(v0=30.0, lam0=400.0, k=4.0))
 
@@ -39,19 +39,14 @@ def test_tabulated_is_linear_in_energy_held_beyond_and_checked_at_its_knots():
 def test_a_table_is_checked_only_where_light_evaluates_it():
     """Hyper-K's mPMT gel (WCSim e2dc7a4): ABSLENGTH 0 at its end knots (177 nm, 12398 nm), outside the water light
     (its RINDEX 200-790 nm). Checked at its knots inside the light's domain and at the domain's ends (held beyond its
-    knots), it passes; a zero inside the domain, or a value out of range the domain's end reaches by interpolation, is
-    refused."""
+    knots), only those knots are read; a value out of range the domain's end reaches by interpolation is refused."""
     law = laws.tabulated("length")
     e = np.array([0.1, 1.0, 2.0, 5.0, 7.0])
     gel = {"energy": e, "value": np.array([0.0, 0.2, 0.9, 0.9, 0.0])}
     dom = ((HC / 790.0, HC / 200.0),)  # 1.57-6.2 eV
-    with pytest.raises(laws.LawError, match="out of range"):
-        laws.validate(law, gel)  # every knot: the zeros outside any light refused
     lam, got = laws.validate(law, gel, domain=dom)
     np.testing.assert_allclose(np.sort(lam), np.sort(np.r_[HC / e[2:4], 790.0, 200.0]))
-    assert np.all(got > 0.0)
-    with pytest.raises(laws.LawError, match="out of range"):  # a zero inside the domain
-        laws.validate(law, dict(gel, value=np.array([0.0, 0.2, 0.0, 0.9, 0.0])), domain=dom)
+    assert np.all(got > 0.0)  # the end knots are not among them
     with pytest.raises(laws.LawError, match="out of range at 200.0 nm"):  # the domain's end, interpolated
         laws.validate(laws.tabulated("fraction"), {"energy": np.array([1.0, 2.0, 7.0]),
                                                    "value": np.array([0.9, 0.9, 1.5])}, domain=dom)  # fmt: skip
@@ -85,7 +80,7 @@ def test_power_law_and_ranges_fail_closed():
     for law, bad in (
         (laws.constant("index"), {"value": 0.9}),
         (laws.constant("fraction"), {"value": 1.2}),
-        (laws.constant("length"), {"value": 0.0}),
+        (laws.constant("length"), {"value": -1.0}),
         (laws.constant("length"), {"value": np.nan}),
     ):
         with pytest.raises(laws.LawError):
@@ -177,9 +172,53 @@ def test_geant4_rindex_wavelength_derivative_is_the_segment_slope(energy, n, lam
     assert float(jax.jvp(lambda x: laws.geant4_rindex()(flat, x), (jnp.float32(lam),), (jnp.float32(1.0),))[1]) == 0.0
 
 
+def test_a_length_of_zero_is_an_infinite_rate_not_a_refusal():
+    """Geant4 reads an ABSLENGTH of 0 as a mean free path of 0: G4OpAbsorption returns it and G4VDiscreteProcess makes
+    the step 0, so the photon is absorbed at once; and G4PhysicsVector holds a table's end value beyond its knots, so
+    a 0 end knot means that at every energy past it. A length of 0 is therefore a value: the law check admits it at
+    every knot, the rate 1 / L there is infinite, and the LENGTH is what is interpolated between the knots, not the
+    rate. A negative length is not a value."""
+    law = laws.tabulated("length")
+    e = np.array([0.1, 1.0, 2.0, 5.0, 7.0])
+    gel = {"energy": e, "value": np.array([0.0, 0.2, 0.9, 0.9, 0.0])}
+    _, got = laws.validate(law, gel)  # every knot, no domain: the zeros are values
+    assert got[0] == 0.0 and got[-1] == 0.0
+    laws.validate(law, dict(gel, value=np.array([0.0, 0.2, 0.0, 0.9, 0.0])), domain=((HC / 790.0, HC / 200.0),))
+    assert ev(law, gel, HC / np.array([0.05, 0.1, 9.0])).tolist() == [0.0, 0.0, 0.0]  # held beyond the knots
+    with np.errstate(divide="ignore"):
+        assert math.isinf(1.0 / ev(law, gel, HC / np.array([0.1]))[0])
+    assert ev(law, gel, HC / np.array([0.55]))[0] == pytest.approx(0.1, rel=1e-5)  # the length, not 1 / L
+    with pytest.raises(laws.LawError, match="out of range"):
+        laws.validate(law, dict(gel, value=np.array([-1.0, 0.2, 0.9, 0.9, 0.0])))
+
+
+def test_a_length_of_zero_gives_a_finite_rate_with_a_derivative_of_zero():
+    """A medium whose ABSLENGTH is 0 at the photon's energy (at a 0 knot, or beyond a 0 end knot): the rate absorbs
+    every path longer than 0 and none of a path of 0, and scaling the table (the gradient family: a 0 stays 0) has a
+    derivative of 0 there, not NaN (1 / 0 = inf, whose derivative times 0 is NaN); elsewhere 1 / L and its derivative
+    are unchanged."""
+    from lumen.media import bulk
+
+    gel = bulk.Medium("gel", laws.constant("index"), laws.tabulated("length"))
+    e, v = jnp.array([2.0, 3.0, 5.0, 7.0]), jnp.array([0.0, 1.0, 0.5, 0.0])
+    for energy, length in ((1.5, 0.0), (2.0, 0.0), (8.0, 0.0), (3.0, 1.0)):
+
+        def mu(t, energy=energy):
+            p = {"index": {"value": 1.4}, "absorption": {"energy": e, "value": v * (1.0 + t)}}
+            return bulk.evaluate(gel, p, jnp.float32(HC / energy))["mu_abs"]
+
+        m, dm = jax.jvp(mu, (jnp.float32(0.0),), (jnp.float32(1.0),))
+        assert np.isfinite(m) and np.isfinite(dm), energy
+        if length == 0.0:
+            assert float(dm) == 0.0 and float(jnp.exp(-m * 0.0)) == 1.0 and float(jnp.exp(-m * 1e-30)) == 0.0
+        else:
+            assert float(m) == pytest.approx(1.0) and float(dm) == pytest.approx(-1.0)
+
+
 def test_one_admissibility_predicate_for_the_file_the_parameters_and_every_run():
-    """A length of 0 is refused by the file's law check, by Params.set and by the run's value check alike (one range
-    table, one predicate); NaN is never a value, even of a key with no finite range; a traced NaN counts as invalid."""
+    """A negative length is refused by the file's law check, by Params.set and by the run's value check alike (one
+    range table, one predicate); NaN is never a value, even of a key with no finite range; a traced NaN counts as
+    invalid."""
 
     from lumen._core import domains
     from lumen.build import values
@@ -191,15 +230,16 @@ def test_one_admissibility_predicate_for_the_file_the_parameters_and_every_run()
               "TRANSMITTANCE": "fraction", "EFFICIENCY": "fraction"}  # each key's law (lumen.rules.optics)  # fmt: skip
     assert {k: PARAMS[k].range for k in law_of} == {k: laws.RANGES[q] for k, q in law_of.items()}
     with pytest.raises(laws.LawError, match="out of range"):
-        laws.validate(laws.constant("length"), {"value": 0.0})
+        laws.validate(laws.constant("length"), {"value": -1.0})
     spec = {"m/W/ABSLENGTH": PARAMS["ABSLENGTH"], "m/W/ANY": Param()}
     p = Params({"m/W/ABSLENGTH": 10.0, "m/W/ANY": 1.0}, spec, {})
-    for key, bad in (("m/W/ABSLENGTH", 0.0), ("m/W/ANY", float("nan")), ("m/W/ANY", float("inf"))):
+    for key, bad in (("m/W/ABSLENGTH", -1.0), ("m/W/ANY", float("nan")), ("m/W/ANY", float("inf"))):
         with pytest.raises(ValueError, match="outside"):
             p.set(key, bad)
         with pytest.raises(values.InvalidValue, match="not finite"):
             values.check(None, Params({**p._values, key: bad}, spec, {}))
-    assert bool(domains.admits(np, 1e-30, *domains.LENGTH)) and not domains.admits(np, 0.0, *domains.LENGTH)
+    assert float(p.set("m/W/ABSLENGTH", 0.0)["m/W/ABSLENGTH"]) == 0.0  # an infinite rate is a value
+    assert bool(domains.admits(np, 0.0, *domains.LENGTH)) and not domains.admits(np, -1e-30, *domains.LENGTH)
 
     def invalid(x):
         return values.check(None, Params({**p._values, "m/W/ANY": x}, spec, {}))[2]

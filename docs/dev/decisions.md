@@ -361,3 +361,28 @@ growth, and it would have to reach every frame, source and deposit.
 `transport/state.py`, `api.py` (`load`); `tests/unit/test_precision.py`.
 **Revisit.** If a float32 navigator re-solves each crossing on its face, so that its band no longer depends on the
 photon's path: float32 could then track such coatings on GPUs without fast float64.
+
+## 30. A length of 0 is a value: the infinite rate Geant4 reads
+
+**Decision.** The range of a length (`domains.LENGTH`, so `ABSLENGTH`, `RAYLEIGH`, `MIEHG`, `WLSABSLENGTH`) is
+[0, inf), not (0, inf). A length of 0 is the infinite rate Geant4 gets from it, so a file's 0 knot is a value at the
+load, in `Params.set` and in every run alike, and the gradient family multiplies such a table as any other (a 0 knot
+scaled stays 0; the derivative comes from the other knots). A negative length is still refused.
+**Why.** Geant4 reads `ABSLENGTH` as a mean free path (`G4OpAbsorption::GetMeanFreePath`) and
+`G4VDiscreteProcess::PostStepGetPhysicalInteractionLength` makes the step `n_left * mfp`, which is 0 for a mean free
+path of 0: the photon is absorbed where it stands. `G4PhysicsVector::Value` holds a table's end value beyond its
+knots, so a 0 at an end knot means that at every energy past it. Real files have such tables: Hyper-K's and IWCD's
+mPMT gel (`materials/SilGel/ABSLENGTH`, WCSim e2dc7a4) is 0 at both ends. Measured on a toy box of a material whose
+`ABSLENGTH` is 0 at 2 and 7 eV, 10^6 pencil photons over 500 mm: Geant4 detects 0 of 10^6 at a 0 knot and at both
+energies outside the table, and lumen's detected fraction is 0 there too, with no non-finite value; at the seven
+energies in between the ratio Geant4 / lumen is 0.998 to 1.018, every one within 1.5 sigma, which also shows both
+interpolate the length and not the rate (at 2.1 eV, one tenth of the way from the 0 knot, the length is 100 mm and
+0.69 % of the photons arrive, not none). The range excluding 0 refused that table in three different places and
+agreed with Geant4 in none: the load admitted it only because its zeros fell outside that detector's light, a 0
+inside the light refused the detector outright, and `Params.set` refused it always, which crashed the gradient check.
+In a run the rate of a length of 0 is 1 / (the smallest normal float32), about 8.5e37 per metre (`bulk.rate`), not
+1 / 0: it absorbs every path longer than about 1e-37 m, as Geant4's at-once absorption does, but a path of 0 still
+attenuates by 1 and the derivative of a scaled 0 is 0, where inf gave inf * 0 = NaN (measured on that toy: the
+table's forward derivative was NaN at 1.5, 2 and 8 eV with 1 / 0, and 0 with the finite rate).
+**Where.** `_core/domains.py` (`LENGTH`), `media/bulk.py` (`rate`), `media/laws.py`, `tools/space.py`;
+`tests/unit/test_laws.py`, `tests/unit/test_validate.py`.

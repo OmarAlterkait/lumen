@@ -315,7 +315,7 @@ def test_a_mie_detector_converts_loads_calibrates_and_exports(tmp_path):
     path = lumen.convert(write(tmp_path, MIE_GDML[:start] + MIE_GDML[end:]), tmp_path / "mie.lumen", recipe=RECIPE)
     det = lumen.load(path)
     p = det.params()
-    for key, (unit, rng_) in {"MIEHG": ("m", (math.ulp(0.0), math.inf)), "MIEHG_FORWARD": ("", (-0.999, 0.999)),
+    for key, (unit, rng_) in {"MIEHG": ("m", (0.0, math.inf)), "MIEHG_FORWARD": ("", (-0.999, 0.999)),
                               "MIEHG_BACKWARD": ("", (-0.999, 0.999)),
                               "MIEHG_FORWARD_RATIO": ("", (0.0, 1.0))}.items():  # fmt: skip
         info = p.info(f"materials/Water/{key}")
