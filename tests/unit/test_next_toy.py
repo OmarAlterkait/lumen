@@ -16,7 +16,7 @@ Each case's detected fractions per group are compared with g4ref's on the same G
 ``geant4.json``, Geant4 11.3.0; the toy reads no property whose Geant4 10.7.4 path differs, so one release stands for
 both). Every case is checked in float64, the two that do not touch the coatings in float32 as well, the end-to-end
 counts of ``all`` at both precisions (its 3 um coating is 1.9 float32 bands where it sits, so float32 still tracks
-it), and the float32 deficit of ``wls`` (6.5 % of the PMT light and 59 % of the SiPMs').
+it), and the float32 deficit of ``wls`` (47 % of the PMT light and 46 % of the SiPMs').
 """
 
 import json
@@ -132,11 +132,14 @@ def test_float32_loses_the_light_of_a_shifting_coating_and_float64_does_not(tmp_
     """The ``wls`` case is the float32 limit end to end, and the reason NEXT-100 needs float64.
 
     Its coating is 1 um (0.63 of float32's band where it sits) and shifts the light, and the sensors are blind to the
-    unshifted light, so a photon counts only if the navigator put it inside the coating. Measured at 2^22 photons,
-    Geant4 / lumen: in float64 1.0026 at the PMT (0.6 sigma) and 1.017 at the SiPMs (1.2 sigma), so lumen agrees;
-    in float32 1.069 (15 sigma) and 2.45 (55 sigma), so a float32 run loses 6.5 % of the PMT light and 59 % of the
-    SiPMs' (docs/explanation/known-limits.md, "Thin layers"). float64's agreement is checked with the other cases
-    (``test_every_case_matches_geant4_in_float64``); here the float32 deficit is the record.
+    unshifted light, so a photon counts only if the navigator put it inside the coating. Measured at this test's
+    2^18 photons per source, Geant4 / lumen: in float64 0.985 at the PMT (1.1 sigma) and 0.991 at the SiPMs
+    (0.2 sigma), so lumen agrees; in float32 1.887 (46 sigma) and 1.865 (14 sigma), so a float32 run loses 47 % of
+    the PMT light and 46 % of the SiPMs' (docs/explanation/known-limits.md, "Thin layers"). Before the flush-film
+    fix the same run gave 1.033 and 2.445: keeping the surface across a sub-band bulk event, which a flush film
+    needs, costs the PMT light this coating never had and gives back some of the SiPMs'. float64's agreement is
+    checked with the other cases (``test_every_case_matches_geant4_in_float64``); here the float32 deficit is the
+    record.
     """
     ref = GEANT4["wls"]
     got = _fractions(_detector(tmp_path, "wls"))
