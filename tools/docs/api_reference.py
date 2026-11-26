@@ -63,6 +63,7 @@ SECTIONS = (
         ("DetectorFile", "Volume", "Material", "Property", "OpticsModel", "Surface", "Skin", "Border"),
     ),
     ("The GDML viewer (python -m lumen.viewer)", "lumen.viewer", ("build", "View")),
+    ('A detector package\'s detector ("package:name")', "lumen.api", ("package_detector", "is_package_detector")),
     (
         'Detector packages (a package\'s DETECTORS and REFERENCES; lumen.convert("package:name"))',
         "lumen.testing",
