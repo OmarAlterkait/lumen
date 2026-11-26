@@ -169,6 +169,13 @@ at the centre, 420 nm, 2^20 samples) 1.0e-4 of the emitted weight is lost this w
 the opaque volume: real overlaps, which stock Geant4 kills too. `lumen.diagnostics.Trace` shows the pair of volumes
 for a lost photon (docs/reference/errors.md, Health).
 
+## Light started inside a mesh
+
+A tessellated solid is tracked as an opaque surface and holds no point. A photon a source starts inside one (`Point`,
+`FromArrays`, a custom source) is placed in the volume around it and meets the mesh's faces from inside; Geant4 absorbs
+it in the solid. Start no light there. A step source in the mesh's material is refused when the material is bound
+opaque.
+
 ## Thin layers
 
 **What.** The navigator works in float32: a coordinate x carries a band of about 8 eps32 |x| (`lumen.rules.navigation`,

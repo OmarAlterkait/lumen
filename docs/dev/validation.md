@@ -24,9 +24,11 @@ on the same seeds (`lumen.compare.gradients`):
   two tests. The time-weighted arrivals are summed from the deposits (each charge times its time), not formed as the
   arrivals times their mean time: that product is 0 with derivative 0 on a sensor with no light at the values, so it
   misses light an edge row opens (WCTE's absorber at R = 0).
-- **value**: F(θ0 + h; reference θ0) against F(θ0 + h) run at its own values on disjoint seeds (independent samples):
-  the reweighted estimate is the light at the new values, so the derivative of the fixed-reference function is the
-  expectation's.
+- **value**: F(θ0 + h; reference θ0) against F(θ0 + h) run at its own values, paired on the same K seeds: the
+  reweighted estimate is the light at the new values, so the derivative of the fixed-reference function is the
+  expectation's. Sharing the seeds, the two sides share their uniforms and F's own seed fluctuation cancels; on
+  disjoint seeds the test measured that fluctuation instead. The variance of the roulette's flips, which the shared
+  uniforms cannot cancel, is the test's floor (`gradients.disagreement`).
 - **production**: AD at the default ε against AD at ε = 1e-6, paired by seed on 64 seeds (at least K): the roulette
   moves no derivative.
 

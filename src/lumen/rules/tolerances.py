@@ -8,7 +8,9 @@ per operation. The band at a coordinate scale (m) is ``band(scale) = BAND_ULPS e
 
 - in bands: ``K_ON`` (a face this close perpendicularly is the one the photon sits on; also the contact tolerance),
   ``ZERO_STEP_BANDS`` (a crossing this close is a zero-length step: below one ulp), ``FACET_BEHIND_BANDS`` (a start
-  this far behind a facet is on it), ``PUSH_DISTANCE_TOLERANCES`` (the stuck rule's push);
+  this far behind a facet is on it), ``PUSH_DISTANCE_TOLERANCES`` (the stuck rule's push), ``RELOCATE_BANDS`` (the
+  relocation's point, past the face met: two ulps, so it is past every face coincident with that one to float32 and
+  short of the thinnest layer the navigator resolves, one band);
 - in float32 ulps of the quantity they guard: ``FACET_SHORT_ULPS`` (a mesh hit's t, short of its plane),
   ``TANGENT_ULPS`` (a discriminant this close to its terms is a tangency), ``TORUS_BRACKET_ULPS`` (the torus bracket
   sphere's pad);
@@ -72,6 +74,7 @@ from lumen.format.check import (  # noqa: F401 (the format layer's own, which im
 BAND_ULPS = 8.0  # the band: this many float32 ulps of the coordinates
 BAND_FLOOR = 1e-9  # m: the band's floor (a point at the origin)
 K_ON = 4  # a face within this many bands of the start (perpendicular) is AT it
+RELOCATE_BANDS = 0.25  # the relocation's point, this many bands past the face met (two ulps: see the band's rules)
 ZERO_STEP_BANDS = 0.125  # a crossing within this many bands of the start is a zero-length step (below 1 ulp)
 FACET_BEHIND_BANDS = 0.25  # a start behind a facet's plane by at most this many bands is on it
 PUSH_DISTANCE_TOLERANCES = 8  # the push, in bands (Geant4: 100 kCarTolerance)
