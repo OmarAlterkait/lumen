@@ -64,12 +64,7 @@ def markdown(rows) -> str:
               ("date", lambda r: r["date"])]  # fmt: skip
     named = [("detector", lambda r: r["detector"]), ("quantity", lambda r: r["quantity"])]
     sections = (
-        (
-            "Charge",
-            "charge",
-            lambda r: r["quantity"] in ("ratio", "truncated weight", "lost and abandoned weight")
-            or "chi2" in r["quantity"],
-        ),
+        ("Charge", "charge", lambda r: True),
         ("Gradients", "gradients", lambda r: True),
         ("Geometry import", "geometry", lambda r: True),
         ("Overlaps through the step", "overlaps", lambda r: True),

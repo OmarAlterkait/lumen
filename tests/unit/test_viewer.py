@@ -335,11 +335,14 @@ def test_a_gdml_geant4_refuses_reaches_the_page_with_its_repair():
 
 
 # ----------------------------------------------------------------------------------------------------- the server
+TOKEN = "Tq3-x_9"
+
+
 @pytest.fixture
 def served():
-    """Serve a scene of ``{}`` on a port of its own; yield ask(path, method) -> (status, body, headers)."""
-    httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.handler(gzip.compress(b"{}")))
-    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    """Serve a scene of ``{}`` under ``TOKEN`` on a free port; yield ask(path, method) -> (status, body, headers)."""
+    httpd = server.bind("127.0.0.1", 0)
+    threading.Thread(target=server.serve, args=(httpd, b"{}", TOKEN), daemon=True).start()
 
     def ask(path, method="GET", **headers):
         c = http.client.HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=10)
@@ -353,25 +356,58 @@ def served():
 
 
 def test_server_sends_the_page_and_the_gzipped_scene(served):
-    status, page, _ = served("/")
+    status, page, _ = served(f"/{TOKEN}/")
     assert status == 200
     for name in re.findall(r'(?:src|href)="([^"]+)"', page.decode()):  # everything the page loads comes from here
-        assert served("/" + name)[0] == 200, name
-    assert served("/scene.json")[1] == b"{}"
-    status, body, headers = served("/scene.json", **{"Accept-Encoding": "gzip"})
+        assert served(f"/{TOKEN}/{name}")[0] == 200, name
+    assert served(f"/{TOKEN}/scene.json")[1] == b"{}"
+    status, body, headers = served(f"/{TOKEN}/scene.json", **{"Accept-Encoding": "gzip"})
     assert headers["Content-Encoding"] == "gzip" and gzip.decompress(body) == b"{}"
 
 
 def test_the_server_sends_no_file_of_the_working_directory(served):
     """Nothing but the page and the scene, by any method: http.server's own handler answers HEAD from the cwd."""
     for method in ("GET", "HEAD", "POST"):
-        for path in ("/pyproject.toml", "/../pyproject.toml", "/"):
-            assert served(path, method)[0] != 200 or method == "GET" and path == "/", (method, path)
+        for path in (
+            "/pyproject.toml",
+            "/../pyproject.toml",
+            "/",
+            f"/{TOKEN}/../pyproject.toml",
+            f"/{TOKEN}//etc/hosts",
+        ):
+            assert served(path, method)[0] != 200, (method, path)
+        assert served(f"/{TOKEN}/", method)[0] != 200 or method == "GET", method
+
+
+def test_the_page_is_served_only_under_its_token(served):
+    """Another user of the machine cannot guess the page's address: without its token there is nothing to read."""
+    wrong = ("/", "/index.html", "/scene.json", f"/{TOKEN}x/", f"/{TOKEN[:-1]}/", f"/{TOKEN[::-1]}/scene.json",
+             f"/x{TOKEN}/index.html", f"/{TOKEN.lower()}/")  # fmt: skip
+    for path in wrong:
+        status, body, _ = served(path)
+        assert status == 403 and b"{}" not in body, path
+    status, _, headers = served(f"/{TOKEN}")
+    assert status == 302 and headers["Location"] == f"/{TOKEN}/"
+
+
+def test_a_port_in_use_is_reported_before_the_scene_is_built(monkeypatch, capsys):
+    taken = server.bind("127.0.0.1", 0)
+    try:
+        monkeypatch.setattr(scene, "build", lambda *a, **k: pytest.fail("the scene was built before the port"))
+        assert server.main(["tank.gdml", "--port", str(taken.server_address[1])]) == 2
+        assert "cannot listen on" in capsys.readouterr().err
+    finally:
+        taken.server_close()
 
 
 def test_the_command_line_parses():
-    a = server.parser().parse_args(["lumen_wc:sk", "--port", "9000", "--open", "--up", "y", "--range", "300", "600"])
+    a = server.parser().parse_args(["lumen_wc:sk", "--port", "9000", "--open", "--up", "y", "--range", "300", "600",
+                                    "--token", "abc-1_2"])  # fmt: skip
     assert (a.source, a.port, a.open, a.up, a.range) == ("lumen_wc:sk", 9000, True, "y", [300.0, 600.0])
+    assert a.token == "abc-1_2" and server.parser().parse_args(["x.gdml"]).token is None
+    for token in ("a/b", "a b", "", "é"):
+        with pytest.raises(SystemExit):
+            server.parser().parse_args(["x.gdml", "--token", token])
 
 
 def test_three_js_ships_with_its_notice():

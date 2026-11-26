@@ -11,6 +11,47 @@ now, and what to do.
   (nexus's SiPM board mask, for one): four more rows of the unified tables, at their stated accuracy. Above 1 rad the
   surface is still refused: there Geant4's own facet draw departs from the distribution it states and lumen draws
   (`lumen.rules.choices`, `SIGMA_MAX`), by at most 8.5e-4 of the facets at 1 rad and 0.15 at 2 rad.
+- **Light born in an opaque mesh is no longer emitted.** A tessellated solid holds no point, so a photon born inside one
+  bound opaque (its material absorbs within the band) started in the volume around it and reflected off its face into
+  the detector; Geant4 absorbs it where it is born. The emission properties (RINDEX, the scintillation keys) of a
+  material bound opaque are no parameters now: a Cherenkov or scintillation source in it is refused as an unknown key,
+  and `lumen.compare.event` leaves its steps out (counted in `Event.outside`). On ANNIE, whose steel frame is such a
+  mesh, lumen's light was 0.2 % high on 600 MeV muons and 0.1 % on 300 MeV electrons. A calibration that sets such a key
+  is refused: remove the key.
+- **A parameter's table is read-only.** `params[key].value[:] = x` raises; it changed the detector's own table. Use
+  `params.set` or `params.scale`.
+
+- **`lumen.tools`' fits take a model of (params, seed) and run it at two seeds.** `fit`, `descend`, `fisher`,
+  `coverage` and `profile` used one Monte Carlo run for both factors of every product, so the run's noise counted as
+  information: on Super-K with data from other seeds, 2^21 samples and an off-centre flash of 1e6 photons, the fit of
+  absorption, scattering and reflectivity stopped at ln factors -1.08, +0.08 and +0.88 from the truth (quoted 0.10,
+  0.07, 0.08) and reported convergence. They use the products of two independent runs now, so such fits are unbiased
+  within their errors, the covariance includes the Monte Carlo error, and a direction the runs do not determine is
+  reported (`rank`, infinite variance, not converged). Give `model = lambda p, seed: ...`; `seeds=(a, b)` picks the two.
+  `fit`'s `ridge` and `refresh` are gone, `jacobian` takes `seed=`, and `tol` is the Newton decrement. `fisher` may have
+  a negative eigenvalue where the data say less than the noise.
+- **A WLS film placed flush in its holder now shifts the light it should.** Where a film's outer face is coincident
+  with its holder's own face, the crossing into the film is the crossing into the holder, so light re-emitted inside
+  the film within the float32 band of that face was read on the holder's face (its surface, often a paint) or with no
+  face at all (no refraction, so nothing held by total internal reflection), and a crossing grazing that face could
+  stop in the holder. The same film placed as the holder's sibling was already right. A 1 mm film of absorption
+  length 0.5 um, 0.2 m from its source, detected 0.1004 per photon against Geant4's 0.1305, and 0.3045 against
+  0.1322 at an absorption length of 0.1 nm; both are now 0.1302. A pencil 0.5 degrees off the film's plane detected
+  0.715 against Geant4's 0.030; it is now 0.0301. Films 2 um to 120 um thick, 0.2 m to 10 m from the source, at 0 to
+  89.5 degrees, and absorption lengths from 0.1 nm to 50 um, agree with Geant4 to 0.5% (1.5% at 0.1 nm, where a film
+  placed as a sibling is equally far); they were up to 24 times out. Light born within a micron of the film's faces
+  no longer depends on how the film is placed.
+- The experiments' own light does not move: SBND, MicroBooNE, WCTE and SK charge counts change by at most 8e-5
+  relative, far inside their Monte Carlo error (SBND's and MicroBooNE's TPB films sit in a holder of the liquid argon
+  around them, which carries no surface of its own, so reading the light on the holder's face gave the same answer).
+  SK's lost weight, light that reached a surface with no row, goes to 0.
+- A run costs 1% to 6% more time (median 3%): a relocation past a face now reads that face's normal and the point's
+  distance from it.
+
+### Changed
+
+- The validation report's charge section prints every row (the per-source ratios, the per-sensor agreement and the
+  arrival times were left out).
 
 ### Added
 
@@ -18,7 +59,8 @@ now, and what to do.
   converts and loads the detector and serves a page with its geometry in 3D and what lumen built: the reading of
   every material, surface and sensor group, the surface of each crossing, what lumen refuses and why, the tables
   against wavelength (`--range` shades the light's). Every drawn solid is compared with the solid lumen traces. It
-  needs the `view` extra (`manifold3d`); three.js r128 ships with it (docs/howto/viewer.md).
+  needs the `view` extra (`manifold3d`); three.js r128 ships with it (docs/howto/viewer.md). The page is served only
+  under a random token in its address (`--token` sets it), and a port in use is reported before the detector is read.
 - **The navigator's precision**: `lumen.load(..., precision="float64")` runs the navigator in float64: its
   coordinates and frames, CSG tables, roots and intervals, its tolerances, and the photon's position. The physics stays
   float32, and float32 stays the default. float32's tolerance at a decision is the band of the photon's ray, its
@@ -53,6 +95,25 @@ now, and what to do.
   refracted as Geant4 draws it; a definite linear state that meets several facets of one surface is not.
 - **The facet paths against Geant4 on one interface**: `tools/g4ref/boundary.cc` (Geant4 11.3.0) and its histograms in
   `tests/data/g4_boundary`, which `tests/unit/test_g4_boundary.py` compares with the lobes' own draws.
+- **`lumen.api.package_detector("package:name")`**: a detector package's detector as `lumen.convert` converts it (its
+  recipe, GDML file and inputs, through the package's `prepare`, while the context is open), and
+  `lumen.api.is_package_detector`, for a tool that reads a package's detector the way lumen does.
+
+### Known limits
+
+- A layer thinner than a band where it is placed is not resolved in float32, flush or not, as before: the relocation
+  steps only ``RELOCATE_BANDS`` (a quarter band) past the face it crossed, so it never steps over a layer, but the
+  on-face rule still takes the two faces of a sub-band layer for one. Measured on the NEXT toy's coating (Geant4 /
+  lumen at the PMT): at 1.9 bands and above every version agrees to 1%; at one band lumen is 9% low (it was 5% low
+  in 0.2.1) and at 0.7 bands 10% low (0.2.1: 40% high); where the coating shifts the light, one band is 1.6x low
+  (0.2.1: 1.6x) and 0.7 bands 1.9x (0.2.1: 1.3x). float64 agrees with Geant4 to 2% at every thickness.
+- A flush film about two to three bands thick (the band is 9.5e-7 times the coordinate scale in m; a film thinner
+  than one band is already refused) can still be read as a zero-length crossing of its own far face, which reflects
+  the light at the holder instead of shifting it. Which way the float32 rounding falls decides it: at a 10 m
+  coordinate scale a 20 um film (2.1 bands) detects 6.3% less light than Geant4 and a 25 um film (2.6 bands) 2.6%
+  less, while 22, 28, 30, 40, 60, 80 and 120 um agree to 0.1%. Above three bands every case measured agrees to 0.1%.
+- Light born within one band of a face is located on a side neither lumen nor Geant4 can agree on (it is on the
+  boundary): up to 9% in detected light, however the film is placed.
 
 ## 0.2.1 (2026-11-23)
 

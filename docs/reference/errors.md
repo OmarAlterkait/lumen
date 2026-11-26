@@ -854,7 +854,7 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `check_gradient: stencil one of <STENCILS>, not <stencil>` | `ValueError` | `lumen.tools.check` |
 | `<what> keys <unknown> are not keys of the space` | `ValueError` | `lumen.tools.fit` |
 | `<what>: <sum> cells have counts where the model expects none (mu = 0, n > 0): the data are impossible at the start values` | `ValueError` | `lumen.tools.fit` |
-| `fisher: <sum> cells with mu = 0 have a nonzero derivative: their information J^2 / mu is infinite` | `ValueError` | `lumen.tools.fit` |
+| `the two seeds are both <a>: a fit needs two independent runs` | `ValueError` | `lumen.tools.fit` |
 | `layout: a mask of <sel> over <n> sensors` | `ValueError` | `lumen.tools.layout` |
 | `layout: kind <kind> is not 'auto' or one of <KINDS>` | `ValueError` | `lumen.tools.layout` |
 | `layout: positions must be (S, 3), got <shape>` | `ValueError` | `lumen.tools.layout` |
@@ -877,5 +877,6 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `recipe <spec>: <path> is not a Python file` | `ValueError` | `lumen.viewer.scene` |
 | `recipe <spec>: give FILE.py:NAME` | `ValueError` | `lumen.viewer.scene` |
 | `up: <up> is not one of <AXES>` | `ValueError` | `lumen.viewer.scene` |
+| `<text>: letters, digits, '-' and '_' only` | `ArgumentTypeError` | `lumen.viewer.server` |
 | `not JSON: <__name__>` | `TypeError` | `lumen.viewer.server` |
 <!-- end of the generated messages -->

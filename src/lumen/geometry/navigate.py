@@ -9,9 +9,10 @@ each volume's candidates); the next volume from the tree (the candidate entered,
 another volume of a class whose own pair has a surface, not another piece of one split union) continues the scan.
 
 Tolerance by surface identity, not by a push: the photon starts at its hit point and passes ``srf``; an event of that
-item within the band of the start is that same crossing; any other item's event counts, however close. A start state
-that disagrees with the ray (vol's solid does not hold the start, or a daughter does) is resolved as Geant4 resolves
-it: a zero-length exit to the mother, or a zero-length entry into that daughter.
+item within the band of the start is that same crossing; any other item's event counts, however close. Only the
+relocation's own point moves past the face crossed (``lumen.rules.navigation``: the relocation), never the
+photon's. A start state that disagrees with the ray (vol's solid does not hold the start, or a daughter does) is
+resolved as Geant4 resolves it: a zero-length exit to the mother, or a zero-length entry into that daughter.
 
     nav = Navigator.from_scene(scene)                      # host: build (or read the build cache)
     vol = nav.locate(x)                                     # jnp, one thread (or a jax.vmap batch)
@@ -66,6 +67,7 @@ class _Query(NamedTuple):
     tmax: object
     xa: object
     snv: object
+    kn0: object
     vtx: object
     s_at: object
 
@@ -513,11 +515,13 @@ class Navigator:
 
         A daughter's or an owner's face: entered, then down; v's own face, or an ancestor's v reaches out of: located
         from beyond that face, up while a solid does not hold the point, then down (Geant4's
-        LocateGlobalPointAndSetup).
+        LocateGlobalPointAndSetup). Either is located from just past the face met (the relocation rule): the point
+        of a zero-length crossing is on the near side of that face, where a face coincident with it would hold it
+        still.
         """
         D = self.dev()
         OUT = I32(self.n)
-        t_c, u_in, is_own, band, hit = ev
+        t_c, u_in, is_own, band, hit, l_in, f_in = ev
         is_ch = u_in >= self.CH0
         uc = jnp.clip(u_in, 0, OUT - 1)
         clip = ~is_own & ~is_ch & self.is_ancestor(u_in, v)
@@ -526,7 +530,25 @@ class Navigator:
         up = jnp.where(clip, D["parent"][uc], D["parent"][jnp.minimum(v, D["parent"].shape[0] - 1)])
         nxt = jnp.where(go_in, v_in, up)
         unit_x = jnp.where(go_in, jnp.where(is_ch, I32(-1), u_in), vi)
-        ray = (q.od, q.dd, t_c + step)
+        # the relocation's point is RELOCATE_BANDS bands past the face met, along that face's normal the way the
+        # photon travels; the point's own distance from the face (face_dist) is the rest of the step (it is within an
+        # ulp of the face for a crossing, up to K_ON bands on the near side of it for a zero-length one). So a face
+        # coincident with the one met -- a daughter placed flush in its mother -- is crossed with it, as Geant4
+        # leaves a mother whose surface the point is on when the direction leaves it
+        # (LocateGlobalPointAndSetup), and a layer thicker than that step is never stepped over.
+        off = hit & (l_in >= 0) & ~is_ch
+
+        def past_face():
+            x = q.od + t_c * q.dd
+            it, lf = jnp.where(is_own, vi, uc), jnp.maximum(l_in, 0)
+            g = self.hit_grad(it, lf, f_in, x)
+            n = g / safe_norm(g)
+            m = surface_id.face_dist(self, it, lf, f_in, x) + rules.RELOCATE_BANDS * rules.step_band(x, self.prec)
+            return m * jnp.where(jnp.dot(n, q.dd) < 0, self.F(-1.0), self.F(1.0)) * n
+
+        # that step replaces the step along the ray, which clears the face only by its normal component
+        od = q.od + pick(off, past_face, lambda: jnp.zeros(3, self.F))
+        ray = (od, q.dd, jnp.where(off, t_c, t_c + step))
         return pick(hit & ~(go_in & is_ch), lambda: self._settle(nxt, ray, unit_x, step + band),
                     lambda: (nxt, jnp.bool_(False)))  # fmt: skip
 
@@ -547,7 +569,7 @@ class Navigator:
         # the relocation's step past the crossing: the band at the crossing (not at the round's start: the same
         # crossing steps alike however many rounds led to it)
         step = rules.band(q.xa + jnp.abs(jnp.where(hit, t_c, t_lo)), self.prec)
-        nxt, moved = self._next_volume(q, (t_c, u_in, is_own, step, hit), v, vi, step)
+        nxt, moved = self._next_volume(q, (t_c, u_in, is_own, step, hit, l_in, f_in), v, vi, step)
         item = jnp.where(~is_own, u_in, vi)
         after = D["cls"][jnp.where(hit, nxt, v)]
         # a volume the ray only touches is never entered: entered at t_in (the round before), it holds no point of the
@@ -610,7 +632,15 @@ class Navigator:
         bt_live = jnp.where(lt, self.live_t(bi, bl, bf, o, d, jnp.where(lt, bt, self.F(HUGE))), bt)
         g_hit = self.hit_grad(bi, jnp.maximum(bl, 0), bf, o + jnp.where(bt_live < HUGE, bt_live, 0.0) * d)
         nrm = g_hit / safe_norm(g_hit)
-        nrm = jnp.where(hit & (bl >= 0), nrm, -d)  # a face known (a zero-length event on the face sat on too)
+        # a face known (a zero-length event on the face sat on too). A zero-length event at the start with no face
+        # of its own (the solid does not hold the start and the ray never meets it again: a float32 point one ulp
+        # beyond the face just crossed) is on the face the photon sits on, whose normal is this crossing's -- else
+        # -d would make it a normal incidence, refracting every photon the face holds
+        fallback = -d
+        if q.snv is not None:
+            sat = hit & zero & (bl < 0) & q.kn0 & (bt <= 0.0)
+            fallback = jnp.where(sat, q.snv / safe_norm(q.snv), -d)
+        nrm = jnp.where(hit & (bl >= 0), nrm, fallback)
         # srf: the item met with its face and outward sign -- an entry heads against n_out, an exit along it
         gd = jnp.dot(g_hit, d)
         entry = (bi != vb) & ~self.is_ancestor(bi, vb)  # an ancestor's face, reached out of, is an exit
@@ -648,7 +678,8 @@ class Navigator:
         snv = None if sn is None else sg(jnp.asarray(sn, self.F))
         V = None if vertex_tab is None else jnp.asarray(vertex_tab)
         s_q = self.F(HUGE) if s_at is None else sg(jnp.asarray(s_at, self.F))
-        q = _Query(od, dd, self.F(t_max), jnp.max(jnp.abs(od)), snv, V, s_q)
+        kn0 = self.srf_decode(jnp.asarray(last, I32))[4]  # the photon sits on a face it knows (its side's state)
+        q = _Query(od, dd, self.F(t_max), jnp.max(jnp.abs(od)), snv, kn0, V, s_q)
         rec0 = jnp.stack([lax.bitcast_convert_type(self.F(HUGE), self.I)] + [jnp.asarray(a, self.I) for a in (
             -1, -1, -1, 0, vol, 0)])  # fmt: skip
         c0 = (self.F(0.0), vol, jnp.asarray(last, I32), jnp.bool_(False), I32(0), rec0, cls0,

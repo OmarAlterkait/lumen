@@ -179,17 +179,17 @@ def convert(source, recipe=None, out=None, *, data=None, inputs: dict | None = N
     if out.exists() and not overwrite:
         raise io.FormatError(f"{out} exists: a detector file is never overwritten (pass overwrite=True)")
     mode = "replace" if overwrite else "raise"
-    if _is_package(source):
-        prepare = _package_prepare(source)
-        source, recipe, inputs = _package_detector(source, recipe, inputs, data)
-        with prepare(recipe, source, inputs) as (recipe, source, inputs):
-            return _place(_import(source, recipe, inputs), out, mode)
+    if is_package_detector(source):
+        if recipe is not None or inputs:
+            raise ValueError(f"convert: {source!r} names its own recipe and inputs (the package's DETECTORS)")
+        with package_detector(source, data=data) as entry:
+            return _place(_import(entry.gdml, entry.recipe, entry.inputs), out, mode)
     if data is not None:
         raise ValueError('convert: data is the data directory of a detector package\'s detector ("package:name")')
     return _place(_import(source, recipe, inputs), out, mode)
 
 
-def _is_package(source) -> bool:
+def is_package_detector(source) -> bool:
     """Return whether ``source`` names a detector package's detector, ``"package:name"`` (not an existing path)."""
     import re
 
@@ -217,26 +217,30 @@ class DetectorEntry:
         return value if isinstance(value, cls) else cls(*value)
 
 
-def _package_detector(source: str, recipe, inputs, data) -> tuple:
-    """Return (the GDML path, the recipe, its inputs) of ``"package:name"``: the package's ``DETECTORS[name]``."""
+@contextlib.contextmanager
+def package_detector(source: str, *, data=None):
+    """Yield the ``DetectorEntry`` of a detector package's detector, ``"package:name"``, as ``convert`` converts it.
+
+    The package's ``DETECTORS[name]``, its relative paths under ``data`` (else ``LUMEN_DATA``, else ``data`` under
+    lumen's cache root), passed through the package's ``prepare`` when it defines one: the entry's recipe is then a
+    ``lumen.Recipe``, and its GDML file and inputs are the files converted (a shipped compressed GDML decompressed and
+    its sha256 checked), which exist while the context is open.
+
+        with lumen.api.package_detector("lumen_wc:sk") as entry:
+            print(entry.gdml, entry.recipe.name)
+    """
     import importlib
 
-    if recipe is not None or inputs:
-        raise ValueError(f"convert: {source!r} names its own recipe and inputs (the package's DETECTORS)")
     pkg, name = source.split(":", 1)
-    detectors = getattr(importlib.import_module(pkg), "DETECTORS", None)
+    module = importlib.import_module(pkg)
+    detectors = getattr(module, "DETECTORS", None)
     if not isinstance(detectors, dict) or name not in detectors:
         raise ValueError(f"convert: {pkg} has no detector {name!r} (its DETECTORS: {sorted(detectors or {})})")
     e = DetectorEntry.of(detectors[name])
     root = Path(data) if data is not None else _env.data_dir()
-    return root / e.gdml, e.recipe, {k: root / v for k, v in e.inputs.items()}
-
-
-def _package_prepare(source: str):
-    """Return the package's ``prepare`` (``convert``), or one yielding the recipe, GDML and inputs as they are."""
-    import importlib
-
-    return getattr(importlib.import_module(source.split(":", 1)[0]), "prepare", None) or _as_given
+    prepare = getattr(module, "prepare", None) or _as_given
+    with prepare(e.recipe, root / e.gdml, {k: root / v for k, v in e.inputs.items()}) as (recipe, gdml, inputs):
+        yield DetectorEntry(recipe=recipe, gdml=gdml, inputs=inputs)
 
 
 @contextlib.contextmanager
@@ -1306,4 +1310,15 @@ def _truth_setup(det, truth, controls, params, reference):
     return tr.tables(det)
 
 
-__all__ = ["Detector", "DetectorEntry", "Health", "Light", "SensorTable", "convert", "load", "simulate"]
+__all__ = [
+    "Detector",
+    "DetectorEntry",
+    "Health",
+    "Light",
+    "SensorTable",
+    "convert",
+    "is_package_detector",
+    "load",
+    "package_detector",
+    "simulate",
+]

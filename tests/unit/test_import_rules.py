@@ -67,3 +67,26 @@ def test_a_mesh_material_absorbing_within_the_band_where_it_is_is_bound_opaque(t
     o = df.materials["Steel"].optics
     assert (o.name == "lumen:opaque" and o.origin == "import") is opaque
     assert df.materials["Liq"].optics.name == "geant4"  # a box: tracked
+
+
+@pytest.mark.parametrize(("absorption", "opaque"), [(1e-11, True), (1e-6, False)])
+def test_an_opaque_material_offers_no_light_to_sources(tmp_path_factory, absorption, opaque):
+    """A mesh holds no point: light born in an opaque mesh started outside it and reflected off its face (ANNIE's
+    steel frame). Its RINDEX is no parameter, so a Cherenkov source in it is refused and an event's steps in it are
+    left out."""
+    from lumen.build import spec
+
+    toy = _mesh_toy(read_toy(tmp_path_factory), absorption)
+    n = schema.Property("RINDEX", np.array([1.33, 1.34]), energy=np.array([1.0, 20.0]))
+    steel = dataclasses.replace(toy.materials["Steel"], properties={**toy.materials["Steel"].properties, "RINDEX": n})
+    df = import_rules.absorbed_at_entry(dataclasses.replace(toy, materials={**toy.materials, "Steel": steel}))
+    assert ("materials/Steel/RINDEX" not in spec.detector_values(df, {})[0]) is opaque
+
+
+def test_a_write_to_a_parameters_table_raises(tmp_path_factory):
+    from lumen.build import spec
+
+    df = read_toy(tmp_path_factory)
+    t = next(v for v in spec.detector_values(df, {})[0].values() if hasattr(v, "energy"))
+    with pytest.raises(ValueError, match="read-only"):
+        t.value[:] = 1.0
