@@ -251,6 +251,10 @@ seven detectors' float32 arrays and the NEXT toy's fractions are unchanged, bit 
   photons, after a first run): SK 0.57 us (was 0.99), the others unchanged; the first run of a shape still runs
   again.
 
+### Pinned
+
+- tallymap v0.8.2 (was v0.8.1).
+
 ## 0.2.1 (2026-11-23)
 
 ### Results that change
