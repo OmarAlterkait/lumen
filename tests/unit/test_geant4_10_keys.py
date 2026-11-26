@@ -46,7 +46,7 @@ def scintillating(*drop, **values):
 def test_a_recipe_adding_geant4_10_keys_after_import_is_translated_checked_and_recorded(tmp_path):
     """The keys a decision adds after the GDML read are translated (they were stored as they were and refused at the
     first scintillation), and the light is Geant4 10.7's: shares 0.27 / 0.73, 6 / 1300 ns."""
-    det = lumen.load(lumen.convert(write(tmp_path, _toy()), scintillating(), tmp_path / "s.lumen"))
+    det = lumen.load(lumen.convert(write(tmp_path, _toy()), tmp_path / "s.lumen", recipe=scintillating()))
     props = det.file.materials["Water"].properties
     assert not any(k in props for k in keys.G4_10_KEYS)
     assert float(props["SCINTILLATIONTIMECONSTANT2"].value) == 1300.0
@@ -75,7 +75,7 @@ def test_a_recipe_adding_geant4_10_keys_after_import_is_translated_checked_and_r
 def test_an_untranslatable_set_is_refused_at_conversion_saying_what_to_add(tmp_path, drop, values, message):
     """Where Geant4 10.7 aborts, emits nothing, or the keys of both releases are given: refused, never dropped."""
     with pytest.raises(translate.TranslationRefused, match=message):
-        lumen.convert(write(tmp_path, _toy()), scintillating(*drop, **values), tmp_path / "s.lumen")
+        lumen.convert(write(tmp_path, _toy()), tmp_path / "s.lumen", recipe=scintillating(*drop, **values))
     assert not (tmp_path / "s.lumen").exists()
 
 

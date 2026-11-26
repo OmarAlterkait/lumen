@@ -8,6 +8,7 @@ from readout_toys import TOY_SET, toy_file
 from test_importer import GDML, write
 
 import lumen
+from lumen.build import pack
 from lumen.format import calibrations as cal
 from lumen.format.calibrations import Table
 from lumen.format.sensorsets import SensorGroup, SensorSet
@@ -34,7 +35,7 @@ def _toy():
 @pytest.fixture(scope="module")
 def converted(tmp_path_factory):
     tmp = tmp_path_factory.mktemp("toy")
-    return lumen.convert(write(tmp, _toy()), RECIPE, tmp / "toy.lumen")
+    return lumen.convert(write(tmp, _toy()), tmp / "toy.lumen", recipe=RECIPE)
 
 
 @pytest.mark.filterwarnings("error::DeprecationWarning")  # the path runs as under -W error::DeprecationWarning
@@ -46,14 +47,14 @@ def test_a_gdml_constant_is_stored_as_one_value_and_handed_on_as_a_scalar(tmp_pa
         '<property name="ABSLENGTH" ref="ABS0x2"/>',
         '<property name="ABSLENGTH" ref="ABS0x2"/> <property name="SCINTILLATIONYIELD" ref="SY"/>',
     )
-    path = lumen.convert(write(tmp_path, toy), RECIPE, tmp_path / "c.lumen")
+    path = lumen.convert(write(tmp_path, toy), tmp_path / "c.lumen", recipe=RECIPE)
     stored = json.loads((path / "materials.json").read_text())["materials"]["Water"]["properties"]
     assert stored["SCINTILLATIONYIELD"]["value"] == 100.0  # the stored form: a number, no array file
     det = lumen.load(path)
     assert det.file.materials["Water"].properties["SCINTILLATIONYIELD"].value.shape == ()
     p = det.params()
     assert p["materials/Water/SCINTILLATIONYIELD"] == 100.0
-    det.pack(p.set("materials/Water/SCINTILLATIONYIELD", 50.0))
+    pack.checked(det, p.set("materials/Water/SCINTILLATIONYIELD", 50.0))
 
 
 def test_convert_and_load(converted):
@@ -115,7 +116,7 @@ def test_a_calibration_changes_values_never_the_file(converted):
     assert path.exists()
     det2 = lumen.load(converted, calibration="abs_x2")
     assert det2.params().explain("materials/Water/ABSLENGTH") == "calibration abs_x2"
-    a, b = det.pack(), det2.pack()
+    a, b = pack.checked(det), pack.checked(det2)
     water = [k for k in a["media"] if "Water" in k][0]
     np.testing.assert_allclose(b["media"][water]["absorption"]["value"], 2 * a["media"][water]["absorption"]["value"])
     assert lumen.load(converted).params()["materials/Water/ABSLENGTH"].value.tolist() == [1.0, 20.0]
@@ -406,7 +407,7 @@ def _two_groups(tmp_path, columns_b=True, kinds=("near", "far")):
                     where={"kind": "far"} if columns_b else None),
     )  # fmt: skip
     r = Recipe(name="toy2", detector_volume="TankLV", groups=groups, sensor_columns=cols)
-    return lumen.convert(write(tmp_path, _toy()), r, tmp_path / "toy2.lumen")
+    return lumen.convert(write(tmp_path, _toy()), tmp_path / "toy2.lumen", recipe=r)
 
 
 def test_several_modelled_groups_each_have_their_model_values_and_histograms(tmp_path):
@@ -453,16 +454,16 @@ def test_convert_takes_gdml_or_yaml(tmp_path):
     b = toys.cube_wall(n=2)
     df, sets = b.structure()
     with pytest.raises(TypeError, match="a GDML file or a YAML detector"):
-        lumen.convert(df, None, tmp_path / "bare.lumen")
+        lumen.convert(df, tmp_path / "bare.lumen")
     with pytest.raises(TypeError, match="a GDML file or a YAML detector"):
-        lumen.convert(lambda: b, None, tmp_path / "f.lumen")
+        lumen.convert(lambda: b, tmp_path / "f.lumen")
     yaml_dir = tmp_path / "y"
     yaml_dir.mkdir()
     (yaml_dir / "d.yaml").write_text("schema: lumen-detector-yaml/3\n")
     with pytest.raises(ValueError, match="only a GDML file takes a recipe"):
-        lumen.convert(yaml_dir, RECIPE, tmp_path / "x.lumen")
+        lumen.convert(yaml_dir, tmp_path / "x.lumen", recipe=RECIPE)
     with pytest.raises(ValueError, match="needs its recipe"):
-        lumen.convert(write(tmp_path, _toy()), None, tmp_path / "y.lumen")
+        lumen.convert(write(tmp_path, _toy()), tmp_path / "y.lumen")
 
 
 def test_load_takes_a_path_only(tmp_path, monkeypatch):
@@ -632,7 +633,7 @@ def test_a_photon_born_inside_a_volume_sensor_is_counted_at_its_emission(tmp_pat
         g = SensorGroup("pmt", rule="any_entry", lv="PmtLV", settings={"entry_efficiency": 0.75, "count": count})
         r = Recipe(name=f"toy_{count}", detector_volume="TankLV", groups=(g,))
         (tmp_path / count).mkdir()
-        det = lumen.load(lumen.convert(write(tmp_path / count, _toy()), r, tmp_path / f"{count}.lumen"))
+        det = lumen.load(lumen.convert(write(tmp_path / count, _toy()), tmp_path / f"{count}.lumen", recipe=r))
         light = lumen.simulate(det, src, samples=1024, seed=2, backend="xla")
         out[count] = (np.asarray(light.arrivals, np.float64), np.asarray(light.mean_arrival_time, np.float64))
     a, t = out["volume"]
@@ -673,7 +674,8 @@ def test_jit_and_vmap_over_the_whole_params_run_and_a_derivative_without_a_metho
         np.testing.assert_allclose(np.asarray(jax.jit(arrivals)(q)), np.asarray(arrivals(q)), rtol=1e-6)
         m = rk.split("/")[1]
         ray = lambda pk, m=m: np.asarray(pk["media"][m]["rayleigh"]["length"]["value"])  # noqa: E731
-        np.testing.assert_allclose(ray(jax.jit(det.pack)(q)), ray(det.pack(q)), rtol=1e-6)
+        np.testing.assert_allclose(ray(jax.jit(lambda v: pack.checked(det, v))(q)), ray(pack.checked(det, q)),
+                                   rtol=1e-6)  # fmt: skip
     both = jax.vmap(lambda s: arrivals(p.scale(rk, s)))(np.array([1.0, 1.01]))
     np.testing.assert_allclose(np.asarray(both[1]), np.asarray(arrivals(p.scale(rk, 1.01))), rtol=1e-6)
     with pytest.raises(sources.GradientNotAvailable, match="not available"):

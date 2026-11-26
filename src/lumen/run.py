@@ -22,7 +22,8 @@ record times its row weight, formed as the loop formed its emits, so a cell equa
 filling it in place would have. There is no vertex cap in the physics: ``max_vertices`` is a guard against a photon
 that cannot end, and a photon it stops is reported (``truncated``: its weight), never dropped silently.
 ``backend="auto"``: tallymap's kernel backend, compiled for the device JAX places the loop on (CUDA on a GPU,
-C++/OpenMP on the CPU; exact sums); "cuda": the same, with the GPU expected; "cpu": the same on the CPU (tallymap's CPU
+C++/OpenMP on the CPU; exact sums), and the GPU is expected where the environment says so (``_env.gpu_expected``:
+``JAX_PLATFORMS=cuda``, Slurm's GPU variables); "cpu": the same on the CPU (tallymap's CPU
 target; on a GPU machine the loop's inputs are put on the CPU and its outputs back, ``on_device``); "xla": tallymap's
 plain-JAX backend, the same exact sums.
 Photon ``i`` uses the key ``fold_in(key, first_id + i)``.
@@ -67,9 +68,9 @@ from lumen.transport.item import HEALTH, fates, start_photon
 from lumen.transport.step import Operands, step
 
 MAX_VERTICES = 1 << 22  # the guard (vertices per photon), not a physics cut
-BACKENDS = ("auto", "cuda", "cpu", "xla")  # lumen's backend names
+BACKENDS = ("auto", "cpu", "xla")  # lumen's backend names
 # tallymap's name of its kernel backend (exact sums, one thread per photon), compiled for the device JAX places the
-# loop on (CUDA on a GPU, C++/OpenMP on the CPU): lumen's "auto", "cuda" and "cpu"; lumen's "xla" is tallymap's "xla"
+# loop on (CUDA on a GPU, C++/OpenMP on the CPU): lumen's "auto" and "cpu"; lumen's "xla" is tallymap's "xla"
 KERNEL = "auto"
 OVERFLOW = (
     "fixed_point_overflow"  # the stats key of the exact sums' count of NaN bins (a non-finite emit, a passed top)
@@ -155,14 +156,14 @@ def records_health(t) -> dict:
 def resolve_backend(backend) -> tuple[str, str | None]:
     """Return (tallymap's backend name, why the GPU is expected) of lumen's: the one place backends are decided.
 
-    The name is ``KERNEL`` ("auto", "cuda" and "cpu": tallymap compiles its kernel for the device JAX places the loop
-    on, a GPU or the CPU; ``check_device`` holds "cuda" to the GPU, ``on_device`` moves a "cpu" run to the CPU) or
+    The name is ``KERNEL`` ("auto" and "cpu": tallymap compiles its kernel for the device JAX places the loop
+    on, a GPU or the CPU; ``on_device`` moves a "cpu" run to the CPU) or
     "xla" (tallymap's plain-JAX backend). ``why`` says why the GPU is expected
-    (``backend="cuda"``, or ``"auto"`` where the environment expects a GPU, ``lumen._env.gpu_expected``), else None.
+    (``"auto"`` where the environment expects a GPU, ``lumen._env.gpu_expected``), else None.
     """
     if backend not in BACKENDS:
         raise ValueError(f"backend must be one of {BACKENDS}, got {backend!r}")
-    why = "backend='cuda'" if backend == "cuda" else _env.gpu_expected() if backend == "auto" else None
+    why = _env.gpu_expected() if backend == "auto" else None
     return ("xla" if backend == "xla" else KERNEL), why
 
 
@@ -221,8 +222,9 @@ def on_device(backend, f, *args, back=True):
 def check_device(backend):
     """Refuse a run that expects the GPU while JAX's default backend is not it (``DeviceError``).
 
-    Expected: ``backend="cuda"``, or ``"auto"`` where the environment expects a GPU (``lumen._env.gpu_expected``).
-    ``backend="cpu"`` and ``"xla"`` never expect one ("cpu" is moved to the CPU, ``on_device``).
+    Expected: ``backend="auto"`` where the environment expects a GPU (``lumen._env.gpu_expected``:
+    ``JAX_PLATFORMS=cuda``, Slurm's GPU variables). ``backend="cpu"`` and ``"xla"`` never expect one ("cpu" is moved
+    to the CPU, ``on_device``).
     """
     _, why = resolve_backend(backend)
     if why and jax.default_backend() not in ("gpu", "cuda"):

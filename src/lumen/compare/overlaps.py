@@ -58,7 +58,7 @@ def lumen_toy(det, spec, isotropic):
     x = np.asarray(spec["source_mm"]) * 1e-3
     src = sources.Point(x, n_photons=float(PHOTONS), lam=lam, direction=None if isotropic else spec["direction"])
     diag = photons.Detected(len(det.parts.optics.sensor_pvs), (-np.inf, np.inf))
-    light = lumen.simulate(det, src, samples=PHOTONS, chunk=PHOTONS, seed=SEED, speed="exact", diagnostics=(diag,))
+    light = lumen.simulate(det, src, samples=PHOTONS, chunk=PHOTONS, seed=SEED, _jump=False, diagnostics=(diag,))
     c = photons.detected(light, diag)
     q, tw = float(c["total"][0]), float(c["Tw_total"][0])
     f, ef = q / PHOTONS, np.sqrt(max(c["total_var"][0], 0.0)) / PHOTONS
@@ -85,7 +85,8 @@ def check(name, *, extra=()) -> list:
         if n_g4 and q > 0:
             et = np.hypot(etl, etg)
             # no Monte Carlo error on either side (every photon one path): they agree to float32's resolution or not
-            zt = (tl - tg) / et if et > 0 else (0.0 if abs(tl - tg) <= rules.BAND * abs(tg) else np.inf)
+            zt = (tl - tg) / et if et > 0 else (0.0 if abs(tl - tg) <= rules.BAND_ULPS * rules.FLOAT32.eps * abs(tg)
+                                      else np.inf)  # fmt: skip
             rows.append(records.row("overlaps", toy, "mean arrival time (ns)", tl, etl, z=zt,
                                     passed=abs(zt) <= stats.Z_MAX, reference=spec["reference"], geant4=tg,
                                     geant4_error=etg))  # fmt: skip

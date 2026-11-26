@@ -26,6 +26,7 @@ shapes and dtypes, no host callbacks, and one draw at the defaults (finite, unit
 from __future__ import annotations
 
 import dataclasses
+import weakref
 from collections.abc import Callable
 
 import jax
@@ -185,7 +186,9 @@ class FunctionSource(Source):
         _CHECKED.add(self)
 
 
-_CHECKED: set = set()
+# the source functions whose checks have run: weak, so a source a caller drops is not held for the
+# process's life
+_CHECKED: weakref.WeakSet = weakref.WeakSet()
 
 
 def _check_type(src, ph):

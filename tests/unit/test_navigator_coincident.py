@@ -59,7 +59,7 @@ def test_a_float32_thin_same_medium_shell_keeps_its_cathode():
         o = shell_optics(shell)
         geom = tracked.from_scene(shell_scene(shell), o)
         assert (geom.vertex_tab is not None) == shell  # glass -> shell: one medium, no surface: a pass pair
-        r = per_ray(lambda nav, d, geom=geom: geom.query(None, x0, d, 0, 10.0, vol=-1), geom.nav, Dr)
+        r = per_ray(lambda nav, d, geom=geom: geom.query(x0, d, 10.0, vol=-1), geom.nav, Dr)
         inner = o.class_of[_inner(shell)]
         ok = r["hit"] & (r["cls_after"] == inner) & (r["vol_after"] == geom.nav.n - 1)
         assert ok.all(), (shell, int((~ok).sum()), r["cls_before"][:4], r["cls_after"][:4], inner)

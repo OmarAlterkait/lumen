@@ -164,7 +164,7 @@ def test_a_stage_of_your_own_composes_lumens_stages():
 
     m = _banded()
     h = tg.from_photons(m, (0.0, 100.0), 1, _one(128.0, 30.0), group="pmt")
-    p = toys.params(m, 1) | {"sensors/pmt/t_ref": np.float32(40.0)}  # its key, as det.with_responses adds it
+    p = toys.params(m, 1) | {"sensors/pmt/t_ref": np.float32(40.0)}  # its key, as load(responses=) adds it
     assert float(late_light(h, p)) > 0.0
     g = jax.grad(lambda q: late_light(h, q))(p)
     assert float(g["sensors/pmt/t_ref"]) < 0.0 and np.all(np.isfinite(np.asarray(g["sensors/pmt/delay/pdf"])))
@@ -260,7 +260,7 @@ def test_the_re_emission_count_reaches_the_deposit(tmp_path):
 
     src = tmp_path / "film.gdml"
     src.write_text(film_gdml((((0, 0, 0), None),)))
-    det = lumen.load(lumen.convert(src, RECIPE, tmp_path / "film.lumen"))
+    det = lumen.load(lumen.convert(src, tmp_path / "film.lumen", recipe=RECIPE))
     s = photons.setup(det)
     model = dataclasses.replace(s.model, local=("gen",))
     grid = tg.Grid(axes=(tg.Axis("generation", features.generation, edges=(-0.5, 0.5, 10.5)),))

@@ -184,7 +184,9 @@ def loop(layout: fill.HistogramLayout) -> fill.Readout:
 
 def packed(det, params=None) -> dict:
     """Return the engine's packed parameters of ``params`` (default: the detector's) as device arrays."""
-    return jax.tree_util.tree_map(jnp.asarray, det.pack(params))
+    from lumen.build import pack
+
+    return jax.tree_util.tree_map(jnp.asarray, pack.checked(det, params))
 
 
 def operands(s: Setup, params, reference=None, controls=None):

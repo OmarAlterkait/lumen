@@ -52,7 +52,7 @@ def _backend(backend):
 def runner(one, backend=None):
     """Return a function of arrays (i, id) running one(i, id) -> tuple over them.
 
-    ``backend``: lumen's backend name (``lumen.run.resolve_backend``; None: "auto"): on "auto", "cuda" and "cpu" one
+    ``backend``: lumen's backend name (``lumen.run.resolve_backend``; None: "auto"): on "auto" and "cpu" one
     thread of tallymap's kernel backend per point (on the GPU or the CPU; "cpu" always on the CPU), on "xla" jax.vmap.
     """
     if _backend(backend) == engine.KERNEL:

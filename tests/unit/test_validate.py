@@ -350,6 +350,21 @@ def test_a_manifest_s_reverse_flag_is_honoured(monkeypatch):
     assert [cli._parser().parse_args(["gradients", *f]).reverse for f in flags] == [None, True, False]
 
 
+def test_each_check_takes_its_own_flags_only(tmp_path, monkeypatch):
+    """A flag of another check is refused, not ignored; ``geometry`` is the manifest entry even where a file of that
+    name exists (the check on a detector file is ``geometry-file``)."""
+    from lumen.compare import cli, geometry
+
+    for argv in (["overlaps", "coinc_sib", "--g4ref", "x"], ["charge", "sk", "--only", "y"]):
+        with pytest.raises(SystemExit):
+            cli._parser().parse_args(argv)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "sk").mkdir()
+    monkeypatch.setattr(geometry, "main", lambda argv: pytest.fail("the detector-file parser ran"))
+    monkeypatch.setattr(cli, "validate", lambda a: (a.check, a.names, a.g4ref))
+    assert cli.main(["geometry", "sk", "--g4ref", "g4"]) == ("geometry", ["sk"], "g4")
+
+
 def test_the_mc_gate_compares_bit_for_bit():
     """lumen.compare.mc: identical records pass; one cell's last bit, or another key, fails and is counted."""
     from lumen.compare import mc

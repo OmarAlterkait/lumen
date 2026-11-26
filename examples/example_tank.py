@@ -41,7 +41,7 @@ def detector(calibration="nominal"):
     path = OUT / f"example_tank-{digest}.lumen"
     if not path.exists():
         OUT.mkdir(parents=True, exist_ok=True)
-        lumen.convert(GDML, RECIPE, path)
+        lumen.convert(GDML, path, recipe=RECIPE)
     return lumen.load(path, calibration=calibration)
 
 

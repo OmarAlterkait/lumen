@@ -5,7 +5,7 @@
         pe = lumen.readout.pe(h, v)           # lumen's own pieces take v as they take a Params
         return v["sat"] * (1.0 - jnp.exp(-pe / v["sat"]))
 
-    det = det.with_responses(saturating_pe)   # adds sensors/pmt/sat to det.params()
+    det = lumen.load(path, responses=(saturating_pe,))   # adds sensors/pmt/sat to det.params()
     y = saturating_pe(light, det.params())    # differentiable in every key, no new simulation
 
 The readout bins the deposit records into the histograms (``lumen.readout.grid``: per sensor, the cells of the axes

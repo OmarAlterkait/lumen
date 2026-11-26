@@ -248,7 +248,7 @@ class _Runs:
         c = steps.Controls() if eps is None else steps.Controls(roulette=eps)
         diag = (self.tw, self.pg) if per_photon else (self.tw,)
         light = lumen.simulate(self.det, self.src, p, seed=seed, controls=c, reference=reference,
-                               speed="exact", diagnostics=diag)  # fmt: skip
+                               _jump=False, diagnostics=diag)  # fmt: skip
         out = _outputs(light)
         return (out, light.diagnostics["pg"]) if per_photon else out
 
@@ -410,7 +410,7 @@ def check(name, *, detector=None, photons=None, seeds=None, reverse=None, only=(
     reverse = spec.get("reverse", False) if reverse is None else reverse  # the manifest's, unless overridden
     o = DEFAULTS | {k: v for k, v in dict(photons=photons, seeds=seeds).items() if v is not None}
     t0 = time.time()
-    runs = _Runs(lumen.load(detector or spec["detector"], precision=spec.get("precision")), spec, o)
+    runs = _Runs(lumen.load(detector or spec["detector"]), spec, o)
     fams = [f for f in families(runs.det, runs.p0) if not only or f[0].startswith(only)]
     nf, out = len(fams), []
     for j in range(nf) if shard is None else range(shard[0], nf, shard[1]):

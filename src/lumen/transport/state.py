@@ -5,8 +5,6 @@
 - ``Analog``: the photon's analog (truth) record, when a run asks for truth rows (``lumen.transport.step``, "analog");
 - ``gen``: the photon's re-emission count (G4OpWLS events: a bulk WLS channel), when a sensor
   feature reads it (``Model.local``);
-- ``moving``: a source-position derivative's per-photon state (``StepConfig.moving_source``); dormant, always None in
-  this version;
 
 ``w`` is the photon's weight (what it deposits, with its derivative), ``wr`` the same weight at the reference values
 (the values every draw is made at; stop-gradient), which alone the roulette reads (``lumen.transport.step._after``):
@@ -19,7 +17,7 @@ are never state. Sources fill a ``lumen.record.Photons`` row and ``start`` build
 
 from __future__ import annotations
 
-from typing import Any, NamedTuple
+from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -89,7 +87,6 @@ class Photon(NamedTuple):
     cls: jax.Array
     analog: Analog | None = None
     gen: jax.Array | None = None
-    moving: Any = None  # dormant (StepConfig.moving_source)
 
 
 class Next(NamedTuple):

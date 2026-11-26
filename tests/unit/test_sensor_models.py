@@ -144,7 +144,7 @@ def test_a_datasheet_qe_above_the_cathodes_normal_absorptance_is_refused_whereve
             'values="1.5*eV 0.0 5.0*eV 0.0"', f'values="1.5*eV {r} 5.0*eV {r}"'
         )
         (tmp_path / f"tank{r}.gdml").write_text(text)
-        return lumen.convert(tmp_path / f"tank{r}.gdml", example_tank.RECIPE, tmp_path / f"tank{r}.lumen")
+        return lumen.convert(tmp_path / f"tank{r}.gdml", tmp_path / f"tank{r}.lumen", recipe=example_tank.RECIPE)
 
     det = lumen.load(tank(0.7))
     from lumen.build.lookup import normal_absorptance
@@ -183,7 +183,7 @@ def test_an_unread_efficiency_under_a_sensor_model_is_recorded_not_warned(tmp_pa
     text = example_tank.GDML.read_text().replace(old, old.replace("1.0", "0.5"))
     assert "0.5 5.0*eV 0.5" in text
     (tmp_path / "tank.gdml").write_text(text)
-    path = lumen.convert(tmp_path / "tank.gdml", example_tank.RECIPE, tmp_path / "tank.lumen")
+    path = lumen.convert(tmp_path / "tank.gdml", tmp_path / "tank.lumen", recipe=example_tank.RECIPE)
     with warnings.catch_warnings(record=True) as seen:
         warnings.simplefilter("always")
         det = lumen.load(path)

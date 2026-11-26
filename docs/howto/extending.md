@@ -91,7 +91,7 @@ wavelength, the cathode angle or the incidence angle, `lumen.sensors.features`),
 library stages (`lumen.readout.detection`: `expected_pe`, `masses`, `spread`, `density`) compose freely. `v` holds the response's values by
 short name and every `sensors/<group>/...` key, so lumen's own `lumen.readout.pe(h, v)` and
 `lumen.readout.pe_density(h, v, dark=False).rate` (the expected photoelectron time profile, after the delay and the time spread) take
-it. `det.with_responses(r)` adds the keys `sensors/<group>/<name>`; a name the
+it. `lumen.load(path, responses=(r,))` adds the keys `sensors/<group>/<name>`; a name the
 sensor model has already (`gain`, `qe`, ...) is refused.
 
 <!-- example: saturating_pe -->
@@ -116,7 +116,7 @@ def my_waveform(h, v):
 ```
 
 ```python
-det = det.with_responses(saturating_pe, my_waveform)
+det = lumen.load(path, responses=(saturating_pe, my_waveform))
 y = saturating_pe(light, det.params())      # differentiable in every key, no new simulation
 ```
 

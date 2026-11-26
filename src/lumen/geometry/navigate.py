@@ -486,32 +486,15 @@ class Navigator:
         g_lo = D["vg0"][v] - jnp.asarray(own, I32)  # one pseudo-group first: the own volume (item 0)
         return lax.fori_loop(g_lo, D["vg1"][v], lambda g, c: self._group(ctx, v, vi_, g, c), none)
 
-    # ---------------------------------------------------------------------------------------- surface identity
-    def srf_decode(self, s):
-        """Return (item, leaf, face, o, known, e) of a surface code (``surface_id.srf_decode``)."""
-        return surface_id.srf_decode(self, s)
-
-    def srf_pack(self, item, leaf, face, o, e):
-        """Return the surface code of (item, leaf, face, o, e) (``surface_id.srf_pack``)."""
-        return surface_id.srf_pack(self, item, leaf, face, o, e)
-
-    def hit_grad(self, item, leaf, face, x):
-        """Return the winning surface's gradient at x (``surface_id.hit_grad``)."""
-        return surface_id.hit_grad(self, item, leaf, face, x)
-
-    def live_t(self, item, leaf, face, o, d, bt):
-        """Return the live crossing distance (``surface_id.live_t``)."""
-        return surface_id.live_t(self, item, leaf, face, o, d, bt)
-
     # ---------------------------------------------------------------------------------------- the query
     def _side(self, q, last_, t_lo):
         """Return the side state (known, leaf, face, s, entry) of the srf a round starts on (s = d . n_out)."""
-        l_it, l_lf, l_fc, l_o, l_kn, l_e = self.srf_decode(last_)
+        l_it, l_lf, l_fc, l_o, l_kn, l_e = surface_id.srf_decode(self, last_)
         od, dd = q.od, q.dd
         if q.snv is None:
 
             def s_of():  # s = d . n_out at the start: one leaf gradient of the item
-                g = self.hit_grad(l_it, jnp.maximum(l_lf, 0), l_fc, od + t_lo * dd)
+                g = surface_id.hit_grad(self, l_it, jnp.maximum(l_lf, 0), l_fc, od + t_lo * dd)
                 gd = jnp.dot(g, dd)
                 return gd / safe_norm(g) * jnp.where(l_o, self.F(1.0), self.F(-1.0)), gd < 0
 
@@ -553,7 +536,7 @@ class Navigator:
         def past_face():
             x = q.od + t_c * q.dd
             it, lf = jnp.where(is_own, vi, uc), jnp.maximum(l_in, 0)
-            g = self.hit_grad(it, lf, f_in, x)
+            g = surface_id.hit_grad(self, it, lf, f_in, x)
             n = g / safe_norm(g)
             m = surface_id.face_dist(self, it, lf, f_in, x) + rules.RELOCATE_BANDS * rules.step_band(x, self.prec)
             return m * jnp.where(jnp.dot(n, q.dd) < 0, self.F(-1.0), self.F(1.0)) * n
@@ -641,8 +624,8 @@ class Navigator:
             bt = surface_id.mesh_plane_t(self, (live, bi, bl, bt), q.od, q.dd, q.xa)
         # the live t of every event on a known face, a zero-length one too
         lt = hit & (bl >= 0)
-        bt_live = jnp.where(lt, self.live_t(bi, bl, bf, o, d, jnp.where(lt, bt, self.F(HUGE))), bt)
-        g_hit = self.hit_grad(bi, jnp.maximum(bl, 0), bf, o + jnp.where(bt_live < HUGE, bt_live, 0.0) * d)
+        bt_live = jnp.where(lt, surface_id.live_t(self, bi, bl, bf, o, d, jnp.where(lt, bt, self.F(HUGE))), bt)
+        g_hit = surface_id.hit_grad(self, bi, jnp.maximum(bl, 0), bf, o + jnp.where(bt_live < HUGE, bt_live, 0.0) * d)
         nrm = g_hit / safe_norm(g_hit)
         # a face known (a zero-length event on the face sat on too). A zero-length event at the start with no face
         # of its own (the solid does not hold the start and the ray never meets it again: a float32 point one ulp
@@ -656,7 +639,8 @@ class Navigator:
         # srf: the item met with its face and outward sign -- an entry heads against n_out, an exit along it
         gd = jnp.dot(g_hit, d)
         entry = (bi != vb) & ~self.is_ancestor(bi, vb)  # an ancestor's face, reached out of, is an exit
-        srf = jnp.where(hit, self.srf_pack(bi, bl, bf, jnp.where(entry, gd < 0, gd > 0), entry), I32(-1))
+        srf = jnp.where(hit, surface_id.srf_pack(self, bi, bl, bf, jnp.where(entry, gd < 0, gd > 0), entry),
+                        I32(-1))  # fmt: skip
         nrm = jnp.where(jnp.sum(nrm * d) > 0, -nrm, nrm)
         # vol_before: the volume just before the visible crossing; without a hit, where the invisible run ends
         vb = jnp.where(hit, vb, pz[3])
@@ -690,7 +674,8 @@ class Navigator:
         snv = None if sn is None else sg(jnp.asarray(sn, self.F))
         V = None if vertex_tab is None else jnp.asarray(vertex_tab)
         s_q = self.F(HUGE) if s_at is None else sg(jnp.asarray(s_at, self.F))
-        kn0 = self.srf_decode(jnp.asarray(last, I32))[4]  # the photon sits on a face it knows (its side's state)
+        # the photon sits on a face it knows (its side's state):
+        kn0 = surface_id.srf_decode(self, jnp.asarray(last, I32))[4]
         q = _Query(od, dd, self.F(t_max), jnp.max(jnp.abs(od)), snv, kn0, V, s_q)
         rec0 = jnp.stack([lax.bitcast_convert_type(self.F(HUGE), self.I)] + [jnp.asarray(a, self.I) for a in (
             -1, -1, -1, 0, vol, 0)])  # fmt: skip
@@ -713,8 +698,8 @@ def surface_at(nav, cx, x, d):
     x, d = jnp.asarray(x, nav.F), jnp.asarray(d, nav.F)
     live = hit & (lf >= 0)  # a zero-length event on a known face too (the query's)
     t0 = sg(t_q)
-    t = jnp.where(live, nav.live_t(it, lf, fc, x, d, jnp.where(live, t0, HUGE)), t0)
-    g = nav.hit_grad(it, jnp.maximum(lf, 0), fc, x + jnp.where(t < HUGE, t, 0.0) * d)
+    t = jnp.where(live, surface_id.live_t(nav, it, lf, fc, x, d, jnp.where(live, t0, HUGE)), t0)
+    g = surface_id.hit_grad(nav, it, jnp.maximum(lf, 0), fc, x + jnp.where(t < HUGE, t, 0.0) * d)
     n = g / safe_norm(g)
     n = jnp.where(hit & (lf >= 0), n, -d)
     return t, jnp.where(jnp.sum(n * d) > 0, -n, n)

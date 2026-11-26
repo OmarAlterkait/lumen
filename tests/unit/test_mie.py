@@ -28,7 +28,7 @@ from test_importer import GDML, write
 
 import lumen
 from lumen._core import rng
-from lumen.build import spec
+from lumen.build import pack, spec
 from lumen.format import schema
 from lumen.gdml import exporter, importer
 from lumen.media import bulk, phase
@@ -312,7 +312,7 @@ def test_a_mie_detector_converts_loads_calibrates_and_exports(tmp_path):
 
     start = MIE_GDML.index('  <bordersurface name="B1"')
     end = MIE_GDML.index("</bordersurface>") + len("</bordersurface>\n")
-    path = lumen.convert(write(tmp_path, MIE_GDML[:start] + MIE_GDML[end:]), RECIPE, tmp_path / "mie.lumen")
+    path = lumen.convert(write(tmp_path, MIE_GDML[:start] + MIE_GDML[end:]), tmp_path / "mie.lumen", recipe=RECIPE)
     det = lumen.load(path)
     p = det.params()
     for key, (unit, rng_) in {"MIEHG": ("m", (math.ulp(0.0), math.inf)), "MIEHG_FORWARD": ("", (-0.999, 0.999)),
@@ -322,9 +322,9 @@ def test_a_mie_detector_converts_loads_calibrates_and_exports(tmp_path):
         assert (info.unit, info.range, info.method, info.available) == (unit, rng_, "reweight", True), key
     with pytest.raises(ValueError, match="outside"):
         p.set("materials/Water/MIEHG_FORWARD", 1.0)
-    water = next(k for k in det.pack()["media"] if "Water" in k)
-    assert np.asarray(det.pack()["media"][water]["mie"]["lobe"]["g_forward"]).item() == pytest.approx(0.6)
-    packed = det.pack(p.set("materials/Water/MIEHG_FORWARD", 0.8))
+    water = next(k for k in pack.checked(det)["media"] if "Water" in k)
+    assert np.asarray(pack.checked(det)["media"][water]["mie"]["lobe"]["g_forward"]).item() == pytest.approx(0.6)
+    packed = pack.checked(det, p.set("materials/Water/MIEHG_FORWARD", 0.8))
     assert np.asarray(packed["media"][water]["mie"]["lobe"]["g_forward"]).item() == pytest.approx(0.8)
     # GDML export writes the three constants back (coldim 1) and the read-back file is the same
     exporter.export(det.file, tmp_path / "x" / "mie.gdml")

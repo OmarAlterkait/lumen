@@ -11,8 +11,8 @@ What is checked:
 - in float64, a photon re-emitted in that coating at 10 % and 50 % of its depth, at 3, 15 and 60 deg to its face,
   leaves into the gas heading out and into the backing heading in, at its exact distance;
 - in float64, a foil 1.5 float32 bands thick standing in the gas is entered by a ray from 5 m away, then crossed;
-- through simulate, a skin sensor detects in float64 as in float32, in a medium with Rayleigh scattering too (speed
-  "fast": the diffusion walk), and its derivatives are float32's;
+- through simulate, a skin sensor detects in float64 as in float32, in a medium with Rayleigh scattering too (the
+  diffusion jump), and its derivatives are float32's;
 - simulate refuses a float64 detector while the 64-bit mode is off; a build cache never serves one precision's
   navigator to the other; siblings that overlap by less than float32's contact tolerance are ordered in float64; a
   step's position is the navigator's own crossing, not its float32 rounding; the jump's and the sensor reach's margins,
@@ -154,7 +154,7 @@ def _converted(tmp_path, slab=SLAB):
 
     (tmp_path / "slab.gdml").write_text(slab.format(skin=SKIN))
     recipe = Recipe("slab", "GasLV", groups=(SensorGroup("cath", rule="border_into", lv="CathLV"),))
-    return lumen.convert(tmp_path / "slab.gdml", recipe, tmp_path / "slab.lumen")
+    return lumen.convert(tmp_path / "slab.gdml", tmp_path / "slab.lumen", recipe=recipe)
 
 
 def test_load_refuses_float64_without_64_bit_mode_and_an_unknown_precision(tmp_path):
@@ -285,35 +285,6 @@ def test_through_simulate_a_scattering_medium_at_speed_fast(tmp_path):
     np.testing.assert_allclose(a, b, rtol=0.02)
 
 
-def test_a_checks_manifest_entry_carries_the_precision(tmp_path, monkeypatch):
-    """``lumen.compare``'s charge and gradients checks load the detector at the entry's ``precision``, and without
-    one at the detector's own (``lumen.load``), so a float64 detector can be validated."""
-    import json
-    from pathlib import Path
-
-    import lumen
-    from lumen.compare import charge, gradients
-
-    entry = {"name": "toy", "detector": str(tmp_path / "toy.lumen"), "precision": "float64",
-             "sources": [[0.0, 0.0, 0.0]], "wavelength": 400.0}  # fmt: skip
-    manifest = tmp_path / "refs.json"
-    seen = []
-
-    def load(path, **kw):
-        seen.append(kw.get("precision"))
-        raise RuntimeError("stop here")
-
-    monkeypatch.setattr(lumen, "load", load)
-    for precision in ("float64", None):
-        e = dict(entry) if precision else {k: v for k, v in entry.items() if k != "precision"}
-        manifest.write_text(json.dumps({"schema": "lumen-references/1", "checks": {"gradients": [e]},
-                                        "products": {}}))  # fmt: skip
-        with pytest.raises(RuntimeError, match="stop here"):
-            gradients.check("toy", extra=[str(manifest)])
-    assert seen == ["float64", None], seen
-    assert 'precision=spec.get("precision")' in Path(charge.__file__).read_text()  # the same line
-
-
 def test_a_recipe_states_the_precision_its_detector_needs(tmp_path, x64):
     """A recipe's ``precision`` is stored in the detector file, and ``lumen.load`` uses it when the caller passes
     none; an explicit precision wins over it, and float32 on a float64 detector warns once per call site (Python's
@@ -328,7 +299,7 @@ def test_a_recipe_states_the_precision_its_detector_needs(tmp_path, x64):
     (tmp_path / "slab.gdml").write_text(SLAB.format(skin=SKIN))
     recipe = Recipe("slab64", "GasLV", groups=(SensorGroup("cath", rule="border_into", lv="CathLV"),),
                     precision="float64")  # fmt: skip
-    path = lumen.convert(tmp_path / "slab.gdml", recipe, tmp_path / "slab64.lumen")
+    path = lumen.convert(tmp_path / "slab.gdml", tmp_path / "slab64.lumen", recipe=recipe)
     assert io.read(path).precision == "float64"
     assert lumen.load(path).precision == "float64"  # the file's, no argument given
     with warnings.catch_warnings(record=True) as said:

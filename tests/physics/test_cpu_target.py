@@ -61,7 +61,7 @@ def test_the_cpu_target_agrees_with_the_reference_within_mc_error(toy):
     cpu, where = _forward_and_jvp(s, "cpu")  # on a GPU machine too: lumen moves the run to the CPU
     assert _ran_on_the_cpu()
     assert where == {jax.devices()[0]}  # the outputs come back to JAX's default device
-    ref, _ = _forward_and_jvp(s, "cuda" if GPU else "xla")  # the GPU, else tallymap's plain-JAX backend
+    ref, _ = _forward_and_jvp(s, "auto" if GPU else "xla")  # the GPU, else tallymap's plain-JAX backend
     for name, a, b in zip(("Q", "dQ/dR", "dQ/dabsorption"), cpu, ref, strict=True):
         t = stats.mean_test(a[:, None], b[:, None], paired=True, level=stats.ALPHA / stats.SUITE_TESTS)
         assert np.array_equal(a, b) or t["passed"] is True, (name, a.mean(), b.mean(), t["stat"], t["passed"])
@@ -73,5 +73,5 @@ def test_the_overlap_check_runs_on_the_cpu_target(toy):
     nav = toy("sphere", r=0.5).model.geometry.nav
     c = placements.check(nav, n_pts=128, backend="cpu")
     assert _ran_on_the_cpu()
-    ref = placements.check(nav, n_pts=128, backend="cuda" if GPU else "xla")
+    ref = placements.check(nav, n_pts=128, backend="auto" if GPU else "xla")
     assert all(np.array_equal(np.asarray(c[k]), np.asarray(ref[k])) for k in ref), (c, ref)

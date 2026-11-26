@@ -171,7 +171,7 @@ def test_a_surface_geant4_cannot_read_is_refused(tmp_path, field, value, match):
 
 
 @pytest.mark.parametrize("value", [np.inf, np.nan, 1e-310])
-def test_non_finite_and_denormal_values_are_refused(tmp_path, value):
+def test_a_non_finite_or_denormal_property_value_fails_the_export(tmp_path, value):
     df = _df(tmp_path)
     w = df.materials["Water"]
     p = dataclasses.replace(w.properties["RINDEX"], value=np.array([1.33, value, 1.35]))

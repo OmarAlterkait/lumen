@@ -18,7 +18,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from lumen import speed
 from lumen._core import rng
 from lumen._core.rng import JUMP_STREAM, POLARISATION_STREAM
 from lumen._core.safe import ratio, safe_div, unit
@@ -39,17 +38,15 @@ LAYOUT = rng.Layout(path=1, channel=1, outcome=1, lobe=rng.LOBE_UNIFORMS, roulet
 
 @dataclass(frozen=True)
 class StepConfig:
-    """What the step is compiled for: the edge rows (the detector's), the speed levers on (a frozenset of names,
-    ``lumen.speed``; the default, ``speed.EXACT``: none, the reference code).
+    """What the step is compiled for: the edge rows (the detector's) and whether the diffusion jump is compiled in.
 
-    ``moving_source``: the switch of a source-position derivative's method (a separately compiled step carrying its
-    per-photon state in ``Photon.moving``). No method is in this version: it stays False, and True is refused
-    (``operands``); the switch and the slot are kept so the method can return as a module of its own.
-    """  # noqa: D205
+    ``jump`` (the default False: the reference code, the plain Rayleigh walk): the diffusion jump
+    (``lumen.transport.fastpath``), the same estimator in law with other random numbers. ``lumen.simulate`` turns it
+    on; a probe diagnostic, which sees every step, runs without it.
+    """
 
     edge_rows: estimator.EdgeRows = estimator.EdgeRows()
-    levers: Any = speed.EXACT
-    moving_source: bool = False
+    jump: bool = False
 
 
 class Controls(NamedTuple):
@@ -89,7 +86,7 @@ class Model:
     step: StepConfig = StepConfig()
     local: tuple = ()
     analog: bool = False
-    jump: Any = None  # the diffusion jump's data (lumen.transport.fastpath.Jump), with the speed lever "jump" only
+    jump: Any = None  # the diffusion jump's data (lumen.transport.fastpath.Jump), only with step.jump
 
     def __post_init__(self):
         """Fix the model's ``static``: the jitted functions' static argument (``lumen._core.static.Static``), equal for
@@ -109,7 +106,7 @@ class Model:
         """The model's own tables (the facets') as device arrays: moved once (``operands``)."""
         with jax.ensure_compile_time_eval():  # device arrays, also when first asked for under a trace
             out = dict(unified=facets.table_operands())
-            if "jump" in self.step.levers:  # the jump's clearance grids (lumen.speed)
+            if self.step.jump:  # the jump's clearance grids (lumen.transport.fastpath)
                 out["diff"] = fastpath.operands(self.jump)
             return out
 
@@ -137,9 +134,6 @@ def operands(model, params, reference, controls):
     roulette is counted by ``simulate``'s ``health.invalid`` where it is not > 0). The model's own tables are fixed
     with it (``Model.device_tables``).
     """
-    if model.step.moving_source:
-        raise NotImplementedError("StepConfig.moving_source: a source-position derivative is not available in this "
-                                  "version (docs/explanation/known-limits.md)")  # fmt: skip
     traced = isinstance(controls.roulette, jax.core.Tracer)
     if controls.roulette is None or not (traced or float(controls.roulette) > 0.0):
         raise ValueError(f"operands: the roulette is a number ε > 0 (a photon ends only at weight 0), got "
@@ -268,10 +262,9 @@ def _query(model, ops, ph, s):
     crossing in float32; ``t`` stays in the navigator's precision, for the position (``_surface_event``).
     """
     geom = geometry(model, ops)
-    # a geometry that accepts the free path may stop the query just past it where the crossing beyond cannot deposit
-    # (lumen.geometry.reach)
-    sf = dict(s_free=s) if getattr(geom, "accepts_s_free", False) else {}
-    r = geom.query(None, ph.x, ph.d, ph.cls, ops.controls.max_distance, vol=ph.vol, last=ph.srf, sn=ph.sn, s_at=s, **sf)
+    # the geometry may stop the query just past the free path where the crossing beyond cannot deposit
+    # (lumen.geometry.reach; the plain TrackedGeometry does not read s_free)
+    r = geom.query(ph.x, ph.d, ops.controls.max_distance, vol=ph.vol, last=ph.srf, sn=ph.sn, s_at=s, s_free=s)
     keys = ("t", "hit", "normal", "cls_after", "sensor", "cls_before", "cls_start", "t_pass0", "t_pass1",
             "vol_after", "vol_before", "vol_start", "item", "cont", "vol_at", "cls_at")  # fmt: skip
     return {k: r[k].astype(F32) if k != "t" and jnp.issubdtype(r[k].dtype, jnp.floating) else r[k] for k in keys}
@@ -332,7 +325,7 @@ def _step_context(model, ops, ph, key):
     ph, b0 = _recover(model, ops, ph)
     vkey = rng.vertex_key(key, ph.vertex)
     rand = rng.draw(vkey, LAYOUT)
-    if "jump" in cfg.levers:  # the walk's own key (lumen.transport.fastpath): a fold of the vertex key, no draw shifted
+    if cfg.jump:  # the walk's own key (lumen.transport.fastpath): a fold of the vertex key, no draw shifted
         rand = dict(rand, jkey=jax.random.fold_in(vkey, JUMP_STREAM))
     er0, ei0 = polar.fill(ph.d, ph.er, ph.ei, rng.uniforms(jax.random.fold_in(vkey, POLARISATION_STREAM), 1)[0])
     medium_idx = jnp.asarray(tables.medium_of)[ph.cls]
@@ -423,7 +416,7 @@ def _bulk(model, ops, ph, sc):
     w_at = ph.w * w_path  # the weight that reaches the event (live / reference)
     fates = (w_at * att * b.yield_w, w_at * (1.0 - att * b.yield_w), jnp.zeros_like(w_at))  # state.Next.fates
     rl = estimator.reweight_log(b.lp, b.lpr)
-    if "jump" in model.step.levers:  # lumen.speed: the diffusion jump
+    if model.step.jump:  # the diffusion jump (lumen.transport.fastpath)
         # the walk's factor enters both weights: w its likelihood ratio from mu_ref to the live values, wr its value at
         # the reference values, exp(-mu_abs_r L) (the walk's length L held)
         x_n, d_n, er_n, ei_n, w_j, dt_j, L = fastpath.diffuse(model, ops, ph, sc, x_s, b)

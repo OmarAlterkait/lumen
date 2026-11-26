@@ -134,7 +134,7 @@ import lumen
 import lumen.format.yaml
 
 OUT = Path(os.environ.get("LUMEN_EXAMPLES_OUT", "lumen-examples"))  # where the examples write
-path = lumen.convert("examples/data/yaml_toy", None, OUT / "yaml_toy.lumen", overwrite=True)
+path = lumen.convert("examples/data/yaml_toy", OUT / "yaml_toy.lumen", overwrite=True)
 det = lumen.load(path)
 print(det)
 for name, pos in zip(det.sensor_table().name, det.sensor_table().position, strict=True):

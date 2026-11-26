@@ -44,7 +44,7 @@ def _detector(tmp, case, precision="float32"):
     groups = (SensorGroup("pmt", rule="border_into", lv="PMT_PHOTOCATHODE"),
               SensorGroup("sipm", rule="border_into", lv="SIPM_SENSE"))  # fmt: skip
     out = tmp / f"next_toy_{case}_{precision}.lumen"
-    path = lumen.convert(DATA / f"next_toy_{case}.gdml", Recipe(f"next_toy_{case}", "GAS", groups=groups), out,
+    path = lumen.convert(DATA / f"next_toy_{case}.gdml", out, recipe=Recipe(f"next_toy_{case}", "GAS", groups=groups),
                          overwrite=True)  # fmt: skip
     return lumen.load(path, precision=precision)
 

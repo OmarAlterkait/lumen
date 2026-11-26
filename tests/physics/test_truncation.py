@@ -23,7 +23,7 @@ N, GUARD = 4096, 64
 
 @pytest.fixture(scope="module")
 def det(tmp_path_factory):
-    return lumen.load(lumen.convert(TOY, None, tmp_path_factory.mktemp("lossless") / "toy.lumen"))
+    return lumen.load(lumen.convert(TOY, tmp_path_factory.mktemp("lossless") / "toy.lumen"))
 
 
 def test_a_lossless_runs_stopped_weight_is_reported(det, monkeypatch):

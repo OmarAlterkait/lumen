@@ -33,7 +33,7 @@ VUV, SPLIT = 128.0, 300.0  # nm
 def film(tmp_path_factory):
     tmp = tmp_path_factory.mktemp("film")
     (tmp / "film.gdml").write_text(film_gdml(((CENTRE_MM, (0, 0, 90)),)))
-    det = lumen.load(lumen.convert(tmp / "film.gdml", RECIPE, tmp / "film.lumen"))
+    det = lumen.load(lumen.convert(tmp / "film.gdml", tmp / "film.lumen", recipe=RECIPE))
     return toys.setup(det, (-np.inf, SPLIT, np.inf))
 
 
@@ -140,7 +140,7 @@ def test_a_film_flush_in_its_holder_shifts_the_same_light_as_one_beside_it(tmp_p
     for flush in (True, False):
         src = tmp_path / f"flush{int(flush)}.gdml"
         src.write_text(flush_gdml(flush))
-        det = lumen.load(lumen.convert(src, FLUSH_RECIPE, tmp_path / f"flush{int(flush)}.lumen"))
+        det = lumen.load(lumen.convert(src, tmp_path / f"flush{int(flush)}.lumen", recipe=FLUSH_RECIPE))
         light = lumen.simulate(det, lumen.sources.Point((0.0, 0.0, FACE_M + 0.5), n_photons=1.0, lam=VUV,
                                                         direction=(0.0, 0.0, -1.0)), samples=n, seed=5)  # fmt: skip
         out[flush] = (float(light.arrivals.sum()), float(light.arrivals_error.sum()))

@@ -70,13 +70,13 @@ def test_convert_records_the_placement_check_and_warns_on_an_overlap(tmp_path, r
     """The conversion reports Geant4's overlap precondition: a clean toy says so, silently; two PMTs placed into each
     other are named in the report with the owner of the region they share, with a PlacementWarning; the geometry is
     kept as it is."""
-    clean = lumen.load(lumen.convert(write(tmp_path, _toy()), RECIPE, tmp_path / "clean.lumen"))
+    clean = lumen.load(lumen.convert(write(tmp_path, _toy()), tmp_path / "clean.lumen", recipe=RECIPE))
     assert not [w for w in recwarn if issubclass(w.category, placements.PlacementWarning)]
     rep = clean.file.report
     assert any("no overlapping siblings, no protruding daughters" in line for line in rep), rep
     toy = _toy().replace('<position name="q" x="-500" y="0" z="0"/>', '<position name="q" x="60" y="0" z="0"/>')
     with pytest.warns(placements.PlacementWarning, match="overlapping siblings"):
-        path = lumen.convert(write(tmp_path, toy, "overlap.gdml"), RECIPE, tmp_path / "overlap.lumen")
+        path = lumen.convert(write(tmp_path, toy, "overlap.gdml"), tmp_path / "overlap.lumen", recipe=RECIPE)
     rep = lumen.load(path).file.report
     want = "overlapping siblings, the shared region owned by one of them (pairs): 1 families, 1 in all: "
     assert any(want + "{PmtLV owned by PmtLV: 1}" in line for line in rep), rep

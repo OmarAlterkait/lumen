@@ -48,6 +48,58 @@ now, and what to do.
 - A run costs 1% to 6% more time (median 3%): a relocation past a face now reads that face's normal and the point's
   distance from it.
 
+### Removed (breaking)
+
+Each name below is gone in 0.2.2. Nothing else in the public surface changed, and no result moves: every removal is a
+knob with one legal value, a duplicate of another way in, or an internal detail that was reachable by accident. The
+seven detectors' float32 arrays and the NEXT toy's fractions are unchanged, bit for bit.
+
+- **`simulate(speed=)` and the module `lumen.speed`.** "fast" and "exact" were the same estimator in law, so the
+  choice could only change which random numbers a run drew, never what it estimates; "fast" was the default. The
+  diffusion jump is now an internal flag on the step's configuration (`StepConfig.jump`), on for every run, and a
+  probe diagnostic still compiles the exact loop by itself. `Light.provenance` still records `("speed", "fast")` or
+  `"exact (diagnostics)"`. **To compare the two loops bit for bit** keep using `python -m lumen.compare gate --speed exact|fast` and
+  `python -m lumen.compare mc run --speed exact|fast`, which are unchanged.
+- **`simulate(backend="cuda")`.** It ran exactly what `"auto"` runs, and only forced the refusal that `"auto"`
+  already makes wherever the environment says a GPU is there. `BACKENDS` is now `("auto", "cpu", "xla")`. **Use**
+  `JAX_PLATFORMS=cuda` with the default `backend="auto"` — which is what the `DeviceError` message already names.
+- **`Detector.with_responses`.** **Use `lumen.load(path, responses=(...))`**, which does the same thing and is the
+  only form a calibration saved with those keys loads under. The two error messages say `load(responses=):` now.
+- **`Detector.scene`, `Detector.tree`, `Detector.pack`.** One-line aliases with no user outside lumen itself.
+  **Use** `det.parts.scene`, `det.parts.tree` and `lumen.build.pack.checked(det, params)` (the same body: the
+  engine's packed arrays, the value checks run first).
+- **`descend(tol=, betas=)`.** The Adam loop has no stopping rule, so `tol` stopped nothing: it only chose the
+  verdict, against the *Newton* decrement, at another default than `fit`'s. `descend` now reports `converged`
+  against `fit`'s own tolerance (`lumen.tools.fit.TOL`), and Adam's decay rates are the module constant `BETAS`.
+  **Use** `steps` to say how long the run is.
+- **`Space(scales=)`.** A scale changed only the step cap and the eigenvalue floor (Newton is affine invariant) and
+  no notebook, doc or example set one. **Use `factors=[key]`** for a key whose own value has no natural scale: one
+  number on its whole value, in log.
+- **`jacobian(entries=)`.** A J whose unlisted columns are 0 is not that subspace's J: fed to an information matrix
+  or an eigendecomposition it is silently rank deficient. `jacobian(model, space, x, seed=0)` differentiates every
+  entry; the fit's own partial form is private.
+- **The reference manifest's `precision` key** (`charge` and `gradients` entries). Nothing set it, it bypassed the
+  `DEFAULTS` merge, and no flag reached it. **Use** the detector's own precision — `Recipe(precision=)`, stored in
+  the detector file — or a second manifest entry for the other precision.
+- **`fisher`'s `per_sensor` is keyword-only**, like every other setting in `lumen.tools`: a 0.2.1 call
+  `fisher(model, space, x, seed)` landed on it. **Use** `fisher(model, space, x, per_sensor=keys)`.
+- **`convert`'s `out` is the second positional argument and `recipe` is keyword-only**:
+  `convert(source, out, *, recipe=None, ...)`. `out` was a third positional defaulting to None and then raising, and
+  `convert("package:name", out=...)` had to spell the keyword. **Change** `convert(gdml, recipe, out)` to
+  `convert(gdml, out, recipe=recipe)`, and `convert(yaml, None, out)` to `convert(yaml, out)`.
+- **`python -m lumen.compare`: one sub-parser per check.** Every check's flags were declared on one parser, so
+  `compare overlaps --g4ref X --only y` was accepted and ignored both. Each check now takes its own flags only
+  (`compare <check> --help`). The `geometry` check no longer picks its flag set by testing whether its first
+  argument exists on disk: `compare geometry ENTRY [--g4ref BIN]` is the manifest entry and
+  **`compare geometry-file DET.lumen --gdml FILE ...`** is the check on a detector file.
+- Dead internals, named here only because a reader of the source will notice them: `gp` and `cls` left the geometry
+  contract (`query`, `surface`) and `accepts_s_free` with them (the free path is always passed);
+  `StepConfig.moving_source` and `Photon.moving`; `lumen.rules.navigation.BAND` and `FLOAT32_EPS` (use
+  `BAND_ULPS * FLOAT32.eps`); `Navigator`'s four one-line `surface_id` wrappers (call
+  `lumen.geometry.surface_id.X(nav, ...)`, as the same file already did for the other two); the viewer's own `TWOPI`
+  (`lumen.units.TWO_PI`); `simulate`'s inner `launch`'s unused `free`. The memos of the checks a medium model's lobes
+  and a source function passed hold their objects weakly (`weakref`), so a model or source a caller drops is freed.
+
 ### Changed
 
 - **A fit no longer refuses data a cell of the model cannot produce.** A cell with no light in either run and counts

@@ -28,7 +28,7 @@ ONE = jnp.float32(1.0)
 
 @pytest.fixture(scope="module")
 def det(tmp_path_factory):
-    return lumen.load(lumen.convert(TOY, None, tmp_path_factory.mktemp("ghost") / "toy.lumen"))
+    return lumen.load(lumen.convert(TOY, tmp_path_factory.mktemp("ghost") / "toy.lumen"))
 
 
 @pytest.mark.parametrize("r0", [0.0, 0.01], ids=["at the edge", "off the edge"])
@@ -42,7 +42,7 @@ def test_the_second_derivative_is_the_finite_difference_of_the_gradient(det, r0)
 
     def q(th, seed, ref=None):
         return jnp.sum(lumen.simulate(det, src, gr.at(p, fam, th), samples=N, seed=seed, reference=ref,
-                                      speed="exact").arrivals)  # fmt: skip
+                                      _jump=False).arrivals)  # fmt: skip
 
     def g(th, seed, ref=None):
         return float(jax.jvp(lambda t: q(t, seed, ref), (jnp.float32(th),), (ONE,))[1])

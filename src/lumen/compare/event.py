@@ -165,7 +165,7 @@ def compare(det, ev: Event, params=None, *, lights=LIGHTS, samples: int, seed: i
     q, q2, qv, h, runs = 0.0, 0.0, 0.0, 0.0, []
     for i, src in enumerate(ev.sources(p, lights).values()):
         light = lumen.simulate(det, src, p, samples=samples, chunk=samples, seed=seed + 7919 * i, backend=backend,
-                               speed="exact", diagnostics=(diag,))  # fmt: skip
+                               _jump=False, diagnostics=(diag,))  # fmt: skip
         r = photons.detected(light, diag)
         # per sensor the count, its moment and variance (the sources are independent runs: their sums and variances add)
         q, q2, qv = q + r["Q"][:, 0] * k, q2 + r["Q2"][:, 0] * k**2, qv + r["Q_var"][:, 0] * k**2

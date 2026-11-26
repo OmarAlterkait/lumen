@@ -27,7 +27,7 @@ def tank(tmp_path_factory):
     import example_tank
 
     tmp = tmp_path_factory.mktemp("tank")
-    return lumen.convert(example_tank.GDML, example_tank.RECIPE, tmp / "example_tank.lumen")
+    return lumen.convert(example_tank.GDML, tmp / "example_tank.lumen", recipe=example_tank.RECIPE)
 
 
 # ----------------------------------------------------------------------------------------------------- units
@@ -46,7 +46,7 @@ def test_a_quantity_written_as_text_is_read_by_exact_decimal():
 
 # ----------------------------------------------------------------------------------------- the hand toy
 def test_the_hand_written_toy_converts_and_loads(tmp_path):
-    path = lumen.convert(TOY, None, tmp_path / "yaml_toy.lumen")
+    path = lumen.convert(TOY, tmp_path / "yaml_toy.lumen")
     det = lumen.load(path)
     assert det.file.world == "World" and det.file.detector_volume == "Tank"
     assert det.file.volumes["Tank"].daughters == (1, 2, 3, 4, 5, 6)  # the placements, in their order
@@ -173,8 +173,8 @@ def test_a_file_without_its_schema_line_is_refused(tmp_path):
 
 def test_a_recipe_is_refused(tmp_path):
     d = _toy_copy(tmp_path)
-    with pytest.raises(ValueError, match="pass recipe=None"):
-        lumen.convert(d, object(), tmp_path / "x.lumen")
+    with pytest.raises(ValueError, match="only a GDML file takes a recipe"):
+        lumen.convert(d, tmp_path / "x.lumen", recipe=object())
 
 
 def test_an_omitted_angular_range_is_the_solid_geant4_builds_from_either_input():

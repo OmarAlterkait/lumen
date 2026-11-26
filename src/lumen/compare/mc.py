@@ -52,7 +52,7 @@ from lumen.transport.step import Controls
 GROUPS = 20  # sensor groups of ``agree`` (consecutive sensors in arrival order), as the gradient check's
 
 
-def record(det, photons, keys, *, seed0: int = 0, k: int = 16, n: int = 65536, controls=None, speed="fast",  # noqa: PLR0913 -- the gate's settings
+def record(det, photons, keys, *, seed0: int = 0, k: int = 16, n: int = 65536, controls=None, jump=True,  # noqa: PLR0913 -- the gate's settings
            log=None) -> dict:  # fmt: skip
     """Return the gate's record of a loaded detector on a photon file (see the module docstring)."""
     import jax
@@ -68,7 +68,7 @@ def record(det, photons, keys, *, seed0: int = 0, k: int = 16, n: int = 65536, c
     prim, tan = [], [[] for _ in keys]
     t0 = time.time()
     for seed in range(seed0, seed0 + k):
-        prim.append(np.asarray(lumen.simulate(det, src, p, samples=n, seed=seed, controls=ctl, speed=speed).arrivals))
+        prim.append(np.asarray(lumen.simulate(det, src, p, samples=n, seed=seed, controls=ctl, _jump=jump).arrivals))
         for j, key in enumerate(keys):
             v0 = p[key]
 
@@ -77,7 +77,7 @@ def record(det, photons, keys, *, seed0: int = 0, k: int = 16, n: int = 65536, c
                     q = p.set(key, Table(jnp.asarray(v0.energy), jnp.asarray(v0.value) * (1.0 - th)))
                 else:
                     q = p.set(key, jnp.asarray(v0, jnp.float32) * (1.0 - th))
-                return lumen.simulate(det, src, q, samples=n, seed=seed, controls=ctl, speed=speed).arrivals
+                return lumen.simulate(det, src, q, samples=n, seed=seed, controls=ctl, _jump=jump).arrivals
 
             tan[j].append(np.asarray(jax.jvp(f, (jnp.float32(0.0),), (jnp.float32(1.0),))[1]))
         if log:
@@ -116,7 +116,7 @@ def environment_changes(ref: dict, new: dict) -> list:
 
 
 def gate(package: str, names=(), *, out="validation/mc", against=None, data=None, roulette=None,  # noqa: PLR0913
-         speed: str = "fast") -> int:  # fmt: skip
+         jump: bool = True) -> int:  # fmt: skip
     """Run the gate of a detector package's ``mc`` entries (see the module docstring); return the exit status."""
     import importlib
     from pathlib import Path
@@ -135,7 +135,7 @@ def gate(package: str, names=(), *, out="validation/mc", against=None, data=None
         det = lumen.load(lumen.convert(f"{package}:{e['detector']}", out=out / f"{e['name']}.lumen", data=data,
                                        overwrite=True))  # fmt: skip
         rec = record(det, d / e["photons"], [str(k) for k in ref["keys"]], seed0=int(ref["seed0"]),
-                     k=len(ref["primal"]), n=int(ref["n"]), controls=ctl, speed=speed, log=print)  # fmt: skip
+                     k=len(ref["primal"]), n=int(ref["n"]), controls=ctl, jump=jump, log=print)  # fmt: skip
         rec["environment"] = json.dumps(records.environment())
         np.savez(out / f"{e['name']}.npz", **rec)
         same, lines = compare(ref, rec)
@@ -181,7 +181,8 @@ def main(argv=None) -> int:
     r.add_argument("--k", type=int, default=16)
     r.add_argument("--n", type=int, default=65536)
     r.add_argument("--roulette", type=float, help="the step's roulette ε (default: lumen.Controls' own)")
-    r.add_argument("--speed", default="fast", choices=("fast", "exact"), help="simulate's speed")
+    r.add_argument("--speed", default="fast", choices=("fast", "exact"),
+                   help="exact: the plain Rayleigh walk instead of the diffusion jump (validation)")  # fmt: skip
     for name, what in (("compare", "compare a record with its reference, bit for bit"),
                        ("agree", "test two records' agreement in expectation (fast or other seeds)")):  # fmt: skip
         c = sub.add_parser(name, help=what)
@@ -193,8 +194,8 @@ def main(argv=None) -> int:
 
         keys = [str(x) for x in np.load(a.keys_from)["keys"]]
         ctl = None if a.roulette is None else lumen.Controls(roulette=a.roulette)
-        out = record(lumen.load(a.det), a.photons, keys, seed0=a.seed0, k=a.k, n=a.n, controls=ctl, speed=a.speed,
-                     log=lambda s: sys.stdout.write(s + "\n"))  # fmt: skip
+        out = record(lumen.load(a.det), a.photons, keys, seed0=a.seed0, k=a.k, n=a.n, controls=ctl,
+                     jump=a.speed == "fast", log=lambda s: sys.stdout.write(s + "\n"))  # fmt: skip
         np.savez(a.out, **out, environment=json.dumps(records.environment()))
         sys.stdout.write(f"wrote {a.out}\n")
         return 0

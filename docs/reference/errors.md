@@ -185,7 +185,7 @@ its values there bound it at every wavelength.
 | `<record>: optics model <name> is not a medium model` (or surface) | `LibraryError` | a surface model bound to a material, or the reverse |
 | `<what>: outcome probabilities outside [0, 1] or not summing to 1 at <params>` | `ModelError` | the model's `probs` over the six outcomes, checked at its first build over incidences and its parameters' range corners |
 | `<what>: its sampler does not draw its density (chi2/ndf <x>)` | `ModelError` | the lobe's `sample` and `logpdf` disagree; fix one |
-| `with_responses: <name> declares <keys>, keys the detector has already (rename them)` | `ValueError` | a response parameter named like a sensor model's value (lumen:sensor has `gain`, `qe`, ...): rename it |
+| `load(responses=): <name> declares <keys>, keys the detector has already (rename them)` | `ValueError` | a response parameter named like a sensor model's value (lumen:sensor has `gain`, `qe`, ...): rename it |
 | `<path> exists: a detector file is never overwritten (pass overwrite=True)` | `FormatError` | `lumen.convert(..., overwrite=True)`, or another path |
 | `non-finite number <x>: the detector file stores finite numbers only` · `cannot store <type> in JSON` · `two arrays at <path>` | `FormatError` | a recipe decision produced a value the format cannot store |
 | `no detector file at <path> (a detector is its file: convert it first, lumen.convert)` | `FileNotFoundError` | pass the detector file's path, or convert it first |
@@ -376,8 +376,7 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `convert: a GDML file needs its recipe (lumen.Recipe)` | `ValueError` | `lumen.api` |
 | `convert: a GDML file or a YAML detector, not <__name__>` | `TypeError` | `lumen.api` |
 | `convert: data is the data directory of a detector package's detector ("package:name")` | `ValueError` | `lumen.api` |
-| `convert: only a GDML file takes a recipe; a YAML detector holds its own decisions: pass recipe=None` | `ValueError` | `lumen.api` |
-| `convert: out, the detector file's path, is required` | `TypeError` | `lumen.api` |
+| `convert: only a GDML file takes a recipe; a YAML detector holds its own decisions: leave recipe out` | `ValueError` | `lumen.api` |
 | `load(parts=): <target> is a channel's path: give it a phase function (lumen.media.phase_function)` | `ValueError` | `lumen.api` |
 | `load(parts=): <target> is not materials/<M> of this detector (a surface is read by lumen's own surface model: its parts are not hooks in 0.2)` | `ValueError` | `lumen.api` |
 | `load(parts=): <target>: <model> is neither a medium model (lumen.medium_model) nor one of lumen's own (<MEDIA>)` | `LibraryError` | `lumen.api` |
@@ -405,9 +404,9 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `simulate: with truth rows the roulette must be a number <= 1 (got <r>)` | `ValueError` | `lumen.api` |
 | `the readout's cells need <cells> GB (float32; with the photons in flight <fixed> GB), over the device's <limit> GB: shorten the readout gates, widen the time spreads' declared lower ranges (coarser nodes) or give a smaller chunk` | `MemoryError` | `lumen.api` |
 | `<free> sensors are in no sensor group, e.g. <free> (id-map columns <cols>): the groups that select a volume select each of its sensors, in exactly one group` | `ValueError` | `lumen.build.build` |
+| `load(responses=): <name> declares <taken>, keys the detector has already (rename them)` | `ValueError` | `lumen.build.build` |
+| `load(responses=): <name> reads group <group>; the groups are <groups>` | `ValueError` | `lumen.build.build` |
 | `sensor <sensor_pvs> is in the sensor groups <owner> and <name>: a sensor is in one group` | `ValueError` | `lumen.build.build` |
-| `with_responses: <name> declares <taken>, keys the detector has already (rename them)` | `ValueError` | `lumen.build.build` |
-| `with_responses: <name> reads group <group>; the groups are <groups>` | `ValueError` | `lumen.build.build` |
 | `<what> has YIELDRATIO <tolist>: Geant4 10.7 gives the fast component min(YIELDRATIO, 1) of the light; give a finite constant >= 0 (the fast share)` | `TranslationRefused` | `lumen.build.import_rules` |
 | `<what> has the Geant4-10 scintillation keys <old> and the Geant4 11 keys <new>: Geant4 10.7 reads only the first, Geant4 11 only the second; delete one of the two sets` | `TranslationRefused` | `lumen.build.import_rules` |
 | `<what> has the Geant4-10 scintillation keys <old> without <need> (Geant4 10.7 aborts at its first scintillating step): add <need>` | `TranslationRefused` | `lumen.build.import_rules` |
@@ -846,7 +845,6 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `Point: give a wavelength (lam) or a spectrum, not both` | `ValueError` | `lumen.sources.point` |
 | `<material>: no <missing> (Geant4 11 emits none or aborts<hint>)` | `KeyError` | `lumen.sources.scintillation` |
 | `<material>: the components' shares <tolist> are not finite and >= 0 (Geant4 divides by the sum of the yields)` | `KeyError` | `lumen.sources.scintillation` |
-| `simulate: speed is 'fast' or 'exact', got <speed>` | `ValueError` | `lumen.speed` |
 | `into_opaque: <name>'s facet path decides its own side` | `ValueError` | `lumen.surfaces.types` |
 | `per_normal: a detecting type with eff, got <name>` | `ValueError` | `lumen.surfaces.types` |
 | `(a message built at run time)` | `AssertionError` | `lumen.testing` |
@@ -866,8 +864,6 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `scan: one or two axes` | `ValueError` | `lumen.tools.scan` |
 | `Space: <k> has a value <= 0; a key varied in log needs positive values` | `ValueError` | `lumen.tools.space` |
 | `Space: <k> is not a positive factor times the space's own value` | `ValueError` | `lumen.tools.space` |
-| `Space: scales for <bad>: a scale is for a key of this space without a log transform` | `ValueError` | `lumen.tools.space` |
-| `StepConfig.moving_source: a source-position derivative is not available in this version (docs/explanation/known-limits.md)` | `NotImplementedError` | `lumen.transport.step` |
 | `operands: the roulette is a number ε > 0 (a photon ends only at weight 0), got <roulette>` | `ValueError` | `lumen.transport.step` |
 | `<value> is not a number or a quantity of <what> such as "<example>"` | `ValueError` | `lumen.units` |
 | `<value>: <src> is not a unit of <what> (one of <join>)` | `ValueError` | `lumen.units` |

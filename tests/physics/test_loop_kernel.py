@@ -24,7 +24,7 @@ from test_importer import write
 
 import lumen
 from lumen import run as runner
-from lumen.build import tracked
+from lumen.build import pack, tracked
 from lumen.compare import photons
 from lumen.readout import fill
 from lumen.readout.grid import Grid
@@ -45,10 +45,10 @@ def rows(n):
 @pytest.fixture(scope="module")
 def loop(tmp_path_factory):
     tmp = tmp_path_factory.mktemp("loopkernel")
-    det = lumen.load(lumen.convert(write(tmp, _toy()), RECIPE, tmp / "toy.lumen"))
+    det = lumen.load(lumen.convert(write(tmp, _toy()), tmp / "toy.lumen", recipe=RECIPE))
     model = steps.Model(tracked.from_parts(det.parts), det.parts.optics)
     layout = fill.HistogramLayout(len(det.parts.optics.sensor_pvs), Grid.bands((300.0, 600.0)))
-    ops = steps.operands(model, det.pack(), None, steps.Controls())
+    ops = steps.operands(model, pack.checked(det), None, steps.Controls())
     return photons.loop(layout), model, ops, jax.random.key_data(jax.random.PRNGKey(0))
 
 

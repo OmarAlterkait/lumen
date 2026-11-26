@@ -94,9 +94,9 @@ def test_a_phase_function_passed_at_load(lined):
     with pytest.raises(ValueError, match="unpolarised=True"):  # no polarised pair, not declared
         lumen.media.phase_function("mylab:x", params={}, n_rand=3, sample=_sample, logpdf=_logpdf)
     src = sources.Point((0.05, 0.02, 0.1), n_photons=1024.0, lam=420.0)
-    for speed, notes in (("fast", ("unpolarised", "fast walk off")), ("exact", ("unpolarised",))):
-        prov = dict(lumen.simulate(det, src, samples=1024, seed=0, speed=speed).provenance)
-        assert prov["parts"] == (("materials/Water/rayleigh", "mylab:rayleigh_depol@rayleigh", notes),), speed
+    for jump, notes in ((True, ("unpolarised", "fast walk off")), (False, ("unpolarised",))):
+        prov = dict(lumen.simulate(det, src, samples=1024, seed=0, _jump=jump).provenance)
+        assert prov["parts"] == (("materials/Water/rayleigh", "mylab:rayleigh_depol@rayleigh", notes),), jump
     assert "parts" not in dict(lumen.simulate(lumen.load(lined), src, samples=1024, seed=0).provenance)
 
 

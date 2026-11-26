@@ -25,7 +25,7 @@ def det(tmp_path_factory):
     from test_api import RECIPE
 
     tmp = tmp_path_factory.mktemp("truth")
-    return lumen.load(lumen.convert(write(tmp, _toy()), RECIPE, tmp / "toy.lumen"))
+    return lumen.load(lumen.convert(write(tmp, _toy()), tmp / "toy.lumen", recipe=RECIPE))
 
 
 def run(det, src, **kw):

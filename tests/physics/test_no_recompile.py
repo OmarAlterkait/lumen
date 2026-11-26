@@ -28,7 +28,7 @@ from test_importer import write
 
 import lumen
 from lumen import run as runner
-from lumen.build import tracked
+from lumen.build import pack, tracked
 from lumen.compare import photons
 from lumen.readout import fill
 from lumen.readout.grid import Grid
@@ -91,7 +91,7 @@ def rows(shift=0.0, t=0.0, lam=400.0):
 @pytest.fixture(scope="module")
 def setup(tmp_path_factory):
     tmp = tmp_path_factory.mktemp("norecompile")
-    det = lumen.load(lumen.convert(write(tmp, _toy()), RECIPE, tmp / "toy.lumen"))
+    det = lumen.load(lumen.convert(write(tmp, _toy()), tmp / "toy.lumen", recipe=RECIPE))
     model = steps.Model(tracked.from_parts(det.parts), det.parts.optics)
     layout = fill.HistogramLayout(len(det.parts.optics.sensor_pvs), Grid.bands((300.0, 600.0)))
     return det, model, photons.loop(layout)
@@ -106,7 +106,7 @@ def test_no_value_recompiles(setup, monkeypatch):
         return w(run, *a, **kw)
 
     def run(params=p, controls=None, r=None, seed=0, n_active=N):
-        ops = steps.operands(model, det.pack(params), None, controls or steps.Controls())
+        ops = steps.operands(model, pack.checked(det, params), None, controls or steps.Controls())
         key = jax.random.key_data(jax.random.PRNGKey(seed))
         t = runner.run(spec, model, ops, rows() if r is None else r, key, max_vertices=500, backend="auto",
                        n_active=n_active)  # fmt: skip
@@ -133,7 +133,7 @@ def test_no_value_recompiles(setup, monkeypatch):
 
 def test_a_loop_closing_over_a_float_array_is_refused(setup):
     det, model, spec = setup
-    ops = steps.operands(model, det.pack(), None, steps.Controls())
+    ops = steps.operands(model, pack.checked(det), None, steps.Controls())
     baked = jnp.linspace(0.5, 1.0, 4, dtype=jnp.float32)  # a value the item closes over instead of reading an operand
     start = runner.start_photon
     with pytest.MonkeyPatch.context() as mp:
@@ -228,7 +228,7 @@ def test_a_new_event_compiles_nothing(tmp_path, monkeypatch):
     props = "".join(f' <property name="{n}" ref="{k}"/>' for k, n in names.items())
     prop = '<property name="ABSLENGTH" ref="ABS0x2"/>'
     toy = _toy().replace('  <matrix name="GV"', keys + '  <matrix name="GV"').replace(prop, prop + props)
-    det = lumen.load(lumen.convert(write(tmp_path, toy), RECIPE, tmp_path / "scint.lumen"))
+    det = lumen.load(lumen.convert(write(tmp_path, toy), tmp_path / "scint.lumen", recipe=RECIPE))
     p = det.params()
 
     def event(k, n=100):  # a track of n steps along a new direction from a new point: new values, the same shapes
@@ -282,7 +282,7 @@ def test_a_reload_compiles_nothing_and_leaves_nothing(tmp_path, monkeypatch):
 
     from lumen import sources
 
-    path = lumen.convert(write(tmp_path, _toy()), RECIPE, tmp_path / "toy.lumen")
+    path = lumen.convert(write(tmp_path, _toy()), tmp_path / "toy.lumen", recipe=RECIPE)
     src = sources.Point((0.3, 0.0, 0.0), n_photons=1e3, lam=400.0)
     w = Watch(monkeypatch)
 

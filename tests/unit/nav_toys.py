@@ -8,10 +8,12 @@ import numpy as np
 
 from lumen.compare import oracle
 from lumen.geometry import navigate, scene, solids
+from lumen.rules.navigation import FLOAT32
+from lumen.rules.tolerances import BAND_ULPS
 
 F32, I32 = jnp.float32, jnp.int32
 T_ORC = 1e-9  # the oracle's start (its merge length is 1e-10)
-BAND = 8 * 2.0**-23  # the float32 band per metre of coordinate
+BAND = BAND_ULPS * FLOAT32.eps  # the float32 band per metre of coordinate (lumen's own, never restated)
 
 
 def rz(deg):

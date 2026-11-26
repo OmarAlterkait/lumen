@@ -13,6 +13,7 @@ from test_api import RECIPE, _toy
 from test_importer import write
 
 import lumen
+from lumen.build import pack
 from lumen.compare import gradients
 from lumen.format.apply import GEANT4_DEFAULT, apply
 from lumen.format.calibrations import Table
@@ -47,7 +48,7 @@ def _win_toy():
 def det(tmp_path_factory):
     tmp = tmp_path_factory.mktemp("paint")
     recipe = dataclasses.replace(RECIPE, groups=())  # no sensors: the windows are plain surfaces
-    return lumen.load(lumen.convert(write(tmp, _win_toy()), recipe, tmp / "win.lumen"))
+    return lumen.load(lumen.convert(write(tmp, _win_toy()), tmp / "win.lumen", recipe=recipe))
 
 
 def test_params_list_the_default_with_its_source(det):
@@ -96,5 +97,5 @@ def test_the_gradient_family_is_the_params_key(det):
     fams = [f for f in gradients.families(det, det.params()) if f[0] == KEY]
     assert len(fams) == 1 and fams[0][1] == "edge"  # at 0: one-sided, inward
     row = next(i for i, r in enumerate(det.parts.optics.rows) if (r.surface_type.name, r.origin) == ROW)
-    packed = det.pack(gradients.at(det.params(), fams[0], 0.25))
+    packed = pack.checked(det, gradients.at(det.params(), fams[0], 0.25))
     assert float(np.asarray(packed["surfaces"]["T"])[row]) == 0.25

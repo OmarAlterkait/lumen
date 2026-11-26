@@ -157,7 +157,7 @@ def read(path, recipe, inputs, errors, notes):
         return Reading(df, sensorsets.SensorSet(()))
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "detector.lumen"
-        if _caught(lambda: api.convert(path, rec, out, inputs=inputs), "conversion", errors, notes) is None:
+        if _caught(lambda: api.convert(path, out, recipe=rec, inputs=inputs), "conversion", errors, notes) is None:
             spec = rec.detector_volume
             found = _caught(lambda: lowering.find_detector(df, spec), "detector volume", [], [])
             lv = spec if found is None or not spec.startswith("auto:") else found.lv

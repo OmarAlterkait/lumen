@@ -1,4 +1,4 @@
-"""The diffusion jump (``lumen.speed``, "fast" only): its data, built from the detector, and its step code.
+"""The diffusion jump (``StepConfig.jump``): its data, built from the detector, and its step code.
 
 At a bulk Rayleigh event in a medium whose only channel is a Rayleigh lobe without re-emission, with a linear
 polarisation state after the event (ei = 0 exactly), the photon walks its own scatterings inside the ball B(x, c) of

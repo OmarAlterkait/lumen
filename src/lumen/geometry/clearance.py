@@ -1,4 +1,4 @@
-"""A proven lower bound of the distance to every surface, on a grid: the diffusion jump's clearance (``lumen.speed``).
+"""A proven lower bound of the distance to every surface, on a grid: the diffusion jump's clearance.
 
 The jump (``lumen.transport.fastpath``) moves a photon to a point of a sphere around it; that sphere must cross no
 surface a photon can meet, visible or not. ``bound`` gives, at the nodes of a regular grid, a number no larger than

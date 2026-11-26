@@ -109,7 +109,7 @@ def _convert(tmp, text):
 
     (tmp / "slab.gdml").write_text(text)
     recipe = Recipe("slab", "GasLV", groups=(SensorGroup("cath", rule="border_into", lv="CathLV"),))
-    return lumen.load(lumen.convert(tmp / "slab.gdml", recipe, tmp / "slab.lumen"))
+    return lumen.load(lumen.convert(tmp / "slab.gdml", tmp / "slab.lumen", recipe=recipe))
 
 
 @pytest.mark.slow  # converts a toy and compiles the photon loop: about a minute on 4 CPUs

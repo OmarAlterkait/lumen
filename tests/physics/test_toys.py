@@ -26,7 +26,8 @@ import toys
 from toys import DATA, EXACT, A, simulate
 
 from lumen.compare import photons
-from lumen.rules.navigation import BAND as BAND_REL
+from lumen.rules.navigation import FLOAT32
+from lumen.rules.tolerances import BAND_ULPS
 from lumen.tools import stats
 from lumen.transport import state
 from lumen.transport import step as steps
@@ -262,7 +263,9 @@ def test_an_overlap_toy_through_the_step_matches_geant4(toy, name):
     t = tw / q
 
     def agree(v, ref, err):  # no Monte Carlo error on either side (every photon the same path): float32's resolution
-        return abs(v - ref) <= BAND_REL * abs(ref) if err == 0 else abs(v - ref) / err < stats.z_limit(2, k - 1)
+        if err == 0:
+            return abs(v - ref) <= BAND_ULPS * FLOAT32.eps * abs(ref)
+        return abs(v - ref) / err < stats.z_limit(2, k - 1)
 
     assert agree(f.mean(), g4["fraction"], np.hypot(stats.sem(f), g4["fraction_error"]))
     assert agree(tw.sum() / q.sum(), g4["mean_time_ns"], np.hypot(stats.sem(t), g4["mean_time_error_ns"]))

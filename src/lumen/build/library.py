@@ -567,10 +567,11 @@ def model_medium_entry(m, rec, name):
 def _check_medium(m, spec):
     for ch in spec.lobes:
         lobe = next(c.lobe for c in spec.medium.channels if c.name == ch)
-        if (m, lobe.name) in models._CHECKED:
+        done = models._CHECKED.setdefault(m, set())
+        if lobe.name in done:
             continue
         checks.check_lobe(lobe, spec.params[ch].get("lobe", {}), f"medium model {m.name!r} ({lobe.name})")
-        models._CHECKED.add((m, lobe.name))
+        done.add(lobe.name)
 
 
 # lumen's own medium models, by the name a material's record gives (``schema.OpticsModel.name``)

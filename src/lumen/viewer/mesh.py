@@ -20,7 +20,7 @@ from lumen.build.lowering import SolidMapper, boolean_pose
 from lumen.geometry import scene as sc
 from lumen.geometry import solids as so
 from lumen.rules.tolerances import CUT_NORMAL_FLOOR
-from lumen.units import MM
+from lumen.units import MM, TWO_PI
 
 try:
     import manifold3d as _mf
@@ -30,7 +30,6 @@ except ImportError:  # the view extra is not installed: ``require``
 SEGMENTS = 48  # flat faces per full turn of a curved face, for a solid drawn a few times
 MIN_SEGMENTS = 6  # per arc, however short
 LOD = ((50, 48), (500, 32), (5000, 20), (None, 12))  # (solid drawn fewer than n times, faces per turn)
-TWOPI = 2 * math.pi
 PHI_FULL = 1e-9  # rad: a phi range this close to 2 pi is the full turn
 CHECK_SEGMENTS = 192  # faces per turn of the mesh compared with lumen's solid
 CHECK_POINTS = 128  # points in the solid's box, and on the mesh, of that comparison
@@ -66,7 +65,7 @@ def _triangulate(loops):
 
 
 def _arc_segments(dphi, fixed=None, seg=SEGMENTS):
-    return fixed if fixed else max(MIN_SEGMENTS, math.ceil(seg * dphi / TWOPI))
+    return fixed if fixed else max(MIN_SEGMENTS, math.ceil(seg * dphi / TWO_PI))
 
 
 def require():
@@ -80,14 +79,14 @@ def segments_for(uses):
     return next(n for limit, n in LOD if limit is None or uses < limit)
 
 
-def lathe(loops, startphi=0.0, deltaphi=TWOPI, sides=None, radial=1.0, seg=SEGMENTS):
+def lathe(loops, startphi=0.0, deltaphi=TWO_PI, sides=None, radial=1.0, seg=SEGMENTS):
     """Return the surface of revolution about z of (r, z) loops (outer CCW, holes CW) as (vertices, triangles).
 
     ``sides`` fixes the number of flat faces over ``deltaphi`` (a polyhedra), whose corners then sit at
     ``startphi + i deltaphi / sides`` with the radii multiplied by ``radial`` (apothem to corner).
     """
-    full = deltaphi <= 0 or deltaphi >= TWOPI - PHI_FULL
-    dphi = TWOPI if full else deltaphi
+    full = deltaphi <= 0 or deltaphi >= TWO_PI - PHI_FULL
+    dphi = TWO_PI if full else deltaphi
     n = _arc_segments(dphi, sides, seg)
     phis = startphi + dphi * np.arange(n + (0 if full else 1)) / n
     rings = len(phis)
@@ -149,7 +148,7 @@ def _arc(r, t0, t1, n):
 
 
 def _sphere_loop(rmin, rmax, t0, dt, seg=SEGMENTS):
-    n = max(MIN_SEGMENTS, math.ceil(seg * dt / TWOPI))
+    n = max(MIN_SEGMENTS, math.ceil(seg * dt / TWO_PI))
     outer = _arc(rmax, t0, t0 + dt, n)
     inner = _arc(rmin, t0 + dt, t0, n) if rmin > 0 else [(0.0, 0.0)]
     return [_orient(outer + inner)]
@@ -181,7 +180,7 @@ def _ring(r_in, r_out, hz):
 
 
 def _tube(s, g, seg):
-    return lathe(_ring(g("rmin"), g("rmax"), g("z") / 2), g("startphi"), g("deltaphi", TWOPI), seg=seg)
+    return lathe(_ring(g("rmin"), g("rmax"), g("z") / 2), g("startphi"), g("deltaphi", TWO_PI), seg=seg)
 
 
 def _cut_tube(s, g, seg):
@@ -190,7 +189,7 @@ def _cut_tube(s, g, seg):
     cuts = [(np.array([g(f"{end}{k}") for k in "XYZ"]), z) for end, z in (("low", -hz), ("high", hz))]
     cuts = [(n / np.linalg.norm(n), z) for n, z in cuts]
     reach = hz + max(rmax * math.hypot(n[0], n[1]) / max(abs(n[2]), CUT_NORMAL_FLOOR) for n, _ in cuts)
-    m = _manifold(lathe(_ring(g("rmin"), rmax, reach), g("startphi"), g("deltaphi", TWOPI), seg=seg))
+    m = _manifold(lathe(_ring(g("rmin"), rmax, reach), g("startphi"), g("deltaphi", TWO_PI), seg=seg))
     for n, z in cuts:
         m = m.trim_by_plane(tuple(-n), float(-n[2] * z))  # keep n . (x - (0, 0, z)) <= 0
     return m
@@ -199,30 +198,30 @@ def _cut_tube(s, g, seg):
 def _cone(s, g, seg):
     hz = g("z") / 2
     loop = [_orient([(g("rmin1"), -hz), (g("rmax1"), -hz), (g("rmax2"), hz), (g("rmin2"), hz)])]
-    return lathe(loop, g("startphi"), g("deltaphi", TWOPI), seg=seg)
+    return lathe(loop, g("startphi"), g("deltaphi", TWO_PI), seg=seg)
 
 
 def _polycone(s, g, seg):
-    return lathe(_planes_loop(s.planes, s.type == "genericPolycone"), g("startphi"), g("deltaphi", TWOPI), seg=seg)
+    return lathe(_planes_loop(s.planes, s.type == "genericPolycone"), g("startphi"), g("deltaphi", TWO_PI), seg=seg)
 
 
 def _polyhedra(s, g, seg):
-    n, dphi = int(g("numsides")), g("deltaphi", TWOPI)
-    full = dphi <= 0 or dphi >= TWOPI - PHI_FULL
+    n, dphi = int(g("numsides")), g("deltaphi", TWO_PI)
+    full = dphi <= 0 or dphi >= TWO_PI - PHI_FULL
     generic = s.type == "genericPolyhedra"  # its (r, z) points are the corners; a polyhedra's radii are apothems
-    radial = 1.0 if generic else 1.0 / math.cos(0.5 * (TWOPI if full else dphi) / n)
+    radial = 1.0 if generic else 1.0 / math.cos(0.5 * (TWO_PI if full else dphi) / n)
     return lathe(_planes_loop(s.planes, generic), g("startphi"), dphi, sides=n, radial=radial, seg=seg)
 
 
 def _sphere(s, g, seg):
     loop = _sphere_loop(g("rmin"), g("rmax"), g("starttheta"), g("deltatheta", math.pi), seg)
-    return lathe(loop, g("startphi"), g("deltaphi", TWOPI), seg=seg)
+    return lathe(loop, g("startphi"), g("deltaphi", TWO_PI), seg=seg)
 
 
 def _torus(s, g, seg):
-    circle = lambda r: [(g("rtor") + r * math.cos(a), r * math.sin(a)) for a in TWOPI * np.arange(seg) / seg]  # noqa: E731
+    circle = lambda r: [(g("rtor") + r * math.cos(a), r * math.sin(a)) for a in TWO_PI * np.arange(seg) / seg]  # noqa: E731
     loops = [_orient(circle(g("rmax")))] + ([_orient(circle(g("rmin")))[::-1]] if g("rmin") > 0 else [])
-    return lathe(loops, g("startphi"), g("deltaphi", TWOPI), seg=seg)
+    return lathe(loops, g("startphi"), g("deltaphi", TWO_PI), seg=seg)
 
 
 def _elcone(s, g, seg):
