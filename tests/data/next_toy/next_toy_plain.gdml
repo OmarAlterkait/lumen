@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- A NEXT-like toy at NEXT-100's scales, small enough for a test: a metre-scale teflon light tube coated with
+     3 um of TPB whose inner face lies on the gas, a SiPM board at one end (a teflon mask carrying a TPB coating
+     whose face lies on the gas, four SiPM windows with sensitive areas) and a PMT at the other, both read by
+     their own skin surface. The surfaces are nexus's NEXT-100 kinds: a glisur ground dielectric_dielectric border
+     gas <-> TPB (polish 0.01), a unified ground dielectric_metal skin on the mask (sigma_alpha 1 rad), a unified
+     ground skin on the tube, and polished dielectric_metal skins with EFFICIENCY on the photocathode and the
+     sensitive areas. Lengths in mm, as nexus writes them. The surfaces are filled in per case
+     (tools/g4ref/next_toy.py). -->
+<gdml>
+<define>
+  <matrix name="E2" coldim="2" values="1.0*eV 1.0 12.0*eV 1.0"/>
+  <matrix name="RI_GAS" coldim="2" values="1.0*eV 1.01 12.0*eV 1.01"/>
+  <matrix name="RI_TPB" coldim="2" values="1.0*eV 1.67 12.0*eV 1.67"/>
+  <matrix name="RI_QUARTZ" coldim="2" values="1.0*eV 1.47 12.0*eV 1.47"/>
+  <matrix name="ABS_LONG" coldim="2" values="1.0*eV 1.0e6 12.0*eV 1.0e6"/>
+  <matrix name="ABS_TPB" coldim="2" values="1.0*eV 1.0e4 12.0*eV 1.0e4"/>
+  <matrix name="REFL_TEFLON" coldim="2" values="1.0*eV 0.97 12.0*eV 0.97"/>
+  <matrix name="REFL_ZERO" coldim="2" values="1.0*eV 0.0 12.0*eV 0.0"/>
+  <matrix name="LOBE_ONE" coldim="2" values="1.0*eV 1.0 12.0*eV 1.0"/>
+  <matrix name="EFF_SIPM" coldim="2" values="1.0*eV 0.4 12.0*eV 0.4"/>
+  <matrix name="EFF_PMT" coldim="2" values="1.0*eV 0.3 12.0*eV 0.3"/>
+</define>
+<materials>
+  <element name="toyXe" formula="Xe" Z="54"> <atom value="131.29"/> </element>
+  <element name="toyC" formula="C" Z="6"> <atom value="12.011"/> </element>
+  <material name="GXe" state="gas"> <property name="RINDEX" ref="RI_GAS"/>
+    <property name="ABSLENGTH" ref="ABS_LONG"/> <D value="0.09"/> <fraction n="1.0" ref="toyXe"/> </material>
+  <material name="TPB" state="solid"> <property name="RINDEX" ref="RI_TPB"/>
+    <property name="ABSLENGTH" ref="ABS_TPB"/> <D value="1.08"/> <fraction n="1.0" ref="toyC"/> </material>
+  <material name="Quartz" state="solid"> <property name="RINDEX" ref="RI_QUARTZ"/>
+    <property name="ABSLENGTH" ref="ABS_LONG"/> <D value="2.2"/> <fraction n="1.0" ref="toyC"/> </material>
+  <material name="Teflon" state="solid"> <D value="2.2"/> <fraction n="1.0" ref="toyC"/> </material>
+  <material name="Copper" state="solid"> <D value="8.96"/> <fraction n="1.0" ref="toyC"/> </material>
+</materials>
+<solids>
+  <box name="WorldBox" x="3000" y="3000" z="3000" lunit="mm"/>
+  <tube name="GasTube" rmax="700" z="1600" deltaphi="360" aunit="deg" lunit="mm"/>
+  <tube name="ActiveTube" rmax="500" z="1200" deltaphi="360" aunit="deg" lunit="mm"/>
+  <tube name="TubeSolid" rmin="500" rmax="520" z="1200" deltaphi="360" aunit="deg" lunit="mm"/>
+  <tube name="CoatSolid" rmin="500" rmax="500.003" z="1200" deltaphi="360" aunit="deg" lunit="mm"/>
+  <box name="BoardBox" x="400" y="400" z="20" lunit="mm"/>
+  <box name="MaskBox" x="200" y="200" z="6" lunit="mm"/>
+  <box name="MaskCoatBox" x="200" y="200" z="0.004" lunit="mm"/>
+  <box name="SipmBox" x="60" y="60" z="1" lunit="mm"/>
+  <box name="SipmSenseBox" x="30" y="30" z="0.2" lunit="mm"/>
+  <tube name="PmtBody" rmax="100" z="40" deltaphi="360" aunit="deg" lunit="mm"/>
+  <tube name="PmtCath" rmax="95" z="0.2" deltaphi="360" aunit="deg" lunit="mm"/>
+  <opticalsurface name="PHOTOCATHODE" model="unified" finish="polished" type="dielectric_metal" value="1">
+    <property name="REFLECTIVITY" ref="REFL_ZERO"/> <property name="EFFICIENCY" ref="EFF_PMT"/>
+  </opticalsurface>
+  <opticalsurface name="SIPM_OPSURF" model="unified" finish="polished" type="dielectric_metal" value="1">
+    <property name="REFLECTIVITY" ref="REFL_ZERO"/> <property name="EFFICIENCY" ref="EFF_SIPM"/>
+  </opticalsurface>
+  <opticalsurface name="TUBE_REFL" model="unified" finish="ground" type="dielectric_metal" value="0.01">
+    <property name="REFLECTIVITY" ref="REFL_TEFLON"/> <property name="SPECULARLOBECONSTANT" ref="LOBE_ONE"/>
+  </opticalsurface>
+</solids>
+<structure>
+  <volume name="SIPM_SENSE"> <materialref ref="Copper"/> <solidref ref="SipmSenseBox"/> </volume>
+  <volume name="SIPM"> <materialref ref="Quartz"/> <solidref ref="SipmBox"/>
+    <physvol name="sipm_sense"> <volumeref ref="SIPM_SENSE"/>
+      <position name="pss" unit="mm" x="0" y="0" z="-0.4"/> </physvol>
+  </volume>
+  <volume name="MASK_COAT"> <materialref ref="TPB"/> <solidref ref="MaskCoatBox"/> </volume>
+  <volume name="MASK"> <materialref ref="Teflon"/> <solidref ref="MaskBox"/>
+    <physvol name="mask_coat"> <volumeref ref="MASK_COAT"/>
+      <position name="pmc" unit="mm" x="0" y="0" z="2.998"/> </physvol>
+  </volume>
+  <volume name="BOARD"> <materialref ref="Copper"/> <solidref ref="BoardBox"/>
+    <physvol name="mask"> <volumeref ref="MASK"/> <position name="pm" unit="mm" x="0" y="0" z="7"/> </physvol>
+    <physvol name="sipm1"> <volumeref ref="SIPM"/> <position name="ps1" unit="mm" x="-150" y="-150" z="9.5"/>
+    </physvol>
+    <physvol name="sipm2"> <volumeref ref="SIPM"/> <position name="ps2" unit="mm" x="150" y="-150" z="9.5"/>
+    </physvol>
+    <physvol name="sipm3"> <volumeref ref="SIPM"/> <position name="ps3" unit="mm" x="-150" y="150" z="9.5"/>
+    </physvol>
+    <physvol name="sipm4"> <volumeref ref="SIPM"/> <position name="ps4" unit="mm" x="150" y="150" z="9.5"/>
+    </physvol>
+  </volume>
+  <volume name="PMT_PHOTOCATHODE"> <materialref ref="Copper"/> <solidref ref="PmtCath"/> </volume>
+  <volume name="PMT"> <materialref ref="Quartz"/> <solidref ref="PmtBody"/>
+    <physvol name="pmt_cath"> <volumeref ref="PMT_PHOTOCATHODE"/>
+      <position name="pcath" unit="mm" x="0" y="0" z="-19.9"/> </physvol>
+  </volume>
+  <volume name="TUBE_COAT"> <materialref ref="TPB"/> <solidref ref="CoatSolid"/> </volume>
+  <volume name="LIGHT_TUBE"> <materialref ref="Teflon"/> <solidref ref="TubeSolid"/>
+    <physvol name="tube_coat"> <volumeref ref="TUBE_COAT"/> </physvol>
+  </volume>
+  <volume name="ACTIVE"> <materialref ref="GXe"/> <solidref ref="ActiveTube"/> </volume>
+  <volume name="GAS"> <materialref ref="GXe"/> <solidref ref="GasTube"/>
+    <physvol name="active"> <volumeref ref="ACTIVE"/> </physvol>
+    <physvol name="light_tube"> <volumeref ref="LIGHT_TUBE"/> </physvol>
+    <physvol name="board"> <volumeref ref="BOARD"/> <position name="pb" unit="mm" x="0" y="0" z="-620"/> </physvol>
+    <physvol name="pmt"> <volumeref ref="PMT"/> <position name="pp" unit="mm" x="0" y="0" z="630"/> </physvol>
+  </volume>
+  <volume name="WORLD"> <materialref ref="Teflon"/> <solidref ref="WorldBox"/>
+    <physvol name="gas"> <volumeref ref="GAS"/> </physvol>
+  </volume>
+  <skinsurface name="pmt_cathode_skin" surfaceproperty="PHOTOCATHODE">
+    <volumeref ref="PMT_PHOTOCATHODE"/> </skinsurface>
+  <skinsurface name="sipm_skin" surfaceproperty="SIPM_OPSURF"> <volumeref ref="SIPM_SENSE"/> </skinsurface>
+  <skinsurface name="light_tube_skin" surfaceproperty="TUBE_REFL"> <volumeref ref="LIGHT_TUBE"/> </skinsurface>
+</structure>
+<setup name="Default" version="1.0"> <world ref="WORLD"/> </setup>
+</gdml>

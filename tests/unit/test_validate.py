@@ -151,6 +151,16 @@ def test_records_are_never_written_into_a_store(manifest, tmp_path):
     assert "| toydet | ratio | 0.999 ± 0.001 |" in md and "## Not validated" in md
 
 
+def test_the_report_prints_every_gated_charge_row(tmp_path):
+    names = ("ratio source 0", "sensors agree source 0", "ratio", "truncated weight")
+    rows = [records.row("charge", "toydet", q, 0.5, 0.1, passed=True, reference="toyref") for q in names]
+    rows.append(records.row("charge", "toydet", "mean time lumen - reference source 0 (ns)", 0.01, 0.02))
+    records.write(rows, tmp_path / "out", "charge_toydet")
+    md = report.markdown(records.read([tmp_path / "out"]))
+    assert "| charge | toydet | 4 of 4 |" in md and "4 of 4 gated rows pass." in md
+    assert all(f"| toydet | {r['quantity']} |" in md for r in rows)
+
+
 def test_the_pass_rules_and_the_statistics():
     # three standard deviations above the null, no floor: Pearson terms (1, 2), or the null of the terms given
     assert stats.chi2_passes(1.04, 11096) and not stats.chi2_passes(1.041, 11096)
@@ -325,7 +335,7 @@ def test_a_manifest_s_reverse_flag_is_honoured(monkeypatch):
     """The reverse row runs when the manifest says ``"reverse": true``; the command's flag only overrides it."""
     from lumen.compare import cli
 
-    monkeypatch.setattr(gradients.lumen, "load", lambda path: None)
+    monkeypatch.setattr(gradients.lumen, "load", lambda path, **kw: None)
     monkeypatch.setattr(gradients, "_Runs", lambda det, spec, o: types.SimpleNamespace(det=det, p0=None))
     monkeypatch.setattr(gradients, "families", lambda det, p: [])
     monkeypatch.setattr(gradients, "_reverse", lambda name, runs, fams: records.row("gradients", name, "reverse", 0.0))

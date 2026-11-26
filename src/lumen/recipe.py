@@ -34,6 +34,8 @@ class Recipe:
     ``inputs`` names the extra files a decision reads (e.g. a channel map), given at conversion time and recorded in
     the provenance by name and sha256; ``sensor_columns(df, sensor_paths, inputs) -> {column: [value per sensor]}``
     adds per-sensor columns to the id map (``sensor_paths``: the sensors' placed-volume paths in id order).
+    ``precision`` is the navigator precision the detector needs, "float32" (the default) or "float64" for a detector
+    whose layers are thinner than float32's band (``lumen.load``, which uses it when the caller passes none).
     A GDML that Geant4 refuses is repaired apart and the repaired copy converted (``python -m lumen.gdml.repair``).
     """
 
@@ -45,6 +47,7 @@ class Recipe:
     inputs: tuple[str, ...] = ()
     sensor_columns: Callable | None = None
     material_keys: frozenset | None = None  # the material keys to read (None: the Geant4 optical keys); others inert
+    precision: str = "float32"  # the navigator precision this detector needs ("float64" for sub-band layers)
 
     def apply(self, df: schema.DetectorFile, inputs: dict | None = None):
         """Return the ImportResult of a detector file read from its source under this recipe.
@@ -55,6 +58,7 @@ class Recipe:
         rules are build rules, and the sensor ids are numbered in the lowered geometry's canonical walk.
         """
         from lumen.build import lowering
+        from lumen.rules import navigation
 
         inputs = dict(inputs or {})
         missing = [k for k in self.inputs if k not in inputs]
@@ -66,7 +70,8 @@ class Recipe:
         lv = found.lv if spec.startswith("auto:") or spec == found.lv else spec
         rep = list(df.report) + [f"detector volume: {found.lv} (recipe: {spec})"]
         prov = dict(df.provenance, recipe=self.name, recipe_inputs={k: _input_record(k, v) for k, v in inputs.items()})
-        df = dataclasses.replace(df, name=self.name, detector_volume=lv, provenance=prov, report=tuple(rep))
+        df = dataclasses.replace(df, name=self.name, detector_volume=lv, provenance=prov, report=tuple(rep),
+                                 precision=navigation.precision(self.precision).name)  # fmt: skip
         for decide in self.decisions:
             df = decide(df, inputs)
         cols = self.sensor_columns

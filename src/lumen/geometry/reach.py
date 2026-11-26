@@ -85,7 +85,7 @@ def build(nav, sensor_of_vol, vertex_tab):
                 uf.union(v, int(k))
     lo_w, hi_w = np.asarray(nav.lo_w, np.float64)[:n], np.asarray(nav.hi_w, np.float64)[:n]
     scale = float(np.max(np.abs(np.concatenate([lo_w, hi_w]))))
-    pad = float(rules.contact(scale))  # lumen's contact tolerance at the scene's scale (K_ON bands)
+    pad = float(rules.contact(scale))  # float32's in either precision: the boxes are float32
     root = np.array([uf.find(v) for v in range(n)], np.int64)
     roots, comp = np.unique(root, return_inverse=True)
     c_lo = np.full((len(roots), 3), np.inf)
@@ -214,9 +214,10 @@ class ReachGeometry:
         far = lax.cond(cand, lambda _: _meets(R, self.report["tree_nodes"], x, inv, tout), lambda _: jnp.bool_(True),
                        None)  # fmt: skip
         # past s by the navigator's own look-ahead: a round starting before s reads its first change up to GRAZE K_ON
-        # bands ahead (the on-face rule, Navigator._on_face) in a window min(best, t_max) + band; t_max must not cut it
+        # bands ahead (the on-face rule, Navigator._on_face) in a window min(best, t_max) + band; t_max must not cut it;
+        # float32's band in either precision: s comes from the float32 boxes
         look = (rules.GRAZE * rules.K_ON + 2) * rules.band(jnp.max(jnp.abs(x)) + s)
-        tm = lax.stop_gradient(jnp.where(cand & ~far, jnp.minimum(jnp.asarray(t_max, F32), s + look), t_max))
+        tm = lax.stop_gradient(jnp.where(cand & ~far, jnp.minimum(jnp.asarray(t_max, self.nav.F), s + look), t_max))
         return self.inner.query(gp, x, d, cls, tm, vol=vol, last=last, sn=sn, s_at=s_at)
 
 

@@ -39,7 +39,7 @@ from lumen.rules.tolerances import (
 )
 from lumen.units import HUGE
 
-F32, I32 = jnp.float32, jnp.int32
+I32 = jnp.int32
 
 
 def pick(p, a, b):
@@ -69,8 +69,10 @@ CACHE = 8  # a scan computes the intervals of its solid's first CACHE leaves onc
 class Csg:
     """The device evaluator over a scene's CSG tables (jnp scalars, one thread)."""
 
-    def __init__(self, tables):
+    def __init__(self, tables, prec=rules.FLOAT32):
         self.tables = tables
+        self.prec = prec  # the navigator's precision: its float dtype, its band
+        self.F = prec.F
         self.has_torus = tables.has_torus
         self.empty_leaf = tables.empty_leaf
         self._dev = None
@@ -113,7 +115,7 @@ class Csg:
 
     def _planes(self, g, o, d):
         """Return (t0p, t1p, f0p, f1p, empty_par) of leaf g's plane slab along o + t d (o relative to its origin)."""
-        inf = F32(HUGE)
+        inf = self.F(HUGE)
         p0 = self.T["p0"][g]
 
         def body(k, c):
@@ -135,7 +137,7 @@ class Csg:
 
     def _q_iv(self, g, o, d):
         """Return a quadric leaf's two intervals (lo0, hi0, flo0, fhi0, lo1, hi1, flo1, fhi1) along o + t d."""
-        inf, ninf, m1 = F32(HUGE), F32(-HUGE), I32(-1)
+        inf, ninf, m1 = self.F(HUGE), self.F(-HUGE), I32(-1)
         og, oq = self._o(g), self._qo(g)
         y = [o[a] - oq[a] for a in range(3)]
         o = [o[a] - og[a] for a in range(3)]
@@ -147,7 +149,7 @@ class Csg:
             return b[0] * v[0] + b[1] * v[1] + b[2] * v[2]
 
         L0, R0, L0q, R0q, L1, R1 = leaf_kernels.quad_line(lambda v: self._Av(g, v), bd, self.T["c"][g], y, d,
-                                                          self.T["sa"][g], rules.FLOAT32_EPS, inf)  # fmt: skip
+                                                          self.T["sa"][g], self.prec.eps, inf)  # fmt: skip
         L0 = jnp.where(has_q, L0, ninf)
         R0 = jnp.where(has_q, R0, inf)
         L0q = has_q & L0q
@@ -211,7 +213,7 @@ class Csg:
         kk = jnp.sqrt(dl[0] * dl[0] + dl[1] * dl[1] + dl[2] * dl[2])
         du = [dl[a] / kk for a in range(3)]
         meet = self._torus_window(g, ol, du, kk, (w0, w1))
-        inf, m1 = F32(HUGE), I32(-1)
+        inf, m1 = self.F(HUGE), I32(-1)
 
         def solve(a):
             s = leaf_kernels.torus_set(a[2], a[3], jnp.stack(a[0]), jnp.stack(a[1]))
@@ -239,7 +241,7 @@ class Csg:
     def _box_t(self, g, o, d):
         """Return (whether o + t d can meet leaf g's box, the t it enters it at, the t it leaves at): the ray meets it
         within a window [w0, w1] where ne and max(w0, enter) <= min(w1, leave)."""  # noqa: D205, D209
-        lo_t, hi_t, ne = F32(-jnp.inf), F32(jnp.inf), jnp.bool_(True)
+        lo_t, hi_t, ne = self.F(-jnp.inf), self.F(jnp.inf), jnp.bool_(True)
         for a in range(3):
             lo, hi = self.T[f"bl{a}"][g], self.T[f"bh{a}"][g]
             small = jnp.abs(d[a]) < TINY_DIR
@@ -252,7 +254,7 @@ class Csg:
 
     def _iv_in(self, g, o, d, w0, w1):
         """Return _iv where the window [w0, w1] meets leaf g's box; else no intervals (the leaf is false there)."""
-        inf, m1 = F32(HUGE), I32(-1)
+        inf, m1 = self.F(HUGE), I32(-1)
         return pick(self._meets(g, o, d, w0, w1), lambda: self._iv(g, o, d, w0, w1),
                     lambda: (inf, inf, m1, m1, inf, inf, m1, m1))  # fmt: skip
 
@@ -260,7 +262,7 @@ class Csg:
         """Return a scan's cache of its first CACHE leaves (from t0 on): whether a leaf is held (a quadric leaf, whose
         intervals do not depend on the window; a torus leaf is solved per window), its box parameters (``_box_t``) and
         its intervals (``_q_iv``), computed where its box reaches past t0 (every later window starts there)."""  # noqa: D205, D209
-        inf, m1 = F32(HUGE), I32(-1)
+        inf, m1 = self.F(HUGE), I32(-1)
         nl = self.dev()["K"]["nl"][kind]
 
         def fill(l, c):  # noqa: E741 -- a kind-local leaf
@@ -274,8 +276,8 @@ class Csg:
                     ivf.at[l].set(jnp.stack([iv[0], iv[1], iv[4], iv[5]])),
                     ivi.at[l].set(jnp.stack([iv[2], iv[3], iv[6], iv[7]])))  # fmt: skip
 
-        z, zi = jnp.zeros(CACHE, F32), jnp.zeros(CACHE, I32)
-        c0 = (zi == 1, zi == 1, z, z, jnp.zeros((CACHE, 4), F32), jnp.zeros((CACHE, 4), I32))
+        z, zi = jnp.zeros(CACHE, self.F), jnp.zeros(CACHE, I32)
+        c0 = (zi == 1, zi == 1, z, z, jnp.zeros((CACHE, 4), self.F), jnp.zeros((CACHE, 4), I32))
         return lax.fori_loop(0, jnp.minimum(nl, CACHE), fill, c0)
 
     def _iv_scan(self, s, l, w0, w1):  # noqa: E741 -- a kind-local leaf
@@ -286,7 +288,7 @@ class Csg:
             return self._iv_in(g, s.o, s.d, w0, w1)
         held, ne, lo_t, hi_t, ivf, ivi = s.cache
         k = jnp.minimum(l, CACHE - 1)
-        inf, m1 = F32(HUGE), I32(-1)
+        inf, m1 = self.F(HUGE), I32(-1)
 
         def cached():
             meet = ne[k] & (jnp.maximum(w0, lo_t[k]) <= jnp.minimum(w1, hi_t[k]))
@@ -361,12 +363,12 @@ class Csg:
         """Return whether the solid holds o + t d just after t (the leaves' intervals along the ray: lo <= t < hi)."""
         o = [o[a] for a in range(3)]
         d = [d[a] for a in range(3)]
-        return self._mem_at(kind, o, d, jnp.asarray(t, F32))
+        return self._mem_at(kind, o, d, jnp.asarray(t, self.F))
 
     # ------------------------------------------------------------------ the first change along a ray
     def _nearest(self, s, t_cur):
         """Return the nearest leaf endpoint after t_cur (<= t1): (e, leaf, face, entry)."""
-        inf = F32(HUGE)
+        inf = self.F(HUGE)
 
         def leaf(l, c):  # noqa: E741 -- a kind-local leaf
             e1, lb, fc, ek = c
@@ -409,7 +411,7 @@ class Csg:
         fs = (fs[0] | chg, jnp.where(new, e, fs[1]), jnp.where(new, aft, fs[2]), jnp.where(new, lb, fs[3]),
               jnp.where(new, fc, fs[4]))  # fmt: skip
         now = jnp.where(has, aft, now)  # the state past every change: a passed kind changes it too
-        t_nx = jnp.where(first, t0, jnp.where(vis, e, jnp.where(has, tp, F32(HUGE))))
+        t_nx = jnp.where(first, t0, jnp.where(vis, e, jnp.where(has, tp, self.F(HUGE))))
         return (t_nx, vis, now, jnp.where(vis, lb, lb_h), jnp.where(vis, fc, fc_h), now0, it + 1, fs, hend)
 
     def first_change(self, kind, o, d, t0, t1, want=None, init=None, skip=None, on_face=None):  # noqa: PLR0913 -- the scan's options
@@ -426,21 +428,21 @@ class Csg:
         """
         o = [o[a] for a in range(3)]
         d = [d[a] for a in range(3)]
-        t0 = jnp.asarray(t0, F32)
-        t1 = jnp.asarray(t1, F32)
+        t0 = jnp.asarray(t0, self.F)
+        t1 = jnp.asarray(t1, self.F)
         nl = self.dev()["K"]["nl"][kind]
         xa = jnp.maximum(jnp.maximum(jnp.abs(o[0]), jnp.abs(o[1])), jnp.abs(o[2]))
 
         def band(t):
-            return rules.band(xa + jnp.abs(t))
+            return rules.band(xa + jnp.abs(t), self.prec)
 
         s = _Scan(kind, o, d, t1, nl, band, want, init, skip, on_face, self._cache(kind, o, d, t0))
 
         def cond(c):
             return (~c[1]) & (c[0] < HUGE) & (c[6] < MAX_SCAN_PER_LEAF * nl + MAX_SCAN_EXTRA)
 
-        fs0 = (jnp.bool_(False), F32(HUGE), jnp.bool_(False), I32(-1), I32(-1))
-        h0 = F32(-HUGE) if on_face is None else jnp.asarray(on_face[2], F32)
+        fs0 = (jnp.bool_(False), self.F(HUGE), jnp.bool_(False), I32(-1), I32(-1))
+        h0 = self.F(-HUGE) if on_face is None else jnp.asarray(on_face[2], self.F)
         c0 = (t0, jnp.bool_(False), jnp.bool_(False), I32(-1), I32(-1), jnp.bool_(False), I32(0), fs0, h0)
         t_end, hit, aft, lb, fc, now0, _, fs, _ = lax.while_loop(cond, lambda c: self._change(s, t0, c), c0)
         return dict(hit=hit, t=jnp.where(hit, t_end, t1), inside=jnp.where(hit, aft, now0), leaf=lb, face=fc,

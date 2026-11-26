@@ -395,6 +395,7 @@ class Units:
     t: np.ndarray
     place: np.ndarray
     forced: np.ndarray
+    prec: object = rules.FLOAT32  # the navigator's precision: its contact tolerance
 
 
 @dataclass(frozen=True)
@@ -498,14 +499,14 @@ def _obb_depth(c1, h1, R1, c2, h2, R2):  # noqa: N803 -- R the boxes' rotations
     return best
 
 
-def _tolerance(cw, hw, zero=False):
-    """Return the contact tolerance (m) of boxes (world centre, half): at their largest coordinate.
+def _tolerance(cw, hw, zero=False, prec=rules.FLOAT32):
+    """Return the contact tolerance (m) of boxes (world centre, half) at their largest coordinate (precision ``prec``).
 
     ``zero``: only the float64 rounding of composed poses there, ``POSE_ULPS`` ulps (a face shared exactly is still a
     contact).
     """
     scale = np.max(np.abs(cw) + hw, axis=-1)
-    return POSE_ULPS * np.finfo(float).eps * scale if zero else rules.contact(scale)
+    return POSE_ULPS * np.finfo(float).eps * scale if zero else rules.contact(scale, prec)
 
 
 def _meet(boxes, a, b, u=None, zero=False):
@@ -513,7 +514,8 @@ def _meet(boxes, a, b, u=None, zero=False):
     boxes overlap that deep, and (``u`` given) each solid may hold a point of the common box (b's box in a's frame
     met with a's, shrunk by the tolerance)."""  # noqa: D205, D209
     c, h, cw, hw, R = boxes
-    tol = np.maximum(_tolerance(cw[a], hw[a], zero), _tolerance(cw[b], hw[b], zero))
+    prec = rules.FLOAT32 if u is None else u.prec
+    tol = np.maximum(_tolerance(cw[a], hw[a], zero, prec), _tolerance(cw[b], hw[b], zero, prec))
     ok = _obb_depth(cw[a], h[a], R[a], cw[b], h[b], R[b]) > tol
     if u is None or not ok.any():
         return ok
@@ -623,7 +625,7 @@ def _clips(u, boxes, proofs):
     each tested on the unit's box shrunk by the contact tolerance, then by the containment proof (``Proofs``)."""  # noqa: D205, D209
     c, h, cw, hw, R = boxes
     n = len(u.parent)
-    tol = _tolerance(cw, hw)
+    tol = _tolerance(cw, hw, prec=u.prec)
     clips = [()] * n
     depth = np.zeros(n, np.int64)
     for i in range(n):  # volumes before their daughters; meshes last

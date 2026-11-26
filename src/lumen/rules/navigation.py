@@ -4,6 +4,10 @@ The photon carries the placed volume it is in and the surface it sits on (its fa
 G4Navigator decides a point's side of a surface within kCarTolerance by the direction of travel; lumen's tolerance is
 the float32 resolution of the coordinates, the **band**. The rules, each with the Geant4 code it follows:
 
+- **Precision.** The navigator runs in float32 (the default) or float64 (``lumen.load(..., precision="float64")``):
+  its coordinates, frames, roots and intervals, and the photon's position, in that precision; the physics in float32.
+  Every tolerance below is in bands of the navigator's precision (``Precision``, ``band``). In float64 the floor
+  dominates at any detector scale (below 5.6e5 m), so every tolerance is a fixed multiple of 1 nm.
 - **Tolerance.** One form, ``band(scale) = 8 eps scale + 1e-9 m`` at a coordinate scale (m), and named multiples:
   the query and the CSG evaluator at ``|x| + |t|`` of a crossing, the step's push unit at a point's ``max |x|``
   (``step_band``), the placement check's step in ``K_ON`` bands (``check_step_in``), a zero-length step below
@@ -13,6 +17,18 @@ the float32 resolution of the coordinates, the **band**. The rules, each with th
   but farther perpendicularly is looked for up to ``GRAZE`` times farther: a ray leaving its face at an angle theta
   is K_ON bands from it after K_ON / sin(theta) bands, so ``GRAZE`` sets the shallowest angle the start's face is
   still recognised at, asin(1 / GRAZE) = 0.22 deg; below it the face is a new crossing (a zero-length step).
+  A bulk event within ``ZERO_STEP_BANDS`` bands of the start leaves the photon on the surface it sat on
+  (``lumen.transport.step``: its point has not moved off that face, so its side there is still its direction's), and a
+  zero-length crossing whose solid gives no face of its own (a point one ulp beyond the face just crossed) is read on
+  that surface too: its normal is the crossing's.
+- **Relocation.** A crossing is relocated from a point ``RELOCATE_BANDS`` bands past the face met, along that face's
+  normal the way the photon travels (G4Navigator's LocateGlobalPointAndSetup, up while a solid does not hold the
+  point, then down). The point's own distance from the face (``surface_id.face_dist``) is the rest of the step: it is
+  within an ulp of the face for a crossing, at any angle of the ray, and up to ``K_ON`` bands on the near side of it
+  for a zero-length one, where the on-face rule put the photon. A volume whose own face coincides with the one met
+  (a daughter placed flush in its mother) is then left, or entered, at that one crossing, as Geant4 leaves a mother
+  whose surface the point is on when the direction leaves it; a layer thicker than ``RELOCATE_BANDS`` bands is never
+  stepped over, so no layer the navigator resolves (one band and up) is lost to the relocation.
 - **Provenance of the multiples.** The band and its multiples (``BAND_ULPS``, ``K_ON``, ``GRAZE``,
   ``ZERO_STEP_BANDS``, ``FACET_*``, the push) are stated, with every other geometry tolerance, in
   ``lumen.rules.tolerances``: the band is a few float32 ulps of the coordinates (a root and its point each carry about
@@ -52,6 +68,8 @@ Geant4 sources: G4Navigator (LocateGlobalPointAndSetup, LevelLocate, the zero-st
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -59,6 +77,7 @@ from lumen.rules import tolerances as tol
 
 # the band and its multiples, stated once in lumen.rules.tolerances; read as rules.<name> here and in the loop
 BAND_ULPS, BAND_FLOOR, K_ON, GRAZE = tol.BAND_ULPS, tol.BAND_FLOOR, tol.K_ON, tol.GRAZE
+RELOCATE_BANDS = tol.RELOCATE_BANDS
 FACET_BEHIND_BANDS, FACET_SHORT_ULPS, ZERO_STEP_BANDS = (
     tol.FACET_BEHIND_BANDS,
     tol.FACET_SHORT_ULPS,
@@ -68,30 +87,56 @@ ZERO_STEPS_BEFORE_PUSH, ZERO_STEPS_BEFORE_KILL = tol.ZERO_STEPS_BEFORE_PUSH, tol
 PUSH_DISTANCE_TOLERANCES = tol.PUSH_DISTANCE_TOLERANCES
 
 FLOAT32_EPS = float(np.finfo(np.float32).eps)
-BAND = BAND_ULPS * FLOAT32_EPS  # the band per metre of coordinate scale
+BAND = BAND_ULPS * FLOAT32_EPS  # the float32 band per metre of coordinate scale
 
 
-def band(scale):
-    """Return the float32 band (m) at a coordinate scale (m): for a crossing at ``t`` on a ray whose largest start
-    coordinate is ``xa``, ``band(xa + |t|)``. Endpoints closer than this are one crossing; the photon's own surface is
-    within it of the start. Takes the scale's precision (float32 in the loop, float64 on the host)."""  # noqa: D205, D209
-    return BAND * scale + BAND_FLOOR
+class Precision(NamedTuple):
+    """The navigator's floating-point precision: its name, its float dtype (jax, numpy), the integer of the same width
+    (a float's bits in an integer record) and its machine epsilon."""  # noqa: D205, D209
+
+    name: str
+    F: object
+    I: object  # noqa: E741 -- the integer of the float's width
+    np: object
+    eps: float
 
 
-def contact(scale):
+FLOAT32 = Precision("float32", jnp.float32, jnp.int32, np.float32, FLOAT32_EPS)
+FLOAT64 = Precision("float64", jnp.float64, jnp.int64, np.float64, float(np.finfo(np.float64).eps))
+PRECISIONS = {p.name: p for p in (FLOAT32, FLOAT64)}
+
+
+def precision(name) -> Precision:
+    """Return the Precision named ``name`` ("float32" or "float64"; a Precision is returned as is)."""
+    if isinstance(name, Precision):
+        return name
+    if name not in PRECISIONS:
+        raise ValueError(f"precision {name!r} is not one of {sorted(PRECISIONS)}")
+    return PRECISIONS[name]
+
+
+def band(scale, prec=FLOAT32):
+    """Return the band (m) of precision ``prec`` at a coordinate scale (m): for a crossing at ``t`` on a ray whose
+    largest start coordinate is ``xa``, ``band(xa + |t|)``. Endpoints closer than this are one crossing; the photon's
+    own surface is within it of the start. Takes the scale's dtype (the navigator's in the loop, float64 on the
+    host)."""  # noqa: D205, D209
+    return BAND_ULPS * prec.eps * scale + BAND_FLOOR
+
+
+def contact(scale, prec=FLOAT32):
     """Return the contact tolerance (m) at a coordinate scale (m): ``K_ON`` bands. Two solids closer than this touch;
     they overlap, and a solid reaches out of another, only deeper (``lumen.geometry.ownership``)."""  # noqa: D205, D209
-    return K_ON * band(scale)
+    return K_ON * band(scale, prec)
 
 
-def check_step_in(xe):
+def check_step_in(xe, prec=FLOAT32):
     """Return the placement check's step in from an entry point ``xe`` (3,): the contact tolerance there (m)."""
-    return contact(jnp.max(jnp.abs(xe)))
+    return contact(jnp.max(jnp.abs(xe)), prec)
 
 
-def step_band(x):
+def step_band(x, prec=FLOAT32):
     """Return the step's band at a point ``x`` (3,), the stuck rule's push unit (m)."""
-    return band(jnp.max(jnp.abs(x)))
+    return band(jnp.max(jnp.abs(x)), prec)
 
 
 def entry_wins(t, rank, best, best_rank):

@@ -85,13 +85,18 @@ SETS = {
         {"R": 0.5, "p_spike": 0.7, "p_lobe": 0.6, "p_back": 0.3, "eff": 0.4},
     ],
     "painted_t": [{"R": 0.5, "T": 0.3, "f_spec": 0.0, "eff": 0.0}, {"R": 0.7, "T": 0.6, "f_spec": 1.0, "eff": 0.5}],
+    "glisur_dielectric": [
+        {"R": 1.0, "T": 0.0, "polish": 0.01, "eff": 0.0},
+        {"R": 0.7, "T": 0.2, "polish": 0.5, "eff": 0.4},
+        {"R": 0.8, "T": 0.4, "polish": 0.99, "eff": 1.0},
+    ],
 }
 COS = [1.0, 0.9, 0.5, 0.2, 0.05, 1e-3, 0.0]
 PAIRS = [(1.0, 1.33), (1.33, 1.0), (1.33, 1.5), (1.5, 1.0), (1.36, 1.36), (1.0, 1.6)]
 
 
 def test_every_type_has_parameter_sets():
-    assert len(types.TYPES) == 10
+    assert len(types.TYPES) == 11
     assert sorted(t.name for t in types.TYPES) == sorted(SETS)
 
 
@@ -260,6 +265,11 @@ def test_glisur_types_name_their_facet_path_lobe():
     assert types.GLISUR_METAL.glossy == "glisur"
     assert types.UNIFIED_METAL.glossy == types.REFLECTOR.glossy == "unified"
     w = types.GLISUR_METAL.evaluate({"R": F32(0.8), "polish": F32(0.7), "eff": F32(0.0)}, ctx_of(0.8, 1.33, 1.0))
+    assert abs(float(w.sigma_alpha) - 0.3) < 1e-7
+    # the dielectric's facet path refracts too: its GLOSSY may end beyond the surface, at width 1 - polish
+    d = types.GLISUR_DIELECTRIC
+    assert d.glossy == "glisur_dielectric" and d.refracts and not types.GLISUR_METAL.refracts
+    w = d.evaluate({"R": F32(0.8), "T": F32(0.1), "polish": F32(0.7), "eff": F32(0.0)}, ctx_of(0.8, 1.33, 1.0))
     assert abs(float(w.sigma_alpha) - 0.3) < 1e-7
 
 

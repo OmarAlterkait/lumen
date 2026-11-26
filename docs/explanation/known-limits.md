@@ -67,7 +67,9 @@ RAYLEIGH are bit for bit the same. The one difference is a group's `pe_error`, w
 values it is weighted by: float64 under x64 (the value sets' tables are float64), equal to the float32 one within 1.4e-7
 relative (its rounding).
 
-**Who is affected.** Code comparing `pe_error` arrays across the two settings bit for bit, or expecting float32.
+**Who is affected.** Code comparing `pe_error` arrays across the two settings bit for bit, or expecting float32. A
+detector loaded with `precision="float64"` needs the setting on (`lumen.load` refuses it otherwise); with it on, a
+float32 detector's photons are unchanged (NEXT-100, measured).
 
 ## The roulette's ε
 
@@ -156,8 +158,8 @@ overlapping it): touching plane, cylinder and sphere faces and a 1 um water gap 
 (lumen / Geant4 0.9993-1.0009); a 0.1 mm and a 1 um overlap lose 0.63 of the light in both (lumen / Geant4
 1.0011-1.0048, |z| < 1.1).
 
-**The limit.** An overlap thinner than lumen's float32 band (about 1e-6 of the coordinates: 0.1 um at 0.1 m) reads as
-touching: lumen continues the photon where stock Geant4 kills it (a 1 nm overlap: lumen 1.78 times Geant4 on the toy).
+**The limit.** An overlap thinner than lumen's float32 band (about 1e-6 of the coordinates: 0.1 um at 0.1 m; 1 nm in
+float64, `lumen.load(..., precision="float64")`) reads as touching: lumen continues the photon where stock Geant4 kills it (a 1 nm overlap: lumen 1.78 times Geant4 on the toy).
 Such an overlap is a geometry defect; `lumen.compare.geometry` and Geant4's overlap check find it.
 
 **Who is affected.** Overlapping siblings no longer lose light this way: the region they share has one owner (the
@@ -169,21 +171,48 @@ at the centre, 420 nm, 2^20 samples) 1.0e-4 of the emitted weight is lost this w
 the opaque volume: real overlaps, which stock Geant4 kills too. `lumen.diagnostics.Trace` shows the pair of volumes
 for a lost photon (docs/reference/errors.md, Health).
 
+## Light started inside a mesh
+
+A tessellated solid is tracked as an opaque surface and holds no point. A photon a source starts inside one (`Point`,
+`FromArrays`, a custom source) is placed in the volume around it and meets the mesh's faces from inside; Geant4 absorbs
+it in the solid. Start no light there. A step source in the mesh's material is refused when the material is bound
+opaque.
+
 ## Thin layers
 
-**What.** The navigator works in float32: a coordinate x carries a band of about 8 eps32 |x| (`lumen.rules.navigation`,
-the band; 9.5e-7 per metre). A face within 4 bands of a photon's start is the face the photon sits on (`K_ON`), so a
-coating thinner than about 4 bands at its position is not resolved: a photon re-emitted inside it, or leaving one of
-its faces, can take the other face for the one it is on, and a coating below one band entered from the outside is
-crossed as if it were not there.
+**What.** The navigator decides at a face within its band, 8 ulps of its precision at a coordinate scale
+(`lumen.rules.navigation.band`). In float32, the default, the band at a decision is that of the photon's ray: its
+start's largest coordinate plus the distance travelled, 9.5e-7 per metre. A coating a few bands thick where it sits
+can still be stepped over, its far face taken for the near one, or a photon re-emitted in it put in the volume
+behind it, by photons whose rays started far away: whether a coating is tracked depends on each photon's path.
 
-**Measured** (review7/T1_thin.md, against an analytic float64 oracle: coatings of 1, 3.5 and 10 um on a 5 mm
-substrate at 0.1, 1 and 5 m from the origin): a 1 um coating at 1 m (1.05 bands) entered from the gas is skipped by
-112 of 112 photons; every re-emitted start within 4 bands of a face is a zero-length crossing of it.
+**Measured** (the geometry of `tests/unit/test_precision.py`, against exact float64 geometry: a coating on a backing
+block, its top face shared with a gas volume; 288 configurations of height 0.05-5 m, thickness 0.75-8 float32 bands
+where it sits, path 1 mm-5 m, angle 0-75 deg, 48 rays each). In float32, coatings of at least 2.5 bands at 0.5 m or
+more are entered in every configuration whose rays started at most 0.3 m away, and in 65 % of those from 1.5 to 5 m;
+whether a photon is located inside follows step * cos(theta) < T, with step the band at the photon's path, in 214 of
+216 configurations. A photon re-emitted at 10 % of the depth heading out at 3 deg is put in the backing in every
+configuration. A coating standing in the gas is entered in 71 % of the configurations from 1.5 to 5 m away. NEXT-100's
+TPB (2 to 5.4 um, 2.5 to 8.5 bands where it sits) left its S2 light 8 % low at the PMTs and 10 % at the SiPMs against
+nexus. In float64 every configuration is right but those with a 36 nm coating and a re-emission 3.6 nm from its face,
+and NEXT-100 agrees with nexus to 0.4 %. Against Geant4 11.3.0 on NEXT-100's own GDML (`tools/g4ref`, 1e6 photons
+from each of four points in the active gas and one in the EL gap), Geant4 over lumen is 0.99 to 1.06 per sensor group
+in float64 and 1.13 to 1.87 in float32, worst from the far end of the drift: 1.47 at the PMTs and 1.87 at the SiPMs
+from 0.4 m below the top of the active volume, against 1.13 and 1.15 from the EL gap.
 
-**The limit.** Coatings thinner than about 4 bands (a band 8 eps32 |x|: 4 um at 1 m, 20 um at 5 m) are not resolved.
-The fix (a photon on a surface starts out of its crossing's error box, along the normal; a tracked volume thinner than
-two bands refused at conversion) is on branch `p3/thin`, deferred past 0.2.
+**The limit.** In float32, a volume a few bands thick at the scale of the photons' paths (4 bands: 3.8 um per metre
+of start coordinate plus path) is not tracked for every photon. Load a detector with such coatings in float64
+(`lumen.load(..., precision="float64")`): its band is its 1 nm floor at any detector scale, so volumes down to tens of
+nm are tracked, at about +20 % time on an A100 and 3.4 times on an RTX 2080 Ti (docs/dev/decisions.md, 29). Its recipe
+can say so once and for all (`Recipe(..., precision="float64")`): the detector file carries it, `lumen.load` uses it
+when you pass no precision, and loading that detector in float32 warns. The
+conversion still refuses a WLS box thinner than float32's band where it sits (decision 9).
+
+A gap below the band is merged the same way: the float32 navigator steps from one volume straight into the other, so
+it reads the surface of that pair where Geant4 enters the volume between. Measured on a tube whose coating lies on
+the active gas over half its length and is sunk by 1 nm over the other half, with a mirror border on the coating and
+a point source in the gas: float32 keeps 0.5063 of the light, as much as the flush geometry, where float64 keeps
+0.0385. In float64 a gap above its 1 nm floor is resolved.
 
 ## The hit likelihood's no-record integral
 

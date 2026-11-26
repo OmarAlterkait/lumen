@@ -90,6 +90,11 @@ def _glisur_metal(p, ctx):
     return outcome_vector(glossy=r, detect=a * p["eff"], absorb=a * (1.0 - p["eff"]))
 
 
+def _glisur_dielectric(p, ctx):
+    r, t, a = chained_cuts(p["R"], p["T"])
+    return outcome_vector(glossy=r, straight=t, detect=a * p["eff"], absorb=a * (1.0 - p["eff"]))
+
+
 def _unified_metal(p, ctx):
     r, a = chained_cuts(p["R"])
     ss, sl, bs, lam = chained_cuts(p["p_spike"], p["p_lobe"], p["p_back"])
@@ -122,6 +127,7 @@ BASES = {
     "unified_metal": (_unified_metal, None, lambda p: p["sigma_alpha"]),
     "unified_metal_normal": (_unified_metal_normal, None, None),
     "painted_t": (_painted_t, None, None),
+    "glisur_dielectric": (_glisur_dielectric, None, lambda p: 1.0 - p["polish"]),
 }
 
 

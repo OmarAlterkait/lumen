@@ -53,7 +53,7 @@ def structures():
     out += [t.no_detection(k) for k in list(out) if "eff" in k.params]
     out += [t.per_normal(k) for k in t.TYPES if k.detects]
     out += [t.fixed(t.per_normal(t.DIELECTRIC_RT), {"eff": 1.0})]
-    out += [t.into_opaque(k) for k in list(out) if any(FAR_SIDE[o] for o in k.outcomes)]
+    out += [t.into_opaque(k) for k in list(out) if any(FAR_SIDE[o] for o in k.outcomes) and not k.refracts]
     return list(dict.fromkeys(out))  # equal structures are one
 
 

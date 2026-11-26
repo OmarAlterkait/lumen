@@ -52,6 +52,11 @@ How to fill it in for your detector:
   placement order. The names are as your GDML writes them, including any `0x...` suffix an exporter added. Sensors of
   one volume that differ by type are split into groups by a column of the id map (`where={"type": "coated"}`, with
   the recipe's `sensor_columns` giving that column): such groups count by one rule and each has a sensor model.
+- **The precision.** A detector whose layers are thinner than float32's band where they sit (a TPB coating of a few
+  um metres from the origin) needs the float64 navigator: say `precision="float64"` in the recipe. The detector file
+  carries it, so `lumen.load` uses it with no argument of yours (float64 needs JAX's 64-bit mode:
+  `JAX_ENABLE_X64=1`), and loading that detector in float32 warns. Leave it out for everything else
+  (docs/explanation/known-limits.md, "Thin layers").
 - **The counting rule.** `border_into` (PMTs with a photocathode surface): a photon counts when it crosses the GDML
   border surface into the sensor volume and that surface detects it (with a value set, `values=`, every absorption
   there counts and the QE is applied after tracking). `any_entry` (sensitive volumes without a detecting surface): every entry counts,

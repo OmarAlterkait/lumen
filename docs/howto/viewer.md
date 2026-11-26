@@ -20,8 +20,14 @@ The command converts the detector (`lumen.convert`, into a temporary directory; 
 package's own preparation, its files under `LUMEN_DATA` or `--data`) and loads it (`lumen.load`), so the page shows
 what lumen built and everything lumen refuses. It prints how long that took and the page's address, and serves the page
 on this machine only (127.0.0.1) until you stop it with Ctrl-C. `--open` opens a browser, `--port` picks another
-number than 8765. On a cluster node, run it there and forward 8765 from your laptop (`ssh -L 8765:127.0.0.1:8765 <node>`), then open the
+number than 8765 (0: any free one); a port already in use is reported at once, before the detector is read. On a
+cluster node, run it there and forward 8765 from your laptop (`ssh -L 8765:127.0.0.1:8765 <node>`), then open the
 address on the laptop.
+
+The address ends in a random token, `http://127.0.0.1:8765/<token>/`, new each time: the page and its scene are
+served only under it, so another user of a shared machine, who can reach the port but not read your terminal, gets
+nothing. Open the address as printed; `--token` sets the token yourself (letters, digits, `-` and `_`), to keep a
+bookmark across restarts.
 
 A large detector takes minutes (Hyper-K, 19,620 sensors: four). To look again later without reading the file again,
 write the scene once and serve it from the file:
@@ -99,3 +105,13 @@ print(water["status"], water["channels"])         # medium ['refraction', 'absor
 ```
 
 `view.payload` is the JSON the page draws; `view.errors` lists the steps that failed (the page still shows the rest).
+
+A detector package's detector is read as `lumen.convert` reads it, with `lumen.api.package_detector`, which you can
+call too:
+
+```python
+from lumen import api
+
+with api.package_detector("lumen_wc:sk") as entry:  # api.is_package_detector("lumen_wc:sk") is True
+    print(entry.gdml, entry.recipe.name)              # the GDML converted and the recipe, while the context is open
+```

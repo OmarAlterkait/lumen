@@ -4,11 +4,14 @@
     stype, origin, reason, side = through(leg_pb, leg_bq, b_name, names)  # a coincident face across a pass
 
 ``v`` (``lumen.build.lookup.Description``) gives per placed volume (PV) its medium, material, skin surface and
-sensor, the border surface of an ordered PV pair (``border(pre, post)``: its physvols' border, where they touch), the
+sensor, the border surface of an ordered PV pair (``border(pre, post)``: its physvols' border, where they touch, or
+for physvols that meet only across coincident faces on any crossing between them), the
 library entries and which media are opaque. For an ordered crossing (pre, post), in Geant4's order:
 
-1. entering a sensor PV whose rule is "any entry" (or across the border bound to its sensor): that sensor's type;
-   a border sensor out of pre (an exit sensor: WCSim's Detection leaving the tube) is credited to pre;
+1. entering a sensor PV whose rule is "any entry" (or across the border bound to its sensor, or where Geant4 picks
+   its own detecting skin): that sensor's type; a border sensor out of pre (an exit sensor: WCSim's Detection leaving
+   the tube) is credited to pre. Leaving a skin sensor, its skin is the surface and detects nothing
+   (G4OpBoundaryProcess::InvokeSD calls the sensitive detector of the volume entered);
 2. the border surface of the ordered pair (pre, post): directional, as the GDML defines it;
 3. the skins: post's then pre's when post is a daughter of pre (Geant4's enteredDaughter), otherwise pre's then
    post's;
@@ -93,7 +96,7 @@ def crossing(v, pre, post, rel):
         return types.PASS, None, f"{reason}: same-material", "post"
     else:
         stype, origin, far = lib.sensors[name].surface_type, f"sensor:{name}", lib.sensors[name].far_side
-    if v.opaque[v.medium[post]] and any(FAR_SIDE[o] for o in stype.outcomes):
+    if v.opaque[v.medium[post]] and (any(FAR_SIDE[o] for o in stype.outcomes) or stype.refracts):
         if far == FAR_KILL:
             stype, origin, reason = types.ABSORBER, None, f"{reason}: NoRINDEX"
         elif far == FAR_ABSORB:
@@ -106,16 +109,19 @@ def crossing(v, pre, post, rel):
     return stype, origin, reason, side
 
 
-def coincident(inside_pb, inside_qb, rp, rq):
+def coincident(inside_pb, inside_qb, rp, rq, across=False):
     """Return "outward" / "inward" when p -> q via b is a coincident face, else None.
 
     ``inside_pb``: p is a daughter of b; ``inside_qb``: q is; ``rp`` the relations of b to p met so far, ``rq`` those
-    of q to b.
+    of q to b. ``across`` (a detector with a border read across coincident faces): also "across", out of one volume and
+    into another across a face both share (cousins: p in b, b's face on its sibling's, q in that).
     """
     if inside_pb and rq & set(OUTWARD) and rp & {"mother", "outward"}:
         return "outward"
     if inside_qb and rp & set(INWARD) and rq & {"daughter", "inward"}:
         return "inward"
+    if across and ((inside_qb and rp & {"outward", "across"}) or (inside_pb and rq & {"inward", "across"})):
+        return "across"
     return None
 
 

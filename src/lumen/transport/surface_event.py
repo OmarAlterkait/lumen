@@ -5,7 +5,8 @@ read by the one kernel, ``lumen.surfaces.types.kernel``) gives the continuing sh
 deposit is made in expectation by the step; one continuing outcome is drawn from the reference probabilities and
 weighted live / reference. Its direction: a deterministic map (straight, refraction, mirror, backscatter) with the Jones
 map of the row's complex amplitudes, Geant4's facet path for GLOSSY (``lumen.surfaces.facets``, weighted as a whole path
-by its live / reference path density) and a Lambertian lobe for DIFFUSE. What each type means: G4OpBoundaryProcess
+by its live / reference path density; a dielectric one may end beyond the surface: ``Outcome.far``) and a Lambertian
+lobe for DIFFUSE. What each type means: G4OpBoundaryProcess
 (PostStepDoIt, DielectricMetal, DoReflection).
 """
 
@@ -76,7 +77,8 @@ def _amplitudes(a8):
 
 # ---------------------------------------------------------------------------------------- the outcome's direction
 class Lobes(NamedTuple):
-    """The drawn outcome's inputs: incoming direction, normal and state at the crossing, the widths, uniforms."""
+    """The drawn outcome's inputs: incoming direction, normal and state at the crossing, the widths, uniforms, and
+    the crossing's live indices (n1, n2) (a dielectric facet path's)."""  # noqa: D205, D209
 
     wi: jax.Array
     n: jax.Array
@@ -86,16 +88,19 @@ class Lobes(NamedTuple):
     width_ref: dict
     rand: jax.Array
     shared: bool
+    idx: tuple
 
 
 class Outcome(NamedTuple):
-    """The drawn outcome's direction, lobe weight, drawn lobe weight (``outcome_direction``) and Jones vector."""
+    """The drawn outcome's direction, lobe weight, drawn lobe weight (``outcome_direction``) and Jones vector; ``far``:
+    its lobe left the photon beyond the surface (a dielectric facet path's last direction points there)."""  # noqa: D205, D209
 
     d: jax.Array
     w: jax.Array
     w_drawn: jax.Array
     er: jax.Array
     ei: jax.Array
+    far: jax.Array
 
 
 def _facet_path_branch(lobe, lb):
@@ -124,7 +129,50 @@ def _facet_path_branch(lobe, lb):
             on = lr > 0.5 * facets.LOG_TINY
             w_ = jnp.where(on, reweight_log(lp, jnp.where(on, lr, 0.0)), 0.0)
             wd_ = on.astype(w_.dtype)  # the density drawn from over itself: what the reference weight carries
-        return Outcome(d=d_, w=w_, w_drawn=sg(wd_), er=er, ei=ei)
+        return Outcome(d=d_, w=w_, w_drawn=sg(wd_), er=er, ei=ei, far=jnp.bool_(False))
+
+    return f
+
+
+def _dielectric_path_branch(lobe, lb):
+    def f(_):
+        """Return the GLISUR dielectric facet path's Outcome.
+
+        Drawn at the reference width and at the live indices and state (held), weighted as a whole path, live over the
+        density drawn from; its Jones vector the live one.
+        The indices drawn at are the live ones, as a polished interface refracts (``outcome_direction``): a refracted
+        direction is a map of the facet whose size is the index gap, so a direction drawn at other indices implies
+        another facet, outside the reference ball once the index moves by a share of the gap (at matched indices at
+        any move), and no weight corrects it.
+        """
+        proposal = lobe.facet_proposal_logpdf
+        idx = (sg(lb.idx[0]), sg(lb.idx[1]))
+
+        def visit(c, ev):
+            lp, lr, er, ei, er_r, ei_r = c
+            lp_k, _, er1, ei1 = lobe.facet_logpdf({**lb.width, "idx": lb.idx}, ev, (er, ei), lb.n)
+            lp = lp + lp_k
+            if proposal is not None or not lb.shared:
+                q = proposal if proposal is not None else lobe.facet_logpdf
+                ev_r = ev._replace(w0=sg(ev.w0))
+                lr_k, _, er_r, ei_r = q({**lb.width_ref, "idx": idx}, ev_r, (er_r, ei_r), lb.n)
+                lr = lr + sg(lr_k)
+            return lp, lr, er1, ei1, er_r, ei_r
+
+        z = jnp.zeros((), lb.wi.dtype)
+        p_ref = {**lb.width_ref, "idx": idx, "er": lb.er, "ei": lb.ei}
+        start = (z, z, lb.er, lb.ei, sg(lb.er), sg(lb.ei))
+        c, d_, far, _ = lobe.path(p_ref, lb.wi, lb.n, lb.rand, visit, start)
+        lp, lr, er, ei, _, _ = c
+        d_ = sg(d_)
+        if proposal is None:
+            w_ = reweight_log(lp, sg(lp) if lb.shared else lr)
+            wd_ = jnp.ones_like(w_)
+        else:
+            on = lr > 0.5 * facets.LOG_TINY
+            w_ = jnp.where(on, reweight_log(lp, jnp.where(on, lr, 0.0)), 0.0)
+            wd_ = on.astype(w_.dtype)
+        return Outcome(d=d_, w=w_, w_drawn=sg(wd_), er=er, ei=ei, far=far)
 
     return f
 
@@ -134,7 +182,7 @@ def _lambert_branch(lobe, state, lb):
         d_ = sg(lobe.sample({}, lb.wi, lb.n, lb.rand))
         w_ = reweight_log(lobe.logpdf({}, lb.wi, lb.n, d_), lobe.logpdf({}, sg(lb.wi), sg(lb.n), d_))
         er, ei = state(d_)
-        return Outcome(d=d_, w=w_, w_drawn=jnp.ones_like(w_), er=er, ei=ei)
+        return Outcome(d=d_, w=w_, w_drawn=jnp.ones_like(w_), er=er, ei=ei, far=jnp.bool_(False))
 
     return f
 
@@ -166,7 +214,7 @@ def outcome_direction(tables, row, o, cross, lb):
         def f(_):
             d_ = outcomes.direction_rules(wi, nrm, eta)[k_]()
             e_ = outcomes.jones_rules(comps, amps, s_ax, (er0, ei0), unit(d_))[k_]()
-            return Outcome(d=d_, w=one, w_drawn=one, er=e_[0], ei=e_[1])
+            return Outcome(d=d_, w=one, w_drawn=one, er=e_[0], ei=e_[1], far=jnp.bool_(False))
 
         return f
 
@@ -178,7 +226,9 @@ def outcome_direction(tables, row, o, cross, lb):
 
     tab, r = tables.table, jnp.maximum(row, 0)
     br = [delta(k_) for k_ in range(N_OUTCOMES)]
-    br[GLOSSY] = _by_row(_per_row(tab.lobe_of, r), [_facet_path_branch(facets.FACET_LOBES[c], lb) for c in tab.lobes])
+    paths = [facets.FACET_LOBES[c] for c in tab.lobes]
+    branch = [(_dielectric_path_branch if L.refracts else _facet_path_branch)(L, lb) for L in paths]
+    br[GLOSSY] = _by_row(_per_row(tab.lobe_of, r), branch)
     br[DIFFUSE] = _lambert_branch(lobes.LAMBERT, facet_e, lb)
     return jax.lax.switch(o, br, None)
 

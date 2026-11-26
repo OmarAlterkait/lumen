@@ -10,7 +10,7 @@ weights the whole path (``Lobe.path`` folds the step's terms over it, ``Lobe.fac
   m the photon meets D(m) [V.m > 0] / F(theta, sigma), D(m) = exp(-alpha^2 / 2 sigma^2) min(1, f_max / sin alpha) /
   (2 pi Z(sigma)), F the facing share (tabulated: float64 quadrature, float32 bicubic Hermite, C1). One reflection
   wo = mirror(wi, m) has density D(h) / (4 F V.h), h = unit(V + wo). Valid sigma_alpha: ``rules.choices.SIGMA_MIN``
-  to ``SIGMA_MAX`` (the tables' span).
+  to ``SIGMA_MAX`` (the tables' span; above it Geant4's own draw departs from this distribution: ``SIGMA_MAX``).
 - **GLISUR** (GetFacetNormal, glisur): M = n + r s, s uniform in the unit ball, r = 1 - polish, redrawn while
   V . M <= 0. Per solid angle of m = M / |M|: p_m = 2 q (3 c^2 + q^2) / (3 Z), c = m . n, q^2 = c^2 - (1 - r^2), Z the
   cut ball's volume. Bounded, vanishing at the cone's edge: no boundary term. The width is carried as "sigma_alpha".
@@ -42,16 +42,18 @@ G4OpBoundaryProcess v11.3.2 (identical in 10.7): GetFacetNormal, DoReflection, D
 # ruff: noqa: N803 -- the module docstring's math names (Vl, M, W, Y, ...) as arguments
 import functools
 import math
+from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 from lumen._core import frames, rng
-from lumen._core.safe import literal, safe_sqrt
+from lumen._core.safe import literal, safe_sqrt, unit
 from lumen.lobes import Lobe
-from lumen.rules.choices import DEFENSIVE_SHARE, FLOOR32
+from lumen.rules.choices import DEFENSIVE_SHARE, FLOOR32, INDEX_MATCH
 from lumen.rules.choices import UNIFIED_TABLE as UT
+from lumen.surfaces import fresnel, outcomes, polar
 from lumen.units import TWO_PI
 
 sg = jax.lax.stop_gradient
@@ -165,21 +167,21 @@ def table_operands():
     return {k: jnp.asarray(v) for k, v in unified_tables().items()}
 
 
-def log_zeta(sigma, T=None):
-    """Return log(Z(sigma) / sigma^2), C1 cubic Hermite in log sigma (``T``: the tables' operands, else constants)."""
+def table_lz(y, T=None):
+    """Return log zeta = log(Z / sigma^2) at the table coordinate y = log sigma, C1 cubic Hermite (``T``: the tables'
+    operands, else constants)."""  # noqa: D205, D209
     T = unified_tables() if T is None else T
-    j, t = _cell((jnp.log(sigma) - TABLE_Y0) / TABLE_DY - TABLE_J_LO, TABLE_NY)
+    j, t = _cell((y - TABLE_Y0) / TABLE_DY - TABLE_J_LO, TABLE_NY)
     a0, b0, a1, b1 = _hermite(t)
     v, dv = jnp.asarray(T["lz"]), jnp.asarray(T["lzy"])
     return a0 * v[j] + a1 * v[j + 1] + TABLE_DY * (b0 * dv[j] + b1 * dv[j + 1])
 
 
-def front_fraction(sigma, cos_t, sin_t, T=None):
-    """Return F(theta, sigma), the share of facets facing the photon: bicubic Hermite on (x, log sigma)."""
+def table_front(x, y, T=None):
+    """Return F at the table coordinates (x, y = log sigma), bicubic Hermite (``T``: the tables' operands)."""
     T = unified_tables() if T is None else T
-    x = jnp.arctan2(cos_t, sigma * sin_t) / HALF_PI
     i, tx = _cell(x * (TABLE_NX - 1), TABLE_NX)
-    j, ty = _cell((jnp.log(sigma) - TABLE_Y0) / TABLE_DY - TABLE_J_LO, TABLE_NY)
+    j, ty = _cell((y - TABLE_Y0) / TABLE_DY - TABLE_J_LO, TABLE_NY)
     hx = 1.0 / (TABLE_NX - 1)
     ax0, bx0, ax1, bx1 = _hermite(tx)
     ay0, by0, ay1, by1 = _hermite(ty)
@@ -192,6 +194,16 @@ def front_fraction(sigma, cos_t, sin_t, T=None):
                          + ax * by * TABLE_DY * A["Fy"][ii, jj]
                          + bx * by * hx * TABLE_DY * A["Fxy"][ii, jj])  # fmt: skip
     return out
+
+
+def log_zeta(sigma, T=None):
+    """Return log(Z(sigma) / sigma^2), C1 cubic Hermite in log sigma (``T``: the tables' operands, else constants)."""
+    return table_lz(jnp.log(sigma), T)
+
+
+def front_fraction(sigma, cos_t, sin_t, T=None):
+    """Return F(theta, sigma), the share of facets facing the photon: bicubic Hermite on (x, log sigma)."""
+    return table_front(jnp.arctan2(cos_t, sigma * sin_t) / HALF_PI, jnp.log(sigma), T)
 
 
 def _unified_log_density(sigma, Vl, M, T=None):
@@ -404,6 +416,136 @@ def _facet_path_lobe(name, facet, facet_lp, proposal_lp=None):
                 facet_proposal_logpdf=None if proposal_lp is None else _facet_logpdf_of(proposal_lp))  # fmt: skip
 
 
+# ----------------------------------------------------------------------------------------- GLISUR facet refraction
+class FacetEvent(NamedTuple):
+    """One facet of a dielectric facet path, held: the photon's direction before and after it (world), whether it
+    refracted, and the side it met the facet from (+1: about the surface's facing normal n, the incident medium's;
+    -1: about -n, from beyond)."""  # noqa: D205, D209
+
+    w0: jax.Array
+    w1: jax.Array
+    refracted: jax.Array
+    side: jax.Array
+
+
+def _media(side, idx):
+    """Return (n_a, n_b): the index of the medium the photon is in and the other's (idx: the incident medium's and
+    the far one's, at the crossing)."""  # noqa: D205, D209
+    n1, n2 = idx
+    return jnp.where(side > 0, n1, n2), jnp.where(side > 0, n2, n1)
+
+
+def _matched(n_a, n_b):
+    """Return whether two indices are one for a facet refraction (``rules.choices.INDEX_MATCH``)."""
+    return jnp.abs(n_a - n_b) <= INDEX_MATCH * jnp.maximum(n_a, n_b)
+
+
+def _interface(w0, m, n_a, n_b, er, ei):
+    """Return (R, s axis, (E_s, E_p), amplitudes) of the state (er, ei) going w0 onto the facet m (w0 . m < 0), from
+    n_a into n_b: R the reflectance of the photon's own state (total reflection included: R = 1)."""  # noqa: D205, D209
+    s_ax = polar.s_axis(w0, m)
+    comps = polar.components(er, ei, w0, s_ax)
+    amps = fresnel.amplitudes(-jnp.sum(w0 * m, -1), n_a, n_b)
+    R = jnp.clip(fresnel.reflectance(jnp.abs(comps[0]) ** 2, jnp.abs(comps[1]) ** 2, amps[0], amps[1]), 0.0, 1.0)
+    return R, s_ax, comps, amps
+
+
+def dielectric_event_logpdf(r, idx, n, ev, pol, e=0.0):
+    """Return (log density per solid angle of ev.w1 given ev.w0, on the support, the Jones vector after the facet).
+
+    One facet of the GLISUR dielectric path (``FacetEvent``) at width r = 1 - polish and indices idx = (n1, n2), for
+    the state pol = (er, ei) before it; ``e`` > 0: the facet drawn from the cover mixture (1 - e) p_m + e p_shell. The
+    facet the event implies, about N = side n: a reflection's h = unit(w1 - w0), density p_m(h) R / (4 V . h); a
+    refraction's m = sign(n_b - n_a) unit(n_a w0 - n_b w1), density p_m(m) (1 - R) n_b^2 cos2 / (n_b cos2 - n_a
+    cos1)^2 (cos1 = V . m, cos2 = -w1 . m, V = -w0), R the reflectance of (er, ei) at that facet. Between matched
+    indices a refraction keeps the direction and the state (t_s = t_p = 1 at every facet) and carries no density (log
+    0).
+    """
+    n_a, n_b = _media(ev.side, idx)
+    N = ev.side * n
+    matched = _matched(n_a, n_b)
+    u = n_a * ev.w0 - n_b * ev.w1
+    m_t = unit(u) * jnp.sign(n_b - n_a)
+    m = jnp.where(ev.refracted & ~matched, m_t, unit(ev.w1 - ev.w0))
+    cos1, cos2 = -jnp.sum(ev.w0 * m, -1), -jnp.sum(ev.w1 * m, -1)
+    Vl, Ml = frames.to_local(-ev.w0, N), frames.to_local(m, N)
+    lpm, ok = _glisur_log_proposal(r, Vl, Ml, e) if e else _glisur_log_density(r, Vl, Ml)
+    R, s_ax, comps, amps = _interface(ev.w0, m, n_a, n_b, *pol)
+    ok = ok & (cos1 > 0.0) & jnp.where(ev.refracted, cos2 > 0.0, cos2 < 0.0)
+    c1, c2 = jnp.where(ok, cos1, 1.0), jnp.where(ok, jnp.abs(cos2), 1.0)
+    lr = lpm + jnp.log(jnp.maximum(R, FLOOR32)) - jnp.log(4.0 * c1)
+    gap = jnp.where(ok & ~matched, jnp.abs(n_b * c2 - n_a * c1), 1.0)
+    lt = lpm + jnp.log(jnp.maximum(1.0 - R, FLOOR32)) + 2.0 * jnp.log(n_b) + jnp.log(c2) - 2.0 * jnp.log(gap)
+    lp = jnp.where(ev.refracted, jnp.where(matched, 0.0, lt), lr)
+    ok = ok | (ev.refracted & matched)
+    a = jnp.where(ev.refracted, jnp.stack([amps[2], amps[3]]), jnp.stack([amps[0], amps[1]]))
+    er1, ei1 = polar.recombine(*comps, a[0], a[1], s_ax, ev.w1)
+    straight = ev.refracted & matched
+    return jnp.where(ok, lp, LOG_TINY), ok, jnp.where(straight, pol[0], er1), jnp.where(straight, pol[1], ei1)
+
+
+def _dielectric_path_of(e):
+    def path(p, wi, n, rand, visit, carry):
+        """Draw a GLISUR dielectric facet path at p and fold ``visit`` over its FacetEvents: (carry, wo, far, k).
+
+        p: "sigma_alpha" (r = 1 - polish), "idx" (n1, n2) and the Jones vector "er", "ei" at the crossing, held (the
+        width the reference's). Geant4's loop (G4OpBoundaryProcess::DielectricDielectric, 11.3.0): a facet drawn for the
+        current direction about the current normal, reflected or refracted with the Fresnel shares of the photon's state
+        about it; a refraction that leaves the photon pointing back at the surface swaps the media and the normal; it
+        ends when the direction leaves the surface, on either side (``far``: an odd number of refractions). The draws
+        are held; ``visit(carry, event)`` gets each facet's event with w0 = wi as given (live) for the first facet.
+        """
+        r, nd = sg(p["sigma_alpha"]), sg(n)
+        idx = (sg(p["idx"][0]), sg(p["idx"][1]))
+        key = seed_key(rand)
+
+        def body(st):
+            k, w, wv, side, er, ei, c, done, far = st
+            N = side * nd
+            n_a, n_b = _media(side, idx)
+            kk = jax.random.fold_in(key, k)
+            # a lane already out (vmap runs the body for every lane) draws at the normal, never at a direction into
+            # the surface, for which a facet draw would not end; its result is discarded
+            Vl = frames.to_local(-w, N)
+            Vl = jnp.where(done | ~(Vl[2] > 0.0), _up().astype(Vl.dtype), Vl)
+            m = frames.to_world(glisur_facet(r, Vl, kk, e), N)
+            R, s_ax, comps, amps = _interface(w, m, n_a, n_b, er, ei)
+            refr = rng.uniforms(jax.random.fold_in(kk, rng.FRESNEL_STREAM), 1)[0] >= R
+            w1 = jnp.where(refr, jnp.where(_matched(n_a, n_b), w, outcomes.refract(w, m, n_a / n_b)[0]),
+                           frames.reflect(w, m))  # fmt: skip
+            a = jnp.where(refr, jnp.stack([amps[2], amps[3]]), jnp.stack([amps[0], amps[1]]))
+            er1, ei1 = polar.recombine(*comps, a[0], a[1], s_ax, w1)
+            dot = jnp.sum(w1 * N)
+            end = jnp.where(refr, dot <= 0.0, dot >= 0.0)
+            c = visit(c, FacetEvent(wv, w1, refr, side))
+            return k + 1, w1, w1, jnp.where(refr & ~end, -side, side), er1, ei1, c, end, far ^ refr
+
+        er0, ei0 = sg(p["er"]), sg(p["ei"])
+        one = jnp.ones((), nd.dtype)
+        init = (jnp.uint32(0), sg(wi), wi, one, er0, ei0, carry, jnp.bool_(False), jnp.bool_(False))
+        k, wo, _, _, _, _, c, _, far = jax.lax.while_loop(lambda st: ~st[7], body, init)
+        return c, wo, far, k
+
+    return path
+
+
+def _dielectric_lobe(name, e):
+    path = _dielectric_path_of(e)
+
+    def end(p, wi, n, rand):
+        return path(p, wi, n, rand, lambda c, ev: c, ())[1]
+
+    def event_lp(p, ev, pol, n):
+        return dielectric_event_logpdf(p["sigma_alpha"], p["idx"], n, ev, pol)
+
+    def proposal_lp(p, ev, pol, n):
+        return dielectric_event_logpdf(p["sigma_alpha"], p["idx"], n, ev, pol, e)
+
+    return Lobe(name, surface=True, n_rand=rng.LOBE_UNIFORMS, params=("sigma_alpha",), sample=end, logpdf=None,
+                path=path, facet_logpdf=event_lp, facet_proposal_logpdf=proposal_lp if e else None,
+                refracts=True)  # fmt: skip
+
+
 # Geant4's unified lobe (width sigma_alpha, valid in [SIGMA_MIN, SIGMA_MAX]) and GLISUR's (width r = 1 - polish,
 # carried under the name "sigma_alpha"); chosen by the surface type's ``glossy`` name. A facet lobe whose width can
 # move its support's edge declares its covering density: (its facet drawn with a share e of it, the mixture's density)
@@ -423,6 +565,11 @@ def covered(name):
 FACET_LOBES = {k: _facet_path_lobe(k, f, lp) for k, (f, lp, _) in FACETS.items()} | {
     f"{k}+cover": covered(k) for k, v in FACETS.items() if v[2] is not None
 }
+# GLISUR's facet refraction (dielectric_dielectric, ground): the facets of the GLISUR lobe, reflected or refracted
+FACET_LOBES |= {
+    "glisur_dielectric": _dielectric_lobe("glisur_dielectric", 0.0),
+    "glisur_dielectric+cover": _dielectric_lobe("glisur_dielectric+cover", DEFENSIVE_SHARE),
+}
 UNIFIED, GLISUR = FACET_LOBES["unified"], FACET_LOBES["glisur"]
 
 
@@ -433,4 +580,4 @@ def lobe_name(stype):
     cover. The role is structure (a parameter, not a constant), so a row's lobe never depends on a value.
     """
     support = any(stype.role(p) == "support" for p in stype.params)
-    return f"{stype.glossy}+cover" if support and FACETS[stype.glossy][2] is not None else stype.glossy
+    return f"{stype.glossy}+cover" if support and f"{stype.glossy}+cover" in FACET_LOBES else stype.glossy

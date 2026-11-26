@@ -2,11 +2,12 @@
 
 ``check_gradient(f, theta0)``: any derivative (an extension's included) against finite differences on the same random
 numbers (``lumen.tools.check``), judged by the pass rules of ``lumen.tools.stats``. ``Space``: named parameter keys as
-one vector (``lumen.tools.space``); ``jacobian``, ``fisher``, ``fit``: Fisher scoring on a Poisson likelihood,
-``descend``: first-order steps on it, ``coverage``: toy refits (``lumen.tools.fit``); ``poisson_nll``
+one vector (``lumen.tools.space``); ``jacobian``, ``fisher``, ``fit``: Newton steps on a Poisson likelihood's score
+from two independent runs, ``descend``: first-order steps on it, ``coverage``: toy refits (``lumen.tools.fit``);
+``poisson_nll``
 (``lumen.tools.losses``); ``scan``, ``profile`` (``lumen.tools.scan``). ``lumen.tools.plot`` draws them
 (matplotlib).
-A model is plain JAX from a ``Params`` to expected counts, ``lumen.simulate`` then a readout, its seed fixed.
+A model is plain JAX from (a ``Params``, a seed) to expected counts, ``lumen.simulate`` then a readout.
 """
 
 from lumen.tools.check import GradientReport, check_gradient

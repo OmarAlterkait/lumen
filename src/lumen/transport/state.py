@@ -101,7 +101,7 @@ class Next(NamedTuple):
     with before the drawn outcome's or direction's live / proposal factor (its expectation over that draw), the weight
     absorbed in the medium (the path's absorption, a WLS yield below 1) and at the surface (1 - the continuing shares).
     Its path is weighted live / reference as the continuing weight is, so at the reference values the photon's weight is
-    exactly their sum (+ ``lost``).
+    exactly their sum (+ ``lost``). ``far``: a surface outcome left the photon beyond the surface (in the volume after).
     """
 
     x: jax.Array
@@ -117,15 +117,17 @@ class Next(NamedTuple):
     ei: jax.Array
     reemitted: jax.Array
     fates: tuple | None = None
+    far: jax.Array | None = None
 
 
-def start(row: Photons, vol, cls, *, gen=False) -> Photon:
+def start(row: Photons, vol, cls, *, gen=False, position=F32) -> Photon:
     """Return the Photon of an emitted row in volume ``vol`` (-1: located at its first step) and class ``cls``.
 
     The row carries ``pol`` (a source's rows always do). The optional part exists only when asked for: ``gen`` (the
-    re-emission count, 0 at the start). The reference weight starts at the weight.
+    re-emission count, 0 at the start). The reference weight starts at the weight. ``position``: the position's dtype,
+    the navigator's precision (every other field is float32).
     """
-    x, d = jnp.asarray(row.x, F32), jnp.asarray(row.d, F32)
+    x, d = jnp.asarray(row.x, position), jnp.asarray(row.d, F32)
     pol = jnp.asarray(row.pol, F32)
     m1 = jnp.asarray(-1, I32)
     w, t = jnp.asarray(row.w, F32), jnp.asarray(row.t, F32)

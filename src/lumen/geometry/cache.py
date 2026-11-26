@@ -242,17 +242,21 @@ def nav_arrays(scene, **options):
     the same geometry are keyed by that key (the jump's clearance bound, ``lumen.transport.fastpath``).
 
     A miss builds them from the scene's class-free stage (``navigator_build.prepare``) with its ownership, the costly
-    part, read from or stored in its own entry (``own-<key>``: the scene and the code only), so builds of one scene
-    for other classes or settings (the conversion's placement check, then the first load) resolve it once.
+    part, read from or stored in its own entry (``own-<key>``: the scene, the precision and the code only), so builds
+    of one scene for other classes or settings (the conversion's placement check, then the first load) resolve it once.
+    ``precision`` ("float32", the default, or "float64") enters a key only when it is not float32.
     """  # noqa: D205
     digest = scene_digest(scene)
-    k = key(scene, options, digest)
+    precision = options.pop("precision", "float32")
+    extra = {} if precision == "float32" else {"precision": precision}
+    k = key(scene, {**options, **extra}, digest)
     path = _env.cache_dir() / "build" / f"{KIND}-{k}"
     if (path / "meta.json").is_file():
         return _load(path), k
-    own_path = _env.cache_dir() / "build" / f"{OWN}-{key(scene, {}, digest)}"
+    # the ownership's own entry: its contact tolerance is the precision's
+    own_path = _env.cache_dir() / "build" / f"{OWN}-{key(scene, extra, digest)}"
     own = _load(own_path) if (own_path / "meta.json").is_file() else None
-    stage = navigator_build.prepare(scene, own)
+    stage = navigator_build.prepare(scene, own, precision)
     if own is None:
         with directory(own_path) as tmp:
             _save(stage.own, tmp)

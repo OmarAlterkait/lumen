@@ -211,7 +211,7 @@ def check(name, *, detector=None, extra=(), **options) -> list:
     orig = read_reference(references.product(orig_id, spec, extra)) if orig_id else None
     if orig is not None and not (np.allclose(orig["x_mm"], ref["x_mm"]) and np.allclose(orig["energy"], ref["energy"])):
         raise ValueError(f"charge entry {name!r}: {orig_id} does not run {spec['reference']}'s sources")
-    det = lumen.load(detector or spec["detector"])
+    det = lumen.load(detector or spec["detector"], precision=spec.get("precision"))  # None: the detector's own
     split = spec.get("split_ev")  # every wavelength the source emits, in one band or two at the split
     s = photons.setup(det, (-np.inf, HC / split, np.inf) if split else None)
     nb = len(s.lam_edges) - 1

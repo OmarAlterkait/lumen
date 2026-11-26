@@ -19,6 +19,7 @@ import dataclasses
 import functools
 import json
 import math
+import warnings
 import weakref
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,7 +54,8 @@ except ImportError:  # pragma: no cover
 class Detector:
     """A loaded detector: its file, sensor set, the built parts (scene, volume tree, surfaces and media), parameters.
 
-    ``sensor_table()`` lists the sensors, in the order of ``Light.arrivals``, with the id map's columns.
+    ``sensor_table()`` lists the sensors, in the order of ``Light.arrivals``, with the id map's columns. ``precision``:
+    the navigator's, "float32" or "float64" (``lumen.load``).
     """
 
     name: str
@@ -64,6 +66,7 @@ class Detector:
     _columns: dict
     calibration: str = cal.NOMINAL
     _params: object = None
+    precision: str = "float32"
 
     @property
     def scene(self):
@@ -139,7 +142,8 @@ class Detector:
                 f"{len(f.surfaces)} optical surfaces\n"
                 f"  sensors          {len(self.sensor_set.ids)} in {len(self.sensor_set.groups)} group(s): "
                 f"{', '.join(g.name for g in self.sensor_set.groups)}\n"
-                f"  calibration      {self.calibration}")  # fmt: skip
+                f"  calibration      {self.calibration}\n"
+                f"  precision        {self.precision}")  # fmt: skip
 
 
 def _same(a, b) -> bool:
@@ -176,17 +180,17 @@ def convert(source, recipe=None, out=None, *, data=None, inputs: dict | None = N
     if out.exists() and not overwrite:
         raise io.FormatError(f"{out} exists: a detector file is never overwritten (pass overwrite=True)")
     mode = "replace" if overwrite else "raise"
-    if _is_package(source):
-        prepare = _package_prepare(source)
-        source, recipe, inputs = _package_detector(source, recipe, inputs, data)
-        with prepare(recipe, source, inputs) as (recipe, source, inputs):
-            return _place(_import(source, recipe, inputs), out, mode)
+    if is_package_detector(source):
+        if recipe is not None or inputs:
+            raise ValueError(f"convert: {source!r} names its own recipe and inputs (the package's DETECTORS)")
+        with package_detector(source, data=data) as entry:
+            return _place(_import(entry.gdml, entry.recipe, entry.inputs), out, mode)
     if data is not None:
         raise ValueError('convert: data is the data directory of a detector package\'s detector ("package:name")')
     return _place(_import(source, recipe, inputs), out, mode)
 
 
-def _is_package(source) -> bool:
+def is_package_detector(source) -> bool:
     """Return whether ``source`` names a detector package's detector, ``"package:name"`` (not an existing path)."""
     import re
 
@@ -214,26 +218,30 @@ class DetectorEntry:
         return value if isinstance(value, cls) else cls(*value)
 
 
-def _package_detector(source: str, recipe, inputs, data) -> tuple:
-    """Return (the GDML path, the recipe, its inputs) of ``"package:name"``: the package's ``DETECTORS[name]``."""
+@contextlib.contextmanager
+def package_detector(source: str, *, data=None):
+    """Yield the ``DetectorEntry`` of a detector package's detector, ``"package:name"``, as ``convert`` converts it.
+
+    The package's ``DETECTORS[name]``, its relative paths under ``data`` (else ``LUMEN_DATA``, else ``data`` under
+    lumen's cache root), passed through the package's ``prepare`` when it defines one: the entry's recipe is then a
+    ``lumen.Recipe``, and its GDML file and inputs are the files converted (a shipped compressed GDML decompressed and
+    its sha256 checked), which exist while the context is open.
+
+        with lumen.api.package_detector("lumen_wc:sk") as entry:
+            print(entry.gdml, entry.recipe.name)
+    """
     import importlib
 
-    if recipe is not None or inputs:
-        raise ValueError(f"convert: {source!r} names its own recipe and inputs (the package's DETECTORS)")
     pkg, name = source.split(":", 1)
-    detectors = getattr(importlib.import_module(pkg), "DETECTORS", None)
+    module = importlib.import_module(pkg)
+    detectors = getattr(module, "DETECTORS", None)
     if not isinstance(detectors, dict) or name not in detectors:
         raise ValueError(f"convert: {pkg} has no detector {name!r} (its DETECTORS: {sorted(detectors or {})})")
     e = DetectorEntry.of(detectors[name])
     root = Path(data) if data is not None else _env.data_dir()
-    return root / e.gdml, e.recipe, {k: root / v for k, v in e.inputs.items()}
-
-
-def _package_prepare(source: str):
-    """Return the package's ``prepare`` (``convert``), or one yielding the recipe, GDML and inputs as they are."""
-    import importlib
-
-    return getattr(importlib.import_module(source.split(":", 1)[0]), "prepare", None) or _as_given
+    prepare = getattr(module, "prepare", None) or _as_given
+    with prepare(e.recipe, root / e.gdml, {k: root / v for k, v in e.inputs.items()}) as (recipe, gdml, inputs):
+        yield DetectorEntry(recipe=recipe, gdml=gdml, inputs=inputs)
 
 
 @contextlib.contextmanager
@@ -311,7 +319,28 @@ def _is_yaml(source) -> bool:
     return all(p.suffix in (".yaml", ".yml") or p.is_dir() for p in paths)
 
 
-def load(path, *, calibration: str = cal.NOMINAL, parts: dict | None = None, responses=()) -> Detector:
+def _check_x64(what: str, precision: str):
+    """Refuse a float64 navigator while JAX's 64-bit mode is off: its arrays would be truncated to float32 with float64
+    tolerances."""  # noqa: D205, D209
+    if precision == "float64" and not jax.config.jax_enable_x64:
+        raise ValueError(f'{what}: precision="float64" needs JAX\'s 64-bit mode, which is off: set JAX_ENABLE_X64=1 '
+                         'before starting Python, or call jax.config.update("jax_enable_x64", True) before any JAX '
+                         "array is made")  # fmt: skip
+
+
+class PrecisionWarning(UserWarning):
+    """A detector is loaded at another precision than its recipe asks for (``load``)."""
+
+
+@functools.cache  # once per detector and precision
+def _warn_precision(name: str, want: str, got: str) -> None:
+    warnings.warn(f"{name}: its recipe asks for precision {want!r} and it is loaded as {got!r}: the layers it needs "
+                  f"{want} for are not tracked (docs/explanation/known-limits.md)",
+                  PrecisionWarning, stacklevel=3)  # fmt: skip
+
+
+def load(path, *, calibration: str = cal.NOMINAL, parts: dict | None = None, responses=(),
+         precision: str | None = None) -> Detector:  # fmt: skip
     """Load the detector file at ``path`` (a ``.lumen`` directory) with a calibration.
 
     ``calibration`` "nominal" (the default) is the detector file's own values; another is a calibration's name, found
@@ -324,15 +353,28 @@ def load(path, *, calibration: str = cal.NOMINAL, parts: dict | None = None, res
     its digest (and a calibration saved from it) records the choice. Which parts are hooks: docs/howto/extending.md.
     ``responses``: sensor responses (``lumen.response``) whose parameters join before the calibration is applied, so a
     calibration saved after ``with_responses`` loads.
+    ``precision``: the navigator's, "float32" or "float64": its coordinates, frames, roots and intervals
+    and the photon's position in that precision, the physics in float32 (``lumen.rules.navigation``). float64 tracks
+    volumes thinner than float32's band (a coating of a few um at metres from the origin) for every photon, at about
+    a quarter more time on a GPU with fast float64 (an A100), several times more on one without; it needs JAX's 64-bit
+    mode, on before any array is made (``JAX_ENABLE_X64=1``, or ``jax.config.update("jax_enable_x64", True)``).
+    Left out, the detector's own precision is used: the one its recipe states (``lumen.recipe.Recipe``), stored in the
+    detector file, else "float32". Passing it wins over the file's, and loading a detector whose recipe asks for
+    float64 in float32 warns (``PrecisionWarning``), since that is the detector the recipe says lumen gets wrong.
     """
     from lumen.build import build
     from lumen.build import values as value_checks
+    from lumen.rules import navigation
 
     path = Path(path)
     if not path.is_dir():
         raise FileNotFoundError(f"no detector file at {path} (a detector is its file: convert it first, lumen.convert)")
     models = _part_models(parts or {})
     df = _with_models(io.read(path), models)
+    prec = navigation.precision(df.precision if precision is None else precision)
+    if precision is not None and df.precision == "float64" and prec.name != "float64":
+        _warn_precision(df.name, df.precision, prec.name)
+    _check_x64("load", prec.name)
     values = [m for m in models.values() if isinstance(m, MediumModel)]
     sset = sensorsets.read(path)
     columns = json.loads((path / sensorsets.IDS).read_text())
@@ -342,7 +384,7 @@ def load(path, *, calibration: str = cal.NOMINAL, parts: dict | None = None, res
         cal.check_digest(c, io.content_digest(io.to_files(df), sensorsets.files(sset)), path)
     parts = build.build(df, sset, values)
     params = build.parameters(df, sset, parts, c, tuple(responses))
-    det = Detector(df.name, path, df, sset, parts, columns, calibration, params)
+    det = Detector(df.name, path, df, sset, parts, columns, calibration, params, prec.name)
     value_checks.check(det, params)  # the values every run checks, at the file's and the calibration's
     return det
 
@@ -426,8 +468,8 @@ _MODELS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 # a Detector -> {(gate, events): its groups' layouts (``_group_layouts``)}: the sensor models and the groups'
 # sensor tags (a pattern match per sensor) found once, not per run
 _LAYOUTS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
-# a built detector's Parts -> {(deposit fields carried, truth, analog, launch rows): the record slots the counts of
-# a launch of that shape asked for}: a run's first launch starts there, not at one slot per row
+# a built detector's Parts -> {(deposit fields carried, truth, analog, launch rows, precision): the record slots the
+# counts of a launch of that shape asked for}: a run's first launch starts there, not at one slot per row
 _SLOTS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
@@ -662,11 +704,12 @@ def _model(det, local: tuple = (), analog=False, levers=None):
     from lumen.geometry import reach
     from lumen.transport import step as steps
 
+    _check_x64("simulate", det.precision)
     levers = spd.EXACT if levers is None else levers
     models = _MODELS.setdefault(det.parts, {})
-    k = (local, analog, levers)
+    k = (local, analog, levers, det.precision)
     if k not in models:
-        geom = tracked.from_parts(det.parts, cache=True)
+        geom = tracked.from_parts(det.parts, cache=True, precision=det.precision)
         geom = reach.reach_of(geom)  # a bulk step's query bounded by its free path where no sensor is reachable (exact)
         jump = None
         if "jump" in levers:  # lumen.speed: the jump's data from this detector (no media: it can act nowhere: off)
@@ -1061,7 +1104,7 @@ def simulate(det, source, params=None, *, samples: int | None = None, seed: int,
             rows = first_rows if first_rows is not None else emit_rows(first, count)
             free = free_for(rows)
             room = _record_room(free, fields, derivative, r, backend)
-            shape = (local, truth is not None, on, size)
+            shape = (local, truth is not None, on, size, det.precision)
             # the first guess: records=, else the most slots a launch of this shape ran with in an earlier run
             start = cap if cap is not None else runner.pow2(records) if records is not None else seen.get(shape)
             slots = runner.capacity(room, rows=size, counted=start)
@@ -1293,4 +1336,15 @@ def _truth_setup(det, truth, controls, params, reference):
     return tr.tables(det)
 
 
-__all__ = ["Detector", "DetectorEntry", "Health", "Light", "SensorTable", "convert", "load", "simulate"]
+__all__ = [
+    "Detector",
+    "DetectorEntry",
+    "Health",
+    "Light",
+    "SensorTable",
+    "convert",
+    "is_package_detector",
+    "load",
+    "package_detector",
+    "simulate",
+]

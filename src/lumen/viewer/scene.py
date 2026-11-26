@@ -86,14 +86,11 @@ def resolve(source, recipe=None, data=None):
     """Yield (GDML path, recipe or None, recipe inputs, name) of a GDML file or of a package's ``"package:name"``.
 
     ``recipe``: a ``lumen.Recipe`` or ``FILE.py:NAME`` (a GDML file read with a recipe of your own); a package's
-    detector comes with its own (``lumen.DetectorEntry``), its relative paths under ``data`` (else ``LUMEN_DATA``) and
-    the package's ``prepare`` applied as ``lumen.convert`` applies it.
+    detector comes with its own, as ``lumen.convert`` converts it (``lumen.api.package_detector``).
     """
-    if api._is_package(source):
-        prepare = api._package_prepare(source)
-        gdml, rec, inputs = api._package_detector(source, None, None, data)
-        with prepare(rec, gdml, inputs) as (rec, gdml, inputs):
-            yield Path(gdml), rec, dict(inputs or {}), str(source)
+    if api.is_package_detector(source):
+        with api.package_detector(source, data=data) as entry:
+            yield Path(entry.gdml), entry.recipe, dict(entry.inputs or {}), str(source)
         return
     rec = load_recipe(recipe) if isinstance(recipe, str) else recipe
     p = Path(str(source))

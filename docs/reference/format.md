@@ -23,7 +23,7 @@ Values are in m, ns, eV and rad, or in the unit the field's name gives.
 
 | File | Fields |
 |---|---|
-| `detector.json` | `name`, `provenance`, `report`, `schema`, `manifest` |
+| `detector.json` | `name`, `provenance`, `report`, `precision`, `schema`, `manifest` |
 | `volumes.json` | `world`, `detector_volume`, `volumes` |
 | `solids.json` | `solids`, `meshes` |
 | `placements.json` | `placements` |
