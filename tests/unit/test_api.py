@@ -744,3 +744,21 @@ def test_the_class_table_is_the_navigator_s_volumes_by_name(converted):
     swapped = SimpleNamespace(n=len(names), n_mesh=0, names=list(names)[::-1])
     with pytest.raises(tracked.GeometryError, match="would attach to other volumes"):
         tracked.classes(swapped, det.parts.nav_scene, det.parts.optics)
+
+
+def test_a_run_s_first_launch_starts_at_the_slots_an_earlier_launch_needed(converted):
+    """A run keeps, per launch shape, the deposit record slots its first launch ran with, and a later run of that
+    shape starts there instead of at one slot per row. ``records=`` is that run's own: a large one does not become a
+    later run's first guess, whose launch would then hold slots it never needs."""
+    from lumen import api, sources
+
+    det = lumen.load(converted)
+    src = sources.Point(INSIDE, n_photons=1e3, lam=400.0)
+    api._SLOTS.pop(det.parts, None)
+    first = lumen.simulate(det, src, samples=256, seed=1, backend="xla")
+    kept = dict(api._SLOTS[det.parts])
+    assert kept and all(0 < s <= 256 for s in kept.values()), kept  # one slot per row to start, or fewer
+    lumen.simulate(det, src, samples=256, seed=1, backend="xla", records=1 << 13)
+    assert dict(api._SLOTS[det.parts]) == kept  # records= is not a later run's guess
+    again = lumen.simulate(det, src, samples=256, seed=1, backend="xla")
+    np.testing.assert_array_equal(np.asarray(again.arrivals), np.asarray(first.arrivals))

@@ -173,10 +173,11 @@ def scene_digest(scene) -> str:
     return d.h.hexdigest()
 
 
-def key(scene, options) -> str:
-    """Return the cache key of the navigator's arrays of a scene built with ``options``."""
+def key(scene, options, digest=None) -> str:
+    """Return the cache key of the navigator's arrays of a scene built with ``options`` (``digest``: the scene's
+    ``scene_digest``, when known)."""  # noqa: D205, D209
     h = hashlib.sha256()
-    h.update(scene_digest(scene).encode())
+    h.update((digest or scene_digest(scene)).encode())
     h.update(json.dumps(options, sort_keys=True).encode())
     h.update(code_digest(NAV_CODE).encode())
     return h.hexdigest()
@@ -245,13 +246,15 @@ def nav_arrays(scene, **options):
     of one scene for other classes or settings (the conversion's placement check, then the first load) resolve it once.
     ``precision`` ("float32", the default, or "float64") enters a key only when it is not float32.
     """  # noqa: D205
+    digest = scene_digest(scene)
     precision = options.pop("precision", "float32")
     extra = {} if precision == "float32" else {"precision": precision}
-    k = key(scene, {**options, **extra})
+    k = key(scene, {**options, **extra}, digest)
     path = _env.cache_dir() / "build" / f"{KIND}-{k}"
     if (path / "meta.json").is_file():
         return _load(path), k
-    own_path = _env.cache_dir() / "build" / f"{OWN}-{key(scene, extra)}"  # its contact tolerance is the precision's
+    # the ownership's own entry: its contact tolerance is the precision's
+    own_path = _env.cache_dir() / "build" / f"{OWN}-{key(scene, extra, digest)}"
     own = _load(own_path) if (own_path / "meta.json").is_file() else None
     stage = navigator_build.prepare(scene, own, precision)
     if own is None:

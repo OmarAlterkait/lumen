@@ -121,6 +121,63 @@ now, and what to do.
 - Light born within one band of a face is located on a side neither lumen nor Geant4 can agree on (it is on the
   boundary): up to 9% in detected light, however the film is placed.
 
+### Faster
+
+- **Loading a detector of many placements**: a block of cells, a placement in each and a border per cell (a SuperFGD:
+  each cube's core inside its drilled coating, fibers through the cubes), loaded in a time quadratic in its cells.
+  A border's touching instances were found by scanning every instance of its two physvols, for each border: they are
+  now reached from the physvol with fewer instances, through the other's instances by mother. The sibling sweep met
+  every box beside a box along its axis (a whole layer of cubes, and every cube for a fiber along it): it now runs
+  within tiles across that axis. A drilled solid's hole plan was redone for each placement: it is found once per
+  solid. Loading is linear in the placements, and builds the same detector files, parts and navigator arrays. The
+  full SuperFGD (192 x 56 x 192 cubes and their 58k fibers, 4.5 million volumes) converts in 18 min, loads in 6 min
+  and builds its navigator in 4 min, in 21 GB of memory; a 24 x 16 x 24 block loads in 5 s (was 230 s).
+- **Holed solids in the ownership**: a large union with holes was placed as its pieces each minus every hole (the 61
+  pieces of NEXT-100's energy-plane copper plate, 181 leaves each), and a containment proof evaluated every hole of a
+  holed solid (NEXT-100's 60 PMTs against the plate's 180-leaf disc). A piece now keeps only the holes whose box meets
+  its own, and a proof only those meeting the other solid's box at that pose: the same solids and the same ownership.
+  NEXT-100 converts in 73 s and builds its float64 navigator in 66 s (were 18 min each).
+- **Re-emission spectra**: a wavelength shift rebuilt its spectrum's sampler and densities from the spectrum table at
+  every re-emission, inside the photon loop (NEXT-100's TPB: 17 passes over its 119 knot intervals, held in each
+  thread's local memory). They are made once per run, outside the loop, with the step's other operands
+  (`Operands.emission`), and a re-emission looks them up: the same draws and weights to float32 rounding (a
+  normalisation's sum is rounded in another order). NEXT-100's S1 takes 12.7 us per photon on an A100 (was 13.5) and
+  its loop 0.7 kB of local memory per thread (was 4.7 kB). `lumen.media.spectra.density` still reads the two knots of
+  one energy's interval, so a source's wavelength draw inside the loop keeps no table of its own.
+- **The navigator's BVH walk**: a node's two children were each tested when the walk reached them, the farther pushed
+  whether or not the ray met its box: 42 % of the node visits of a NEXT-100 query in its gas volume (1340 daughters)
+  were boxes the ray missed, each reading three boxes. The children are now tested at their parent and only those the
+  ray meets within the best event so far go on, the stack keeping each entry's distance to drop it once a nearer
+  event is found: the same candidates in the same order, the same outputs bit for bit (every query of the traced
+  states of NEXT-100, SK, WCTE and a tank). Per query on an A100: NEXT-100's gas volume 90 -> 79 ns (float32), SK
+  123 -> 113 ns, the tank 4.3 -> 3.4 ns.
+- **The photon loop's registers**: tallymap's kernel kept 168 registers per thread, so 12 warps fit an SM of an A100;
+  lumen now asks tallymap for 8 resident blocks per SM (`lumen.run.MIN_BLOCKS`, tallymap's `min_blocks_per_sm`): 64
+  registers, the rest spilled to local memory, and the outputs the same bit for bit. Per photon on an A100: NEXT-100
+  (float64) -7.5 %, SK -20 %, WCTE -23 %, a tank -11 % (10, 12 and 16 blocks were slower).
+- **Relocation after a crossing**: going down into the daughter it had just found holding the ray, the walk tested
+  that daughter's solid again, and going up out of a volume it searched that volume's daughters first. Neither is
+  done now: the same volumes, the same outputs bit for bit. Per query on an A100: NEXT-100 70 ns (was 82, float64)
+  and 33 ns (was 40, float32), SK 104 ns (was 112), WCTE 96 ns (was 105); NEXT-100's S1 takes 10.5 us per photon
+  (was 11.6).
+- **A solid's leaves along a ray**: the scan for a solid's next membership change computed every leaf's intervals
+  along the ray again at each endpoint it passed, twice (for the next endpoint, then for the membership past it). It
+  now computes those of its first 8 leaves once per scan and reads them where the window meets the leaf's box (a torus
+  leaf, whose intervals depend on the window, is still solved per window): the same intervals, the same outputs bit
+  for bit. Per query on an A100: NEXT-100 61 ns (was 70, float64) and 30 ns (was 33, float32), SK 75 ns (was 104),
+  WCTE 62 ns (was 96); NEXT-100's S1 takes 9.6 us per photon (was 10.5).
+- **A run's health sums**: each photon added its fates to the health's exact sums as it ended, while the other photons
+  of its warp, mid-path, waited for those adds. The loop now returns each photon's fates and a launch of their own
+  adds them: the same exact sums. Per photon on an A100: SK -16 %, WCTE -2 %.
+- **A run's first launch holds the records an earlier run of its shape needed**: a run with values sized its first
+  launch at one deposit record slot per photon row, so a detector whose photons append more records than that (SK:
+  1.17 per photon) overflowed it and ran the whole photon loop again at the count's power of two, in every run. A
+  run's first launch now starts at the most slots a launch of the same detector, layout and launch size ran with
+  without overflowing (kept with the detector's parts), a shape already compiled; `records=` still comes first and is
+  that run's own, never a later run's guess. The outputs are the same bit for bit. Per photon on an A100 (2^20
+  photons, after a first run): SK 0.57 us (was 0.99), the others unchanged; the first run of a shape still runs
+  again.
+
 ## 0.2.1 (2026-11-23)
 
 ### Results that change

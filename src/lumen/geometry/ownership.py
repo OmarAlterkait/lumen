@@ -42,6 +42,9 @@ from lumen.rules import navigation as rules
 from lumen.rules.tolerances import CONVEX_TOL, FLOAT64_TINY, PIECES, POSE_ULPS, SAME_POSE, SPLITS
 
 PROOF_BATCH = 256  # pairs proved together (their pieces: at most PIECES each)
+TILE_EXTENT = 2.0  # the side of a sibling sweep's tiles across its axis, in median box extents
+MAX_TILES = 256  # ... and at most this many tiles along each of those axes
+TILE_COPIES = 8  # ... coarser while a box is in more of them than this, on average
 
 
 def _is_mesh(node):
@@ -152,6 +155,22 @@ def relation(fl, c, Q, h):  # noqa: N803 -- Q the boxes' axes
     return _expr_boxes(expr, out)
 
 
+def _sub_chain(node):
+    """Return (base, subtrahends) of a solid's top chain of subtractions ``((base - s1) - s2) - ...``, in order."""
+    subs = []
+    while isinstance(node, so.Op) and node.op == "sub":
+        subs.append(node.b)
+        node = node.a
+    return node, subs[::-1]
+
+
+def _regions(box, L, t):  # noqa: N803 -- L the rotations
+    """Return per pose the box (lo, hi (m, 3)) holding a solid's box (centre, half) placed by ``x = L[k] y + t[k]``."""
+    c, h = np.asarray(box[0], float), np.asarray(box[1], float)
+    w = np.einsum("mij,kj->mki", L, so.corners(c - h, c + h)) + t[:, None, :]
+    return w.min(1), w.max(1)
+
+
 def relate_poses(fi, bi, fo, L, t, want):  # noqa: N803 -- L the rotations
     """Return per pose whether a solid is proved apart from (``want`` "apart") or inside ("inside") another.
 
@@ -200,12 +219,66 @@ class Proofs:
     want) proved once."""  # noqa: D205, D209
 
     def __init__(self, u):
-        self.u, self.flats, self.memo = u, {}, {}
+        self.u, self.flats, self.memo, self.chains, self.nears = u, {}, {}, {}, {}
 
     def _flat(self, k):
         if k not in self.flats:
             self.flats[k] = flat(self.u.nodes[k])
         return self.flats[k]
+
+    def _chain(self, k):
+        """Return (base, subtrahends, their boxes' lo and hi (s, 3)) of solid k's top chain of subtractions; an
+        unbounded subtrahend's box is all space."""  # noqa: D205, D209
+        if k not in self.chains:
+            node = self.u.nodes[k]
+            base, subs = (node, []) if _is_mesh(node) else _sub_chain(node)
+            bb = [so.node_bbox(b) for b in subs]
+            lo = np.array([np.full(3, -np.inf) if b is None else b[0] for b in bb], float).reshape(-1, 3)
+            hi = np.array([np.full(3, np.inf) if b is None else b[1] for b in bb], float).reshape(-1, 3)
+            self.chains[k] = (base, subs, lo, hi)
+        return self.chains[k]
+
+    def _kept(self, k, lo, hi):
+        """Return per box [lo, hi] (m, 3) of solid k's frame which subtrahends of its top chain meet it (m, s)."""
+        _, _, slo, shi = self._chain(k)
+        return np.all(slo[None] <= hi[:, None], 2) & np.all(lo[:, None] <= shi[None], 2)
+
+    def _near(self, k, kept):
+        """Return solid k's ``flat`` with only the subtrahends ``kept`` (a mask) of its top chain: the solid on the
+        boxes they meet, a superset of it elsewhere."""  # noqa: D205, D209
+        if kept.all():
+            return self._flat(k)
+        key = (k, kept.tobytes())
+        if key not in self.nears:
+            node, subs, _, _ = self._chain(k)
+            for b, keep in zip(subs, kept, strict=True):
+                if keep:
+                    node = so.Op("sub", node, b)
+            self.nears[key] = flat(node)
+        return self.nears[key]
+
+    def _prove(self, a, b, L, t, want):  # noqa: N803 -- L the rotations
+        """Return per pose of solid a in solid b's frame (``x = L[k] y + t[k]``) whether a is proved apart from /
+        inside b: each solid without the subtrahends of its top chain that miss the other's box at that pose, the
+        poses keeping the same ones proved together, ``PROOF_BATCH`` at a time."""  # noqa: D205, D209
+        got = np.zeros(len(L), bool)
+        if not len(L):
+            return got
+        box_a, box_b = self.u.box[a], self.u.box[b]
+        ko = self._kept(b, *_regions(box_a, L, t))
+        if box_b is None:
+            ki = np.ones((len(L), len(self._chain(a)[1])), bool)
+        else:  # b's box in a's frame: x_a = L^T (x_b - t)
+            ki = self._kept(a, *_regions(box_b, np.transpose(L, (0, 2, 1)), -np.einsum("mji,mj->mi", L, t)))
+        rows = np.c_[ki, ko]
+        grp = np.unique(rows, axis=0, return_inverse=True)[1].ravel() if rows.shape[1] else np.zeros(len(L), int)
+        for g in range(int(grp.max()) + 1):
+            idx = np.flatnonzero(grp == g)
+            fi, fo = self._near(a, ki[idx[0]]), self._near(b, ko[idx[0]])
+            for s0 in range(0, len(idx), PROOF_BATCH):
+                js = idx[s0 : s0 + PROOF_BATCH]
+                got[js] = relate_poses(fi, box_a, fo, L[js], t[js], want)
+        return got
 
     def __call__(self, inner, outer, want):
         """Return per pair (inner[k], outer[k]) of units whether inner is proved apart from / inside outer."""
@@ -239,9 +312,7 @@ class Proofs:
             sel = todo_a[(pair[:, 0] == a) & (pair[:, 1] == b)]
             if u.box[a] is None:  # an unbounded solid: nothing is proved
                 sel = sel[:0]
-            for s0 in range(0, len(sel), PROOF_BATCH):
-                js = sel[s0 : s0 + PROOF_BATCH]
-                got[js] = relate_poses(self._flat(a), u.box[a], self._flat(b), L[first[js]], t[first[js]], want)
+            got[sel] = self._prove(a, b, L[first[sel]], t[first[sel]], want)
             for j in sel:
                 self.memo[(want, uk[j].tobytes())] = bool(got[j])
         return out | got[inv]
@@ -358,19 +429,57 @@ def _world_boxes(u):
 
 
 def _sweep(lo, hi):
-    """Return the index pairs of boxes [lo, hi] overlapping on every axis (open)."""
+    """Return the index pairs of boxes [lo, hi] overlapping on every axis (open), each once and in the sweep's order.
+
+    A pair is (i, j) with i before j in the order of their low faces along the sweep axis (the axis of least relative
+    extent; ties by index), the pairs in that order. The sweep runs within tiles across that axis: a box is in each
+    tile it covers, and a pair is kept in the tile of its common box's low corner. A box long across the tiles meets
+    the boxes of its tiles only, not every box beside it along the axis (a fiber through a block of cubes). The tiles
+    coarsen while the boxes are in more than ``TILE_COPIES`` tiles each on average (plates across a block).
+    """
+    n = len(lo)
+    empty = np.zeros((0, 2), np.int64)
+    if n < 2:
+        return empty
     ext = (hi - lo).mean(0) / np.maximum(hi.max(0) - lo.min(0), FLOAT64_TINY)
     ax = int(np.argmin(ext))
     o = np.argsort(lo[:, ax], kind="stable")
-    end = np.searchsorted(lo[o, ax], hi[o, ax], side="left")
-    cnt = np.maximum(end - np.arange(len(o)) - 1, 0)
-    if not cnt.sum():
-        return np.zeros((0, 2), np.int64)
-    ii = np.repeat(np.arange(len(o)), cnt)
-    jj = ii + 1 + (np.arange(cnt.sum()) - np.repeat(np.cumsum(cnt) - cnt, cnt))
-    a, b = o[ii], o[jj]
+    rank = np.empty(n, np.int64)
+    rank[o] = np.arange(n)
+    u, w = (k for k in range(3) if k != ax)
+    origin = lo.min(0)
+    size = np.maximum(TILE_EXTENT * np.median(hi - lo, axis=0), (hi.max(0) - origin) / MAX_TILES)
+    size = np.where(size > 0, size, 1.0)
+    while True:
+        t0 = np.floor((lo - origin) / size).astype(np.int64)
+        t1 = np.floor((hi - origin) / size).astype(np.int64)
+        cu, cw = t1[:, u] - t0[:, u] + 1, t1[:, w] - t0[:, w] + 1
+        cnt = cu * cw
+        if cnt.sum() <= TILE_COPIES * n:
+            break
+        size = 2 * size
+    nw = int(t1[:, w].max()) + 1
+    box = np.repeat(np.arange(n), cnt)
+    k = np.arange(len(box)) - np.repeat(np.cumsum(cnt) - cnt, cnt)
+    tile = (t0[box, u] + k % cu[box]) * nw + t0[box, w] + k // cu[box]
+    s = np.lexsort((rank[box], tile))
+    tile, box = tile[s], box[s]
+    key = tile * (n + 1) + rank[box]
+    below = np.searchsorted(lo[o, ax], hi[box, ax], side="left")  # the ranks whose low face is below this high face
+    end = np.searchsorted(key, tile * (n + 1) + below, side="left")
+    c = np.maximum(end - np.arange(len(box)) - 1, 0)
+    if not c.sum():
+        return empty
+    ii = np.repeat(np.arange(len(box)), c)
+    jj = ii + 1 + (np.arange(c.sum()) - np.repeat(np.cumsum(c) - c, c))
+    a, b, tq = box[ii], box[jj], tile[ii]
     keep = np.all((lo[a] < hi[b]) & (lo[b] < hi[a]), 1)
-    return np.stack([a[keep], b[keep]], 1)
+    a, b, tq = a[keep], b[keep], tq[keep]
+    corner = np.floor((np.maximum(lo[a], lo[b]) - origin) / size).astype(np.int64)
+    home = corner[:, u] * nw + corner[:, w] == tq
+    a, b = a[home], b[home]
+    order = np.lexsort((rank[b], rank[a]))
+    return np.stack([a[order], b[order]], 1)
 
 
 def _obb_depth(c1, h1, R1, c2, h2, R2):  # noqa: N803 -- R the boxes' rotations

@@ -108,6 +108,7 @@ geometry/bvh.py | <module> | 4.0 | 1 | choice | stated in place: ... when its da
 geometry/clearance.py | _leaf_eval | 4.0 | 1 | structural | exact math (quadratic formula's 4ac)
 geometry/clearance.py | bound | 10 | 1 | choice | no stated reason in place
 geometry/clearance.py | bound | 32 | 1 | choice | no stated reason in place
+geometry/csg.py | <module> | 8 | 1 | choice | stated in place: a scan computes the intervals of its solid's first CACHE leaves once
 geometry/csg_build.py | <module> | 3 | 2 | structural | an operation code (an identity)
 geometry/csg_build.py | <module> | 31 | 1 | choice | stated in place: the operand stack lives in one int32's bits
 geometry/csg_build.py | <module> | 8 | 1 | choice | stated in place: leaf boxes: cells per axis of the grid over the kind's box
@@ -123,7 +124,8 @@ geometry/navigator_build.py | morton | 3 | 1 | structural | the 3 components of 
 geometry/navigator_build.py | _mesh_chunks | 3 | 2 | structural | the 3 components of a vector (a shape)
 geometry/navigator_build.py | _entries | 3 | 1 | structural | the 3 components of a vector (a shape)
 geometry/navigator_build.py | _srf_layout | 4 | 3 | structural | 4 surface codes per face (the code layout, geometry/surface_id.py)
-geometry/ownership.py | <module> | 256 | 1 | choice | stated in place: pairs proved together (their pieces: at most PIECES each)
+geometry/ownership.py | <module> | 256 | 2 | choice | stated in place: pairs proved together (their pieces: at most PIECES each); a sibling sweep's tiles along each axis at most
+geometry/ownership.py | <module> | 8 | 1 | choice | stated in place: a sibling sweep's tiles coarsen while a box is in more of them than this, on average
 geometry/scene.py | <module> | -3 | 1 | structural | a sentinel code (an identity, not a quantity)
 geometry/solids.py | <module> | 1e-09 | 1 | published | G4Cons.cc: a zero rmin at one end becomes 1e3 kRadTolerance = 1e-6 mm (since geom-solids-csg-V02-00-02; cited in place)
 geometry/solids.py | g4_orb | 3 | 2 | structural | the 3 components of a vector (a shape)
@@ -177,7 +179,7 @@ rules/optics.py | <module> | 293.15 | 1 | published | G4OpRayleigh.cc water bran
 rules/optics.py | rayleigh_constant | 6.0 | 1 | structural | exact math (Rayleigh formula's 6 pi and (n2+2)/3, as G4OpRayleigh writes them)
 rules/optics.py | _rayleigh_length_f32 | 3.0 | 1 | structural | exact math (Rayleigh formula's 6 pi and (n2+2)/3, as G4OpRayleigh writes them)
 run.py | <module> | 2.4 | 1 | published | stated in place: PEAK, the one-pass Records launch's measured peak factor (review6/I7)
-run.py | <module> | 8 | 1 | structural | KEY_BYTES: two int32 (a record's slot key)
+run.py | <module> | 8 | 2 | choice | stated in place: MIN_BLOCKS, the blocks per SM the loop kernel's registers are capped for; KEY_BYTES: two int32 (a record's slot key)
 sensors/components.py | <module> | 8.0 | 1 | choice | stated in place: Gaussian widths a time kernel reaches: below 1e-15 of its mass lies beyond
 sensors/components.py | component_cdf | 1e-06 | 1 | choice | no stated reason in place
 sensors/components.py | component_sf | 1e-06 | 1 | choice | no stated reason in place

@@ -63,7 +63,7 @@ from lumen._core.rng import ANALOG_STREAM
 from lumen._core.static import Static
 from lumen.record import DEPOSIT_FIELDS, VECTOR_FIELDS
 from lumen.transport import state
-from lumen.transport.item import HEALTH, HEALTH_OUTPUTS, fates, start_photon
+from lumen.transport.item import HEALTH, fates, start_photon
 from lumen.transport.step import Operands, step
 
 MAX_VERTICES = 1 << 22  # the guard (vertices per photon), not a physics cut
@@ -78,6 +78,7 @@ DEPOSIT_WEIGHTS = ("q", "lost", "abandoned", "escaped", "distance_cut", "absorbe
                    "rouletted", "reweighted", "share")  # a Deposit's weights (None: off)  # fmt: skip
 RECORDS = "deposits"  # the photon loop's records output (``tallymap.Records``)
 SCHEDULE = "step"  # tallymap refills a lane per step, not per photon: 1.09-1.39x faster for lumen (L40S)
+MIN_BLOCKS = 8  # tallymap caps the loop kernel's registers so that this many blocks fit an SM (outputs unchanged)
 
 
 class RunResult(NamedTuple):
@@ -261,12 +262,26 @@ def _once(fn, model, *args):
     return j(model.static, *args)
 
 
-def _photon_end(tl, acc, ph, w0):
-    """Return the tallies with a photon's health added once, as it ends: its fate totals (``acc``, ``HEALTH``) and the
-    weight the vertex guard stopped (``truncated``), each relative to its row's weight ``w0``."""  # noqa: D205, D209
-    for i, k in enumerate(HEALTH):
-        tl = tl.add(k, jnp.int32(0), acc[i] * w0)
-    return tl.add("truncated", jnp.int32(0), jnp.where(ph.alive, ph.w * w0, 0.0))  # stopped by the guard
+HEALTH_SUMS = (*HEALTH, "truncated")  # a photon's health, as it ends: its fates and the weight the guard stopped
+
+
+def _photon_health(acc, ph, w0):
+    """Return a photon's health as it ends (``HEALTH_SUMS``): its fate totals (``acc``, ``HEALTH``) and the weight the
+    vertex guard stopped (``truncated``), each relative to its row's weight ``w0``."""  # noqa: D205, D209
+    return jnp.concatenate([acc * w0, jnp.where(ph.alive, ph.w * w0, 0.0)[None]])  # stopped by the guard
+
+
+def _health_sums(h, backend):
+    """Return the health's exact sums ({name: (1,)}, ``HEALTH_SUMS``) of the photons' rows ``h`` (n, len(HEALTH_SUMS)),
+    in a launch of their own."""  # noqa: D205, D209
+
+    def item(tl, row):
+        for i, k in enumerate(HEALTH_SUMS):
+            tl = tl.add(k, jnp.int32(0), row[i])
+        return tl
+
+    outputs = {k: tm.Sum((1,), fixed_point=True) for k in HEALTH_SUMS}
+    return dict(tm.vmap(item, outputs=outputs, in_axes=0, backend=backend)(h).outputs)
 
 
 def _loop(static, ops, rows, key, first_id, n_active, analog=None):  # noqa: PLR0913
@@ -277,7 +292,7 @@ def _loop(static, ops, rows, key, first_id, n_active, analog=None):  # noqa: PLR
     kernel = name == KERNEL
     if kernel:
         _env.tallymap_cache()  # tallymap's kernels under lumen's cache root, not tallymap's own default in HOME
-    shapes = dict(HEALTH_OUTPUTS) | {"truncated": (1, True)}
+    shapes = {}
     for dg in diagnostics:
         shapes |= dg.outputs()
     outputs = {k: tm.Sum((cells,), fixed_point=exact) for k, (cells, exact) in shapes.items()}
@@ -324,8 +339,7 @@ def _loop(static, ops, rows, key, first_id, n_active, analog=None):  # noqa: PLR
         live = lambda c: ~c[3] | (c[0].alive & (c[0].vertex < max_vertices))  # noqa: E731
         acc0 = jnp.zeros(len(HEALTH), jnp.float32)
         ph, tl, _, _, acc = jax.lax.while_loop(live, body, (ph0, tl, mem0, jnp.bool_(False), acc0))
-        tl = _photon_end(tl, acc, ph, w0)
-        rec = dict(vertices=ph.vertex)
+        rec = dict(vertices=ph.vertex, health=_photon_health(acc, ph, w0))
         if model.analog:
             a = ph.analog
             rec = (
@@ -337,12 +351,13 @@ def _loop(static, ops, rows, key, first_id, n_active, analog=None):  # noqa: PLR
 
     xs = dict(row=rows, id=jnp.arange(n, dtype=jnp.int32)) | ({} if analog is None else {"k": analog})
     opts = dict(outputs=outputs, max_steps=max_vertices + 1, backend=name,
-                schedule=SCHEDULE, in_axes=(0, None))  # fmt: skip
+                schedule=SCHEDULE, min_blocks_per_sm=MIN_BLOCKS, in_axes=(0, None))  # fmt: skip
     r = tm.vmap(item, **opts)(xs, (ops, key, first_id), n_active=n_active)
     _refuse_closed_over()
-    sums = {k: v for k, v in r.outputs.items() if k != RECORDS}
+    per_item = dict(r.per_item)
+    sums = {k: v for k, v in r.outputs.items() if k != RECORDS} | _health_sums(per_item.pop("health"), name)
     return Traced(dict(r.outputs[RECORDS]), r.stats["appended"][RECORDS], r.stats["records_dropped"][RECORDS],
-                  r.stats["records_mismatch"][RECORDS], sums, dict(r.per_item),
+                  r.stats["records_mismatch"][RECORDS], sums, per_item,
                   r.stats.get(OVERFLOW, jnp.int32(0)))  # fmt: skip
 
 

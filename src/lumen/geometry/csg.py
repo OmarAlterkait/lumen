@@ -60,6 +60,10 @@ class _Scan(NamedTuple):
     init: object
     skip: object
     on_face: object
+    cache: object = None
+
+
+CACHE = 8  # a scan computes the intervals of its solid's first CACHE leaves once (``_cache``), not at every endpoint
 
 
 class Csg:
@@ -231,7 +235,13 @@ class Csg:
 
     def _meets(self, g, o, d, w0, w1):
         """Return whether o + t d, t in [w0, w1], meets leaf g's box (slabs; an empty box never)."""
-        lo_t, hi_t, ne = w0, w1, jnp.bool_(True)
+        ne, lo_t, hi_t = self._box_t(g, o, d)
+        return ne & (jnp.maximum(w0, lo_t) <= jnp.minimum(w1, hi_t))
+
+    def _box_t(self, g, o, d):
+        """Return (whether o + t d can meet leaf g's box, the t it enters it at, the t it leaves at): the ray meets it
+        within a window [w0, w1] where ne and max(w0, enter) <= min(w1, leave)."""  # noqa: D205, D209
+        lo_t, hi_t, ne = self.F(-jnp.inf), self.F(jnp.inf), jnp.bool_(True)
         for a in range(3):
             lo, hi = self.T[f"bl{a}"][g], self.T[f"bh{a}"][g]
             small = jnp.abs(d[a]) < TINY_DIR
@@ -240,13 +250,53 @@ class Csg:
             lo_t = jnp.where(small, lo_t, jnp.maximum(lo_t, jnp.minimum(ta, tb)))
             hi_t = jnp.where(small, hi_t, jnp.minimum(hi_t, jnp.maximum(ta, tb)))
             ne = ne & (lo <= hi) & (~small | ((lo <= o[a]) & (o[a] <= hi)))
-        return ne & (lo_t <= hi_t)
+        return ne, lo_t, hi_t
 
     def _iv_in(self, g, o, d, w0, w1):
         """Return _iv where the window [w0, w1] meets leaf g's box; else no intervals (the leaf is false there)."""
         inf, m1 = self.F(HUGE), I32(-1)
         return pick(self._meets(g, o, d, w0, w1), lambda: self._iv(g, o, d, w0, w1),
                     lambda: (inf, inf, m1, m1, inf, inf, m1, m1))  # fmt: skip
+
+    def _cache(self, kind, o, d, t0):
+        """Return a scan's cache of its first CACHE leaves (from t0 on): whether a leaf is held (a quadric leaf, whose
+        intervals do not depend on the window; a torus leaf is solved per window), its box parameters (``_box_t``) and
+        its intervals (``_q_iv``), computed where its box reaches past t0 (every later window starts there)."""  # noqa: D205, D209
+        inf, m1 = self.F(HUGE), I32(-1)
+        nl = self.dev()["K"]["nl"][kind]
+
+        def fill(l, c):  # noqa: E741 -- a kind-local leaf
+            held, ne_a, lo_a, hi_a, ivf, ivi = c
+            g = self._leaf(kind, l)
+            q = self.T["typ"][g] != 2
+            ne, lo_t, hi_t = self._box_t(g, o, d)
+            iv = pick(q & ne & (lo_t <= hi_t) & (hi_t >= t0), lambda: self._q_iv(g, o, d),
+                      lambda: (inf, inf, m1, m1, inf, inf, m1, m1))  # fmt: skip
+            return (held.at[l].set(q), ne_a.at[l].set(ne), lo_a.at[l].set(lo_t), hi_a.at[l].set(hi_t),
+                    ivf.at[l].set(jnp.stack([iv[0], iv[1], iv[4], iv[5]])),
+                    ivi.at[l].set(jnp.stack([iv[2], iv[3], iv[6], iv[7]])))  # fmt: skip
+
+        z, zi = jnp.zeros(CACHE, self.F), jnp.zeros(CACHE, I32)
+        c0 = (zi == 1, zi == 1, z, z, jnp.zeros((CACHE, 4), self.F), jnp.zeros((CACHE, 4), I32))
+        return lax.fori_loop(0, jnp.minimum(nl, CACHE), fill, c0)
+
+    def _iv_scan(self, s, l, w0, w1):  # noqa: E741 -- a kind-local leaf
+        """Return ``_iv_in`` of kind-local leaf l for the window [w0, w1] (w0 >= the scan's t0), from the scan's cache
+        where it holds the leaf."""  # noqa: D205, D209
+        g = self._leaf(s.kind, l)
+        if s.cache is None:
+            return self._iv_in(g, s.o, s.d, w0, w1)
+        held, ne, lo_t, hi_t, ivf, ivi = s.cache
+        k = jnp.minimum(l, CACHE - 1)
+        inf, m1 = self.F(HUGE), I32(-1)
+
+        def cached():
+            meet = ne[k] & (jnp.maximum(w0, lo_t[k]) <= jnp.minimum(w1, hi_t[k]))
+            f = [jnp.where(meet, ivf[k, j], inf) for j in range(4)]
+            i = [jnp.where(meet, ivi[k, j], m1) for j in range(4)]
+            return (f[0], f[1], i[0], i[1], f[2], f[3], i[2], i[3])
+
+        return pick((l < CACHE) & held[k], cached, lambda: self._iv_in(g, s.o, s.d, w0, w1))
 
     def _inside_leaf(self, g, x):
         og, oq = self._o(g), self._qo(g)
@@ -293,15 +343,15 @@ class Csg:
         x = [x[a] for a in range(3)]
         return self._program(kind, lambda lf: self._inside_leaf(self._leaf(kind, lf), x).astype(I32))
 
-    def _mem_at(self, kind, o, d, t, on_face=None):
+    def _mem_at(self, kind, o, d, t, on_face=None, scan=None):
         """Return the solid's membership just after o + t d (the leaves' intervals).
 
         ``on_face``: (leaf, inside, t_end) -- that leaf's membership is ``inside`` before t_end (the face the photon
-        sits on, within its tolerance: first_change).
+        sits on, within its tolerance: first_change). ``scan``: first_change's, whose cache it reads.
         """
 
         def member_of(l):  # noqa: E741 -- a kind-local leaf
-            iv = self._iv_in(self._leaf(kind, l), o, d, t, t)
+            iv = self._iv_in(self._leaf(kind, l), o, d, t, t) if scan is None else self._iv_scan(scan, l, t, t)
             m = ((iv[0] <= t) & (t < iv[1])) | ((iv[4] <= t) & (t < iv[5]))
             if on_face is not None:
                 m = jnp.where((l == on_face[0]) & (t < on_face[2]), on_face[1], m)
@@ -322,7 +372,7 @@ class Csg:
 
         def leaf(l, c):  # noqa: E741 -- a kind-local leaf
             e1, lb, fc, ek = c
-            iv = self._iv_in(self._leaf(s.kind, l), s.o, s.d, t_cur, s.t1)
+            iv = self._iv_scan(s, l, t_cur, s.t1)
             for ep, fp, en in ((iv[0], iv[2], True), (iv[1], iv[3], False), (iv[4], iv[6], True),
                                (iv[5], iv[7], False)):  # fmt: skip
                 ok = (jnp.abs(ep) < BIG) & (ep <= s.t1) & (ep > t_cur) & (ep < e1)
@@ -338,8 +388,8 @@ class Csg:
 
     def _membership(self, s, first, has, tp, now, hd):
         if s.init is None:
-            return pick(has, lambda: self._mem_at(s.kind, s.o, s.d, tp, hd), lambda: now)
-        return pick(has & ~(first & s.init[0]), lambda: self._mem_at(s.kind, s.o, s.d, tp, hd),
+            return pick(has, lambda: self._mem_at(s.kind, s.o, s.d, tp, hd, s), lambda: now)
+        return pick(has & ~(first & s.init[0]), lambda: self._mem_at(s.kind, s.o, s.d, tp, hd, s),
                     lambda: jnp.where(first & s.init[0], s.init[1], now))  # fmt: skip
 
     def _change(self, s, t0, c):
@@ -386,7 +436,7 @@ class Csg:
         def band(t):
             return rules.band(xa + jnp.abs(t), self.prec)
 
-        s = _Scan(kind, o, d, t1, nl, band, want, init, skip, on_face)
+        s = _Scan(kind, o, d, t1, nl, band, want, init, skip, on_face, self._cache(kind, o, d, t0))
 
         def cond(c):
             return (~c[1]) & (c[0] < HUGE) & (c[6] < MAX_SCAN_PER_LEAF * nl + MAX_SCAN_EXTRA)
