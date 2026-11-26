@@ -19,6 +19,7 @@ import dataclasses
 import functools
 import json
 import math
+import warnings
 import weakref
 from dataclasses import dataclass
 from pathlib import Path
@@ -327,8 +328,19 @@ def _check_x64(what: str, precision: str):
                          "array is made")  # fmt: skip
 
 
+class PrecisionWarning(UserWarning):
+    """A detector is loaded at another precision than its recipe asks for (``load``)."""
+
+
+@functools.cache  # once per detector and precision
+def _warn_precision(name: str, want: str, got: str) -> None:
+    warnings.warn(f"{name}: its recipe asks for precision {want!r} and it is loaded as {got!r}: the layers it needs "
+                  f"{want} for are not tracked (docs/explanation/known-limits.md)",
+                  PrecisionWarning, stacklevel=3)  # fmt: skip
+
+
 def load(path, *, calibration: str = cal.NOMINAL, parts: dict | None = None, responses=(),
-         precision: str = "float32") -> Detector:  # fmt: skip
+         precision: str | None = None) -> Detector:  # fmt: skip
     """Load the detector file at ``path`` (a ``.lumen`` directory) with a calibration.
 
     ``calibration`` "nominal" (the default) is the detector file's own values; another is a calibration's name, found
@@ -341,23 +353,28 @@ def load(path, *, calibration: str = cal.NOMINAL, parts: dict | None = None, res
     its digest (and a calibration saved from it) records the choice. Which parts are hooks: docs/howto/extending.md.
     ``responses``: sensor responses (``lumen.response``) whose parameters join before the calibration is applied, so a
     calibration saved after ``with_responses`` loads.
-    ``precision``: the navigator's, "float32" (the default) or "float64": its coordinates, frames, roots and intervals
+    ``precision``: the navigator's, "float32" or "float64": its coordinates, frames, roots and intervals
     and the photon's position in that precision, the physics in float32 (``lumen.rules.navigation``). float64 tracks
     volumes thinner than float32's band (a coating of a few um at metres from the origin) for every photon, at about
     a quarter more time on a GPU with fast float64 (an A100), several times more on one without; it needs JAX's 64-bit
     mode, on before any array is made (``JAX_ENABLE_X64=1``, or ``jax.config.update("jax_enable_x64", True)``).
+    Left out, the detector's own precision is used: the one its recipe states (``lumen.recipe.Recipe``), stored in the
+    detector file, else "float32". Passing it wins over the file's, and loading a detector whose recipe asks for
+    float64 in float32 warns (``PrecisionWarning``), since that is the detector the recipe says lumen gets wrong.
     """
     from lumen.build import build
     from lumen.build import values as value_checks
     from lumen.rules import navigation
 
-    prec = navigation.precision(precision)
-    _check_x64("load", prec.name)
     path = Path(path)
     if not path.is_dir():
         raise FileNotFoundError(f"no detector file at {path} (a detector is its file: convert it first, lumen.convert)")
     models = _part_models(parts or {})
     df = _with_models(io.read(path), models)
+    prec = navigation.precision(df.precision if precision is None else precision)
+    if precision is not None and df.precision == "float64" and prec.name != "float64":
+        _warn_precision(df.name, df.precision, prec.name)
+    _check_x64("load", prec.name)
     values = [m for m in models.values() if isinstance(m, MediumModel)]
     sset = sensorsets.read(path)
     columns = json.loads((path / sensorsets.IDS).read_text())

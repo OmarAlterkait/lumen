@@ -95,6 +95,12 @@ now, and what to do.
   refracted as Geant4 draws it; a definite linear state that meets several facets of one surface is not.
 - **The facet paths against Geant4 on one interface**: `tools/g4ref/boundary.cc` (Geant4 11.3.0) and its histograms in
   `tests/data/g4_boundary`, which `tests/unit/test_g4_boundary.py` compares with the lobes' own draws.
+- **A recipe states the precision its detector needs**: `Recipe(..., precision="float64")` is stored in the detector
+  file, and `lumen.load` uses it when you pass no `precision`, so a detector whose coatings need float64 (NEXT-100's
+  TPB) is loaded right by itself; a `precision=` you pass still wins, and loading such a detector in float32 warns
+  once (`lumen.api.PrecisionWarning`). A recipe that says nothing, and every detector file written before this,
+  loads in float32 as before. `lumen.compare`'s charge and gradient checks now load at the detector's own precision
+  unless their manifest entry names one.
 - **`lumen.api.package_detector("package:name")`**: a detector package's detector as `lumen.convert` converts it (its
   recipe, GDML file and inputs, through the package's `prepare`, while the context is open), and
   `lumen.api.is_package_detector`, for a tool that reads a package's detector the way lumen does.

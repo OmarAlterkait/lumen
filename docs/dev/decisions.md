@@ -332,6 +332,9 @@ Launches still add in float32: `chunk` changes results at that rounding only.
 and intervals, its tolerances (the band, 8 eps64 |x| plus the 1 nm floor: the floor at any detector scale) and the
 photon's position. The physics stays float32. float32 is the default. float64 needs JAX's 64-bit mode, on before any
 array is made; `load` refuses it otherwise. Conversion is unchanged: decision 9's refusal stays at float32's band.
+A recipe states the precision its detector needs (`Recipe(..., precision="float64")`), which is stored in the detector
+file and is what `load` uses when the caller passes none, so a detector that needs float64 is not loaded wrong by
+default; an explicit `precision=` wins over it, and float32 on such a detector warns once (`PrecisionWarning`).
 **Why.** float32's band at a decision is that of the photon's ray, its start's largest coordinate plus the distance
 travelled (`geometry/navigate.py`, `geometry/csg.py`), so a coating a few bands thick where it sits is tracked or not
 depending on where each photon came from. Measured on a coating under a gas volume against exact float64 geometry,

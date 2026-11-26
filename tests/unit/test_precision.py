@@ -286,8 +286,8 @@ def test_through_simulate_a_scattering_medium_at_speed_fast(tmp_path):
 
 
 def test_a_checks_manifest_entry_carries_the_precision(tmp_path, monkeypatch):
-    """``lumen.compare``'s charge and gradients checks load the detector at the entry's ``precision`` (default
-    float32), so a float64 detector can be validated."""
+    """``lumen.compare``'s charge and gradients checks load the detector at the entry's ``precision``, and without
+    one at the detector's own (``lumen.load``), so a float64 detector can be validated."""
     import json
     from pathlib import Path
 
@@ -310,5 +310,29 @@ def test_a_checks_manifest_entry_carries_the_precision(tmp_path, monkeypatch):
                                         "products": {}}))  # fmt: skip
         with pytest.raises(RuntimeError, match="stop here"):
             gradients.check("toy", extra=[str(manifest)])
-    assert seen == ["float64", "float32"], seen
-    assert 'precision=spec.get("precision", "float32")' in Path(charge.__file__).read_text()  # the same line
+    assert seen == ["float64", None], seen
+    assert 'precision=spec.get("precision")' in Path(charge.__file__).read_text()  # the same line
+
+
+def test_a_recipe_states_the_precision_its_detector_needs(tmp_path, x64):
+    """A recipe's ``precision`` is stored in the detector file, and ``lumen.load`` uses it when the caller passes
+    none; an explicit precision wins over it, and float32 on a float64 detector warns once."""
+    import warnings
+
+    from lumen import api
+    from lumen.format import io
+    from lumen.format.sensorsets import SensorGroup
+    from lumen.recipe import Recipe
+
+    (tmp_path / "slab.gdml").write_text(SLAB.format(skin=SKIN))
+    recipe = Recipe("slab64", "GasLV", groups=(SensorGroup("cath", rule="border_into", lv="CathLV"),),
+                    precision="float64")  # fmt: skip
+    path = lumen.convert(tmp_path / "slab.gdml", recipe, tmp_path / "slab64.lumen")
+    assert io.read(path).precision == "float64"
+    assert lumen.load(path).precision == "float64"  # the file's, no argument given
+    api._warn_precision.cache_clear()
+    with pytest.warns(api.PrecisionWarning, match="loaded as 'float32'"):
+        assert lumen.load(path, precision="float32").precision == "float32"  # the argument wins
+    with warnings.catch_warnings():  # and it has been said once
+        warnings.simplefilter("error", api.PrecisionWarning)
+        assert lumen.load(path, precision="float32").precision == "float32"

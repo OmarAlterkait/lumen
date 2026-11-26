@@ -410,7 +410,7 @@ def check(name, *, detector=None, photons=None, seeds=None, reverse=None, only=(
     reverse = spec.get("reverse", False) if reverse is None else reverse  # the manifest's, unless overridden
     o = DEFAULTS | {k: v for k, v in dict(photons=photons, seeds=seeds).items() if v is not None}
     t0 = time.time()
-    runs = _Runs(lumen.load(detector or spec["detector"], precision=spec.get("precision", "float32")), spec, o)
+    runs = _Runs(lumen.load(detector or spec["detector"], precision=spec.get("precision")), spec, o)
     fams = [f for f in families(runs.det, runs.p0) if not only or f[0].startswith(only)]
     nf, out = len(fams), []
     for j in range(nf) if shard is None else range(shard[0], nf, shard[1]):
