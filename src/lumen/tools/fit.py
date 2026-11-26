@@ -6,6 +6,7 @@
     res = lumen.tools.fit(model, space, data)           # res.x, res.params, res.cov, res.sigma, res.history, res.path
     res = lumen.tools.descend(model, space, data)       # first order: Adam steps along the same score
     cov = lumen.tools.coverage(model, space, x, toys=20)    # refits of Poisson toys made at x: pulls, coverage
+    data = lumen.tools.toy_counts(model, space, x, seed=7)  # one such toy: the mean of other seeds, drawn
 
 ``model`` is plain JAX from (a ``Params``, a seed) to expected counts (any shape: charge per sensor, time nodes). The
 vector is the ``Space``'s (``lumen.tools.Space``).
@@ -33,7 +34,10 @@ units. ``nll`` is Poisson's negative log-likelihood of the two runs' mean, less 
 seeds, and returns the pulls (fit - x) / sigma and the share of toys whose 1 sigma interval holds ``x`` (0.683 for a
 Gaussian estimator).
 
-A cell with no light in either run and n > 0 makes the data impossible at the start: refused.
+A cell with no light in either run and n > 0 has no Poisson likelihood. The score, the information and the
+covariance already leave such a cell out (its 1 / mu is 0); ``nll`` leaves it out of its sum too, and
+``FitResult.dropped`` is how many cells were left out, so a fit whose data the model cannot produce there
+says so by a count rather than by refusing to start.
 
 ``fisher(..., per_sensor=keys)`` eliminates those keys (a per-sensor efficiency, an offset: nuisances) by the Schur
 complement and returns the information of the others. A per-sensor block degenerate with a global key (a global
@@ -119,10 +123,12 @@ class _Pair:
         return w, v, w > np.maximum(DETERMINED * sd, floor)
 
     def nll(self, n):
-        """Return Poisson's negative log-likelihood of the mean of the two runs, less its Monte Carlo bias."""
+        """Return Poisson's negative log-likelihood of the mean of the two runs, less its Monte Carlo bias, over the
+        cells the model can produce (the ``_dark`` cells left out)."""  # noqa: D205, D209
         m, var = self.mean, (0.5 * (self.ma - self.mb)) ** 2
         bias = 0.5 * np.sum(np.where(m > 0, n * var / np.where(m > 0, m, 1.0) ** 2, 0.0))
-        return float(poisson_nll(m, n)) - float(bias)
+        keep = ~_dark(m, n)
+        return float(poisson_nll(m[keep], n[keep])) - float(bias)
 
 
 def _over(jac, mu):
@@ -136,12 +142,9 @@ def _pair(model, space, x, seeds, entries=None):
     return _Pair(*jacobian(model, space, x, a, entries), *jacobian(model, space, x, b, entries))
 
 
-def _possible(pair, n, what):
-    """Refuse data the model cannot produce: a cell with no light in either run and n > 0."""
-    bad = (pair.mean <= 0) & (n > 0)
-    if bad.any():
-        raise ValueError(f"{what}: {int(bad.sum())} cells have counts where the model expects none (mu = 0, n > 0): "
-                         "the data are impossible at the start values")  # fmt: skip
+def _dark(mean, n):
+    """Return the cells the model cannot produce: no light in either run and n > 0 (no Poisson likelihood)."""
+    return (mean <= 0) & (n > 0)
 
 
 def _schur(info, drop):
@@ -178,7 +181,8 @@ class FitResult:
     The covariance is the estimate's, Monte Carlo error included (infinite variance on the entries an undetermined
     direction reaches: ``rank`` below the vector's size); the history holds per step the negative log-likelihood and the
     Newton decrement (``fit``) or the largest entry of the step (``descend``) where it starts; ``path`` the vector at
-    the start and after each step; ``converged`` and ``reason`` the verdict and why it stopped (the module docstring).
+    the start and after each step; ``converged`` and ``reason`` the verdict and why it stopped; ``dropped`` the cells
+    left out of ``nll`` because the model makes no light there and the data have counts (the module docstring).
     """
 
     x: np.ndarray
@@ -191,6 +195,7 @@ class FitResult:
     converged: bool
     reason: str
     rank: int
+    dropped: int
 
 
 def _newton(pair, n, free):
@@ -214,7 +219,6 @@ def fit(model, space, data, x0=None, *, steps: int = 20, max_step: float = 0.1, 
     x = space.vector() if x0 is None else np.asarray(x0, np.float64)
     free = np.setdiff1d(np.arange(len(x)), _indices(space, fixed, "fit: fixed"))
     pair = _pair(model, space, x, seeds, free)
-    _possible(pair, n, "fit")
     history, path, reason = [], [x], f"{steps} steps taken"
     d, dec = _newton(pair, n, free)
     for _ in range(steps):
@@ -247,7 +251,7 @@ def _result(pair, space, x, history, path, n, free, tol, reason) -> FitResult:  
     if lost:
         why += f"; {lost} of {len(free)} directions undetermined at this Monte Carlo noise"
     return FitResult(x, space.params(x), cov, space.sigma(cov, x), history, np.stack(path), pair.nll(n), converged, why,
-                     rank)  # fmt: skip
+                     rank, int(_dark(pair.mean, n).sum()))  # fmt: skip
 
 
 def _covariance(pair, n):
@@ -274,8 +278,6 @@ def descend(model, space, data, x0=None, *, steps: int = 50, lr: float = 0.02, t
     b1, b2 = betas
     for k in range(1, steps + 1):
         pair = _pair(model, space, x, seeds)
-        if k == 1:
-            _possible(pair, n, "descend")
         g = -pair.score(n)[0]
         m, v = b1 * m + (1 - b1) * g, b2 * v + (1 - b2) * g * g
         d = -lr * (m / (1 - b1**k)) / (np.sqrt(v / (1 - b2**k)) + 1e-12)
@@ -297,17 +299,27 @@ class CoverageResult:
     covered: np.ndarray
 
 
+def toy_counts(model, space, x, *, seed: int):
+    """Return one Poisson draw of the model's counts at the vector ``x``, from other seeds than a fit's own.
+
+    The mean of ``TRUTH_SEEDS`` runs at the seeds ``seed`` .. ``seed + TRUTH_SEEDS - 1``, drawn with ``seed``. Toy data
+    a fit is judged by must come from other seeds than the fit's, or the fit reads its own noise as signal (the module
+    docstring). Give a ``seed`` past the seeds the fit runs at; ``coverage`` does.
+    """
+    v = jnp.asarray(np.asarray(x, np.float64), jnp.float32)
+    mu = np.mean([np.asarray(_f(model, space, seed + i)(v), np.float64) for i in range(TRUTH_SEEDS)], 0)
+    return np.random.default_rng(seed).poisson(mu)
+
+
 def coverage(model, space, x, *, toys: int = 20, seed: int = 0, **fit_kw) -> CoverageResult:
     """Return the CoverageResult of ``toys`` fits (``fit``, its settings ``fit_kw``) to Poisson draws of the model at
     ``x``, each fit started at ``x`` (see the module docstring). The truth's runs are at other seeds than the fits'."""  # noqa: D205, D209
     x = np.asarray(x, np.float64)
-    v = jnp.asarray(x, jnp.float32)
-    first = 2 * int(toys)  # the toys fit at seeds 0 .. 2 toys - 1
-    mu = np.mean([np.asarray(_f(model, space, first + i)(v), np.float64) for i in range(TRUTH_SEEDS)], 0)
-    rng = np.random.default_rng(seed)
+    first = 2 * int(toys) + int(seed)  # the toys fit at seeds 0 .. 2 toys - 1: the truth's are past them
     fits, sig = [], []
     for k in range(int(toys)):
-        r = fit(model, space, rng.poisson(mu), x, seeds=(2 * k, 2 * k + 1), **fit_kw)
+        n = toy_counts(model, space, x, seed=first + k * TRUTH_SEEDS)  # its own data, from its own other seeds
+        r = fit(model, space, n, x, seeds=(2 * k, 2 * k + 1), **fit_kw)
         fits.append(r.x)
         sig.append(np.sqrt(np.diag(r.cov)))
     fits, sig = np.stack(fits), np.stack(sig)

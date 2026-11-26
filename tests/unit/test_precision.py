@@ -316,7 +316,8 @@ def test_a_checks_manifest_entry_carries_the_precision(tmp_path, monkeypatch):
 
 def test_a_recipe_states_the_precision_its_detector_needs(tmp_path, x64):
     """A recipe's ``precision`` is stored in the detector file, and ``lumen.load`` uses it when the caller passes
-    none; an explicit precision wins over it, and float32 on a float64 detector warns once."""
+    none; an explicit precision wins over it, and float32 on a float64 detector warns once per call site (Python's
+    own warning filter, no cache of lumen's own)."""
     import warnings
 
     from lumen import api
@@ -330,9 +331,9 @@ def test_a_recipe_states_the_precision_its_detector_needs(tmp_path, x64):
     path = lumen.convert(tmp_path / "slab.gdml", recipe, tmp_path / "slab64.lumen")
     assert io.read(path).precision == "float64"
     assert lumen.load(path).precision == "float64"  # the file's, no argument given
-    api._warn_precision.cache_clear()
-    with pytest.warns(api.PrecisionWarning, match="loaded as 'float32'"):
-        assert lumen.load(path, precision="float32").precision == "float32"  # the argument wins
-    with warnings.catch_warnings():  # and it has been said once
-        warnings.simplefilter("error", api.PrecisionWarning)
-        assert lumen.load(path, precision="float32").precision == "float32"
+    with warnings.catch_warnings(record=True) as said:
+        warnings.simplefilter("default")
+        for _ in range(2):  # the argument wins, and the warning is said once from one place
+            assert lumen.load(path, precision="float32").precision == "float32"
+    only = [w for w in said if issubclass(w.category, api.PrecisionWarning)]
+    assert len(only) == 1 and "loaded as 'float32'" in str(only[0].message), [str(w.message) for w in said]

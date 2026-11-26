@@ -5,7 +5,7 @@ surface a photon can meet, visible or not. ``bound`` gives, at the nodes of a re
 the distance from the node to the nearest surface of any volume the navigator can be in (``navigator_build.
 navigable``: its per-classes output, so no transparent volume it dissolved, whose faces bound nothing a photon sees)
 and of every mesh, from the navigator's own arrays (the
-float32 leaf coefficients the device evaluates, the volumes' padded world boxes), in float64:
+leaf coefficients the device evaluates, in its own precision, and the volumes' padded world boxes), in float64:
 
 - a volume whose box does not hold the node: the distance to that box (the solid lies inside it);
 - else the minimum over the volume's CSG leaves of a lower bound of the distance to the leaf's surfaces (the surface
@@ -18,8 +18,9 @@ float32 leaf coefficients the device evaluates, the volumes' padded world boxes)
     leaf box:                         the distance to its faces (inside) or to the box (outside);
 - every mesh (``mesh_boxes``: the world box of its float32 triangles, which hold its surface): 0 inside the box, the
   distance to the box outside.
-Minus the navigator's band at the grid's coordinate scale (``lumen.rules.navigation.band``: the float32 resolution
-the device works at), rounded down to float32. The device reads c(x) = clear[node] - |x - node| at the node nearest
+Minus the navigator's band at the grid's coordinate scale (``lumen.rules.navigation.band``, float32's in either
+precision: the jump itself works in float32, so a float64 navigator only makes this bound looser), rounded down to
+float32. The device reads c(x) = clear[node] - |x - node| at the node nearest
 x, again a lower bound (the distance is 1-Lipschitz), so any spacing gives a proven bound: the spacing changes only
 how tight it is, i.e. how often and how far the jump goes (speed), never what it is allowed to do.
 

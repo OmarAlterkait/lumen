@@ -20,12 +20,14 @@ a 10 % speed loss.
 **Why.** Calibration and reconstruction call `simulate` thousands of times with new values.
 **Where.** `transport/step.py` (`Operands`), `run.py` (`ClosedOverValues`), `tests/physics/test_no_recompile.py`.
 
-## 3. float32 compute, float64 references
+## 3. float32 physics, float64 references
 
-**Decision.** The photon loop runs in float32; float64 or closed forms appear only as test references.
+**Decision.** The photon loop's physics runs in float32; float64 or closed forms appear only as test references. The
+navigator's precision is decision 29 (float32 by default, float64 on request: the geometry and the photon's position,
+never the physics), so this entry is about the physics alone.
 **Why.** Speed and memory on GPUs; the known float32 limits are measured and listed
 (`docs/explanation/known-limits.md`).
-**Where.** Everywhere in `transport/`, `geometry/`; `compare/oracle.py` is the float64 reference.
+**Where.** `transport/` (the physics); `compare/oracle.py` is the float64 reference. The navigator: decision 29.
 
 ## 4. Fail closed
 

@@ -12,6 +12,7 @@ from test_api import INSIDE, converted  # noqa: F401 -- the toy detector, conver
 import lumen
 from lumen import tools
 from lumen.format.calibrations import Table
+from lumen.tools.fit import TRUTH_SEEDS
 
 R, ABS, SA = "surfaces/Liner/REFLECTIVITY", "materials/Water/ABSLENGTH", "surfaces/Liner/sigma_alpha"
 AMP = jnp.asarray([400.0, 900.0, 250.0, 1300.0, 700.0, 520.0], jnp.float32)  # six bins
@@ -188,10 +189,11 @@ def test_the_plots_draw(p0, tmp_path):
         f.savefig(tmp_path / f"{i}.png")
 
 
-def test_a_fit_reports_convergence_a_singular_information_and_refuses_impossible_data(p0):
+def test_a_fit_reports_convergence_a_singular_information_and_leaves_dark_cells_out(p0):
     """No silent ends: a fit stopped short says so; an information singular along a direction (only the mean of the
     two REFLECTIVITY knots enters) gives its rank and infinite variance on the entries it reaches, not a pseudo-inverse;
-    a count where the model expects none is impossible data (the Poisson likelihood is 0 there), refused."""
+    a cell with counts where the model makes no light has no Poisson likelihood and is left out of the sum, counted in
+    ``dropped``, not refused."""
     s = tools.Space(p0, [SA], scales={SA: 0.1}, factors=[R])
     truth = s.vector() + np.r_[0.3, -0.1]
     data = np.asarray(model(s.params(truth)), np.float64)
@@ -208,8 +210,31 @@ def test_a_fit_reports_convergence_a_singular_information_and_refuses_impossible
     res = tools.fit(mean_knots, s2, np.asarray(mean_knots(s2.params(s2.vector())), np.float64), steps=5)
     assert res.rank == 2 and np.all(np.isinf(np.diag(res.cov)[:2])) and np.isfinite(res.cov[2, 2])
     assert np.all(np.isinf(res.sigma[R])) and np.isfinite(res.sigma[SA])
-    with pytest.raises(ValueError, match="mu = 0, n > 0"):
-        tools.fit(lambda p, seed: jnp.concatenate([model(p), jnp.zeros(1)]), s, np.r_[data, 3.0])
+    dark = tools.fit(lambda p, seed: jnp.concatenate([model(p), jnp.zeros(1)]), s, np.r_[data, 3.0], steps=50)
+    assert dark.dropped == 1 and np.isfinite(dark.nll) and dark.converged, dark.reason
+    np.testing.assert_allclose(dark.x, full.x, atol=1e-6)  # the dark cell carries nothing: the same fit
+    assert dark.nll == pytest.approx(full.nll, rel=1e-6, abs=1e-9) and full.dropped == 0
+    assert tools.descend(model, s, data, steps=2).dropped == 0
+
+
+def test_toy_data_is_the_mean_of_other_seeds_drawn(p0):
+    """``toy_counts`` is the mean of ``TRUTH_SEEDS`` runs at ``seed`` .. ``seed + TRUTH_SEEDS - 1``, Poisson drawn with
+    ``seed``: the recipe ``coverage`` fits toys from, so data never come from a seed the fit runs at."""
+    s = tools.Space(p0, [SA], scales={SA: 0.1}, factors=[R])
+    x = s.vector() + np.r_[0.2, -0.1]
+    n = tools.toy_counts(model, s, x, seed=11)  # model ignores the seed: the mean is the model itself
+    mu = np.asarray(model(s.params(x)), np.float64)
+    assert np.array_equal(n, np.random.default_rng(11).poisson(mu))
+    assert np.array_equal(n, tools.toy_counts(model, s, x, seed=11))
+    assert not np.array_equal(n, tools.toy_counts(model, s, x, seed=12))
+    seen = []
+
+    def watched(p, seed):
+        seen.append(int(seed))
+        return model(p)
+
+    assert tools.toy_counts(watched, s, x, seed=30).shape == mu.shape
+    assert seen == list(range(30, 30 + TRUTH_SEEDS))
 
 
 CELLS = 4000  # faint cells, 4 counts each: the sum of a run's relative variances over them is what biases a fit on it
