@@ -140,10 +140,10 @@ def convert(source, recipe=None, out=None, *, data=None, inputs=None, overwrite=
 def import_structure(df, sensor_set=None) -> ImportResult        # import rules, checks, sensor ids
 
 # public
-def load(name_or_path, *, calibration="nominal", parts=None, responses=()) -> Detector
+def load(path, *, calibration="nominal", parts=None, responses=(), precision=None) -> Detector
 def simulate(det, source, params=None, *, samples, seed, gate=None, events=None,
              reference=None, controls=None, backend="auto", chunk=None, speed="fast", records=None,
-             diagnostics=(), truth=None) -> Light                # records: required under jax.jit / jax.vmap
+             diagnostics=(), truth=None) -> Light                # records: the slots a launch appends
 class Params(Mapping):  set, scale, info, explain        # an immutable pytree keyed by GDML names
 
 # model and loop (developer level)
@@ -560,7 +560,7 @@ The three constants without MIEHG are inert and not parameters.
 spectrum), `CherenkovSegment`, `ScintillationPoint` / `ScintillationSegment` (yields and components from the GDML,
 profiles, Birks), `CherenkovSteps` / `ScintillationSteps` (Geant4 steps, MeV), `FromArrays`. Every field is a parameter under `source/`. Weights sum in expectation
 to `n_photons` using `samples` Monte Carlo photons; random
-numbers come from `lumen.sources.uniforms(key, k, n, first_id)`. Sources run before the loop. A Cherenkov source's
+numbers come from `lumen.sources.photon_uniforms(key, k, n, first_id)`. Sources run before the loop. A Cherenkov source's
 unset wavelength bounds are the span of its medium's RINDEX table, the range G4Cerenkov emits over. Every optical
 table is read at any wavelength as Geant4 reads it, held at its end values beyond its knots, and checked at its own
 knots.

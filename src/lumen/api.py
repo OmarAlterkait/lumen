@@ -319,20 +319,19 @@ def _is_yaml(source) -> bool:
     return all(p.suffix in (".yaml", ".yml") or p.is_dir() for p in paths)
 
 
-def _check_x64(what: str, precision: str):
+def _check_x64(what: str, precision: str, asked: str = ""):
     """Refuse a float64 navigator while JAX's 64-bit mode is off: its arrays would be truncated to float32 with float64
-    tolerances."""  # noqa: D205, D209
+    tolerances. ``asked`` names where the precision came from when the caller did not pass it."""  # noqa: D205, D209
     if precision == "float64" and not jax.config.jax_enable_x64:
-        raise ValueError(f'{what}: precision="float64" needs JAX\'s 64-bit mode, which is off: set JAX_ENABLE_X64=1 '
-                         'before starting Python, or call jax.config.update("jax_enable_x64", True) before any JAX '
-                         "array is made")  # fmt: skip
+        raise ValueError(f'{what}: precision="float64"{asked} needs JAX\'s 64-bit mode, which is off: set '
+                         'JAX_ENABLE_X64=1 before starting Python, or call jax.config.update("jax_enable_x64", True) '
+                         "before any JAX array is made")  # fmt: skip
 
 
 class PrecisionWarning(UserWarning):
     """A detector is loaded at another precision than its recipe asks for (``load``)."""
 
 
-@functools.cache  # once per detector and precision
 def _warn_precision(name: str, want: str, got: str) -> None:
     warnings.warn(f"{name}: its recipe asks for precision {want!r} and it is loaded as {got!r}: the layers it needs "
                   f"{want} for are not tracked (docs/explanation/known-limits.md)",
@@ -374,7 +373,7 @@ def load(path, *, calibration: str = cal.NOMINAL, parts: dict | None = None, res
     prec = navigation.precision(df.precision if precision is None else precision)
     if precision is not None and df.precision == "float64" and prec.name != "float64":
         _warn_precision(df.name, df.precision, prec.name)
-    _check_x64("load", prec.name)
+    _check_x64("load", prec.name, "" if precision is not None else f" ({df.name}'s recipe asks for it)")
     values = [m for m in models.values() if isinstance(m, MediumModel)]
     sset = sensorsets.read(path)
     columns = json.loads((path / sensorsets.IDS).read_text())
@@ -964,8 +963,7 @@ def simulate(det, source, params=None, *, samples: int | None = None, seed: int,
         spectrum must lie inside the reference's support (``lumen.build.values``).
     speed : {"fast", "exact"}
         "fast" (the default: the diffusion walk, exact in law, validated against "exact") or "exact" (no fast
-        estimator). A derivative along a source position runs exact, recorded
-        as ``("speed", "exact (source-position derivative)")`` in ``Light.provenance``. See ``lumen.speed``.
+        estimator). See ``lumen.speed``.
     records : int, optional
         An optional override: the most deposit records a launch appends, whose power of two is each launch's slots
         (to shrink the memory a traced run takes). Without it a run with values takes its slots from its launches'

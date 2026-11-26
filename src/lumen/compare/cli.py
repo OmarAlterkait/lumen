@@ -52,7 +52,7 @@ def _parser() -> argparse.ArgumentParser:
     v.add_argument("--only", help="gradients: comma-separated prefixes of the parameter families to check")
     v.add_argument("--shard", help="gradients: I/N, run the families j with j %% N == I (one job each, on many GPUs)")
     v.add_argument("--merge", action="store_true", help="gradients: merge the shards' records into the check's")
-    v.add_argument("--g4ref", help="geometry: the g4ref binary (Geant4 10.7.4), or a probe CSV made elsewhere")
+    v.add_argument("--g4ref", help="geometry: the g4ref binary (Geant4 10.7.4)")
     return v
 
 

@@ -50,10 +50,31 @@ now, and what to do.
 
 ### Changed
 
+- **A fit no longer refuses data a cell of the model cannot produce.** A cell with no light in either run and counts
+  in the data has no Poisson likelihood; `lumen.tools.fit` and `descend` raised "the data are impossible at the start
+  values" and stopped. The Newton step, the information and the covariance always left such a cell out (its 1 / mu is
+  0), so only the reported `nll` was affected: it now leaves the cell out of its sum as well, and `FitResult.dropped`
+  is how many cells were left out. A caller who masked the data by hand to get past the refusal (a dark-sensor floor)
+  can drop the mask and read `dropped` instead.
+
 - The validation report's charge section prints every row (the per-source ratios, the per-sensor agreement and the
   arrival times were left out).
+- `load`'s refusal of float64 without JAX's 64-bit mode says when the precision came from the detector's own recipe,
+  rather than naming a `precision=` the caller did not pass. The warning about loading a float64 detector in float32
+  is now said once per call site (Python's own warning filter) instead of once per process.
+- Corrected documentation: decision 3 is about the physics' float32 and points at decision 29 for the navigator's
+  precision; `docs/dev/architecture.md`'s `load` and `simulate` signatures and the name `lumen.sources.photon_uniforms`;
+  `simulate`'s docstring no longer promises a `"exact (source-position derivative)"` provenance (a source-position
+  derivative is refused in this version); `lumen.geometry.clearance`'s docstring no longer calls the navigator's
+  coefficients and band float32-only; `python -m lumen.compare --g4ref`'s help no longer offers a probe CSV, which
+  only `compare geometry DET.lumen --probe-csv` takes.
 
 ### Added
+
+- **`lumen.tools.toy_counts(model, space, x, *, seed)`**: one Poisson draw of the model's counts at `x`, its mean from
+  `TRUTH_SEEDS` runs at the seeds `seed` .. `seed + TRUTH_SEEDS - 1`. This is the recipe `coverage` fits its toys from,
+  so toy data never come from a seed the fit itself runs at; `coverage` calls it now, once per toy (each toy's truth is
+  the mean of its own eight other seeds, so a coverage's numbers move slightly).
 
 - **The GDML viewer**: `python -m lumen.viewer FILE.gdml` (or a package's `package:name`, or `--recipe FILE.py:NAME`)
   converts and loads the detector and serves a page with its geometry in 3D and what lumen built: the reading of

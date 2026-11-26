@@ -367,7 +367,7 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `lumen: a jitted function traced with an object that no longer exists` | `ReferenceError` | `lumen._core.static` |
 | `(a message built at run time)` | `_closure_error` | `lumen.api` |
 | `<out> exists: a detector file is never overwritten (pass overwrite=True)` | `FormatError` | `lumen.api` |
-| `<what>: precision="float64" needs JAX's 64-bit mode, which is off: set JAX_ENABLE_X64=1 before starting Python, or call jax.config.update("jax_enable_x64", True) before any JAX array is made` | `ValueError` | `lumen.api` |
+| `<what>: precision="float64"<asked> needs JAX's 64-bit mode, which is off: set JAX_ENABLE_X64=1 before starting Python, or call jax.config.update("jax_enable_x64", True) before any JAX array is made` | `ValueError` | `lumen.api` |
 | `Light.event: event <e> of <events>` | `IndexError` | `lumen.api` |
 | `Light.event: this light has no event axis (simulate(..., events=E))` | `ValueError` | `lumen.api` |
 | `Light: no histograms of sensor group <name>; the modelled groups are <groups>` | `KeyError` | `lumen.api` |
@@ -853,7 +853,6 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `check_gradient: more than <power_floor> seeds (fewer cannot reject at the checks' level: stats.mean_test)` | `ValueError` | `lumen.tools.check` |
 | `check_gradient: stencil one of <STENCILS>, not <stencil>` | `ValueError` | `lumen.tools.check` |
 | `<what> keys <unknown> are not keys of the space` | `ValueError` | `lumen.tools.fit` |
-| `<what>: <sum> cells have counts where the model expects none (mu = 0, n > 0): the data are impossible at the start values` | `ValueError` | `lumen.tools.fit` |
 | `the two seeds are both <a>: a fit needs two independent runs` | `ValueError` | `lumen.tools.fit` |
 | `layout: a mask of <sel> over <n> sensors` | `ValueError` | `lumen.tools.layout` |
 | `layout: kind <kind> is not 'auto' or one of <KINDS>` | `ValueError` | `lumen.tools.layout` |
