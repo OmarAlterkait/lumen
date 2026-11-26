@@ -277,6 +277,34 @@ def test_a_length_table_with_a_zero_knot_scales_as_one_family():
     np.testing.assert_allclose(np.asarray(d), np.asarray(gel.value))  # the derivative: the other knots
 
 
+def test_a_family_that_raises_fails_its_row_and_keeps_the_others(monkeypatch):
+    """A family whose run raises does not abort the check: its row fails with the error's message, the families
+    already finished keep their rows, the summary fails, and a shard still returns its record."""
+    monkeypatch.setattr(gradients.lumen, "load", lambda path, **kw: None)
+    monkeypatch.setattr(gradients, "_Runs", lambda det, spec, o: types.SimpleNamespace(det=det, p0=None))
+    monkeypatch.setattr(references, "spec", lambda check, name, extra: {})
+    monkeypatch.setattr(gradients, "families", lambda det, p: [(k, "mul", None, True) for k in "abc"])
+
+    def one(runs, fam, tests):
+        if fam[0] == "b":
+            raise ValueError("materials/SilGel/ABSLENGTH has a value outside [0.0, inf] m or not finite")
+        t = dict(z=0.0, p=1.0)
+        return dict(ad=1.0, ad_e=0.1, fd=1.0, mode=fam[1], exact=dict(ratio=0.5, tested=1.0), value=t, production=t,
+                    passed=True, note="", seeds={})  # fmt: skip
+
+    monkeypatch.setattr(gradients, "family", one)
+    lines = []
+    rows = gradients.check("toy", detector="x", reverse=False, log=lines.append)
+    assert [r["quantity"] for r in rows] == ["dQ a", "dQ b", "dQ c", "families passing"]
+    bad = rows[1]
+    assert bad["pass"] is False and bad["value"] is None and "outside [0.0, inf] m" in bad["extra"]["note"]
+    assert bad["extra"]["family"] == 1 and bad["extra"]["families_total"] == 3
+    assert "raised ValueError" in lines[1] and len(lines) == 3
+    assert rows[-1]["pass"] is False and rows[-1]["value"] == 2  # two passed, and a failure fails the summary
+    shard = gradients.check("toy", detector="x", reverse=False, shard=(1, 3))
+    assert [r["quantity"] for r in shard] == ["dQ b"] and shard[0]["pass"] is False
+
+
 class _Runs:
     """A fake check: S sensors in G groups, N photons; AD (per photon) and values from functions of the seed."""
 
