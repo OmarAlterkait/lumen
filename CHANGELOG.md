@@ -116,6 +116,9 @@ seven detectors' float32 arrays and the NEXT toy's fractions are unchanged, bit 
   Hyper-K and IWCD - and admitted them in a run. A negative length is still refused. `lumen.tools.Space` still needs
   positive values for a key it varies in log, and says so. In a run that rate is 1 / (the smallest normal float32), finite, so a
   path of 0 is not attenuated and a scaled 0 has a derivative of 0 (1 / 0 made both NaN).
+  A scattering length (`RAYLEIGH`, `MIEHG`) of 0 where the detector's light evaluates the table is refused at the
+  load: Geant4 scatters such a photon where it stands, step after step of length 0, and never ends it (lumen ran it
+  to its vertex guard, 2^22 vertices, and reported it truncated). Give it a positive length.
 - **A gradient family whose run raises is a failing row** carrying the error's message, and the check goes on: the
   families already done keep their rows and the record (or the shard's record) is still written. One family used to
   take the whole run's record with it.

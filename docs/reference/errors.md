@@ -172,6 +172,7 @@ its values there bound it at every wavelength.
 | Message | Meaning and fix |
 |---|---|
 | `<name>: missing parameters <names>` · `<name>: non-finite values at its points` · `<name>: <quantity> out of range at <lam> nm: <value> (allowed [<a>, <b>])` | a table with missing, infinite or out-of-range values |
+| `<medium>.<channel>.length: a scattering length of 0 at <lam> nm, where light reaches: ...` | a `RAYLEIGH` or `MIEHG` table is 0 where the light evaluates it: Geant4 scatters such a photon in place forever. Give it a positive length (an absorption or WLS length of 0 is a value) |
 | `<medium>.<channel>: a channel length law must output a length` · `<name>: the <form> law declares no points to be checked at (Law.points)` · `group_index needs an index law` | a plug-in's material law is malformed |
 
 ## Loading a detector
@@ -700,6 +701,7 @@ Every message a raise site in lumen builds, with its error and the module that r
 | `(a message built at run time)` | `InputError` | `lumen.inputs` |
 | `<path>: <name> records no sha256 for this file (a conversion reads only checked files)` | `InputError` | `lumen.inputs` |
 | `<name>.<name>: a channel length law must output a length` | `LawError` | `lumen.media.bulk` |
+| `<name>: a scattering length of 0 at <lam> nm, where light reaches: Geant4 scatters such a photon where it stands and never ends it` | `LawError` | `lumen.media.bulk` |
 | `channel <name>: a re-emission draws its wavelength and one uniform per time-profile component, at most <REEMIT_UNIFORMS> in all; <comps> has <comps> components` | `ValueError` | `lumen.media.bulk` |
 | `TimeProfile: components from <COMPONENTS>, got <components>` | `ValueError` | `lumen.media.emission` |
 | `<name>: <out> out of range at <lam> nm: <v> (allowed [<a>, <b>])` | `LawError` | `lumen.media.laws` |
