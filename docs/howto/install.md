@@ -30,7 +30,7 @@ That is the latest release: the repository's `main` moves only at releases. For 
 unrelated package.
 
 `jax[cuda12]` (the `cuda` extra) provides everything tallymap needs on a GPU. tallymap is not on PyPI; lumen's
-dependency names its tag on GitHub: `tallymap @ git+https://github.com/OmarAlterkait/tallymap.git@v0.8.1`. The first GPU run also builds a
+dependency names its tag on GitHub: `tallymap @ git+https://github.com/OmarAlterkait/tallymap.git@v0.8.2`. The first GPU run also builds a
 small C++ launch shim, so a C++17 compiler must be on the PATH once.
 Without `[cuda]` (plain `jax`), lumen runs on the CPU only.
 
