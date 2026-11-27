@@ -270,13 +270,11 @@ class _Runs:
 
     @staticmethod
     def ladder(f, one_sided):
-        """Return (f(0) or None, {step: f(step)}) on the finite differences' ladder: +-h0 / 2^k, k = 0..3 (central, h0
-        ``H``), or h0 / 2^k and 0 (one-sided, h0 ``H_EDGE``)."""  # noqa: D205, D209
+        """Return {step: f(step)} on the finite differences' ladder: +-h0 / 2^k, k = 0..3 (central, h0 ``H``), or
+        h0 / 2^k (one-sided, h0 ``H_EDGE``; its f(0) is the caller's, the AD run's value)."""  # noqa: D205, D209
         h0 = H_EDGE if one_sided else H
         hs = [h0 / 2**k for k in range(4)]
-        xs = hs if one_sided else hs + [-h for h in hs]
-        side = {x: np.asarray(f(F32(x)), np.float64) for x in ((0.0, *xs) if one_sided else xs)}
-        return side.pop(0.0, None), side
+        return {x: np.asarray(f(F32(x)), np.float64) for x in (hs if one_sided else hs + [-h for h in hs])}
 
 
 def family(runs, fam, tests=1) -> dict:
@@ -328,7 +326,7 @@ def _seeds(runs, fam) -> tuple:
         if seed >= k:
             continue
         out["f0"].append(grp(f0))
-        s0, ld = runs.ladder(lambda t, s=seed: runs.value(fp(t), s, reference=p), edge)
+        ld = runs.ladder(lambda t, s=seed: runs.value(fp(t), s, reference=p), edge)
         sides.append({h: grp(v) for h, v in ld.items()})
         cs = []
         for n, ref in (("v_ref", p), ("v_own", None)):  # the same seeds: F's own seed fluctuation cancels
@@ -482,7 +480,7 @@ def _reverse(name, runs, fams):
     ratio, ok, applies = [], [], []
     for j, f in enumerate(fams):
         e = f[1] == "edge"
-        s0, ld = runs.ladder(lambda t, j=j: np.float64(loss(th0.at[j].set(t), runs.p0)), e)
+        ld = runs.ladder(lambda t, j=j: np.float64(loss(th0.at[j].set(t), runs.p0)), e)
         x = stats.fd_order(
             {h: np.reshape(v, (1, 1)) for h, v in ld.items()},
             np.reshape(l0, (1, 1)),

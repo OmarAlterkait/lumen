@@ -258,19 +258,26 @@ def _check_detection(w, det, params):
     from lumen.build import lookup, pack
     from lumen.sensors import normal_detection
 
+    # the check reads values, never tangents: under an eager jax.jvp stop_gradient gives the primal values, concrete,
+    # so a derivative's run is checked, and remembered, as its value's (not re-traced per call); under jax.jit or
+    # jax.vmap they stay traced and are checked traced
+    vals = {k: jax.lax.stop_gradient(v) if traced(v) else v for k, v in params._values.items()}
     digest = None
-    if not traced(params._values):  # a concrete check that passed once passes again: not repeated per run
-        h = hashlib.sha256(repr(sorted(params._values)).encode())
-        for x in jax.tree_util.tree_leaves([params._values[k] for k in sorted(params._values)]):
+    if not traced(vals):  # a concrete check that passed once passes again: not repeated per run
+        h = hashlib.sha256(repr(sorted(vals)).encode())
+        for x in jax.tree_util.tree_leaves([vals[k] for k in sorted(vals)]):
             h.update(np.ascontiguousarray(np.asarray(x, np.float64)).tobytes())
         digest = h.digest()
         if digest in _PASSED.setdefault(det, set()):
             return
-    readout = normal_detection(det.sensor_set, det.parts, params)
+    p = Params(vals, params._spec, params._layers)
+    readout = normal_detection(det.sensor_set, det.parts, p)
     if readout:
-        margins = list(lookup.detection_margins(det.parts.library, det.parts.optics, readout, pack.named(det, params)))
+        margins = list(lookup.detection_margins(det.parts.library, det.parts.optics, readout, pack.named(det, p)))
         ok = jnp.all(jnp.asarray([jnp.all(d <= a * (1.0 + lookup.PER_NORMAL_RTOL)) for *_, d, a in margins]))
-        w.require(ok, lambda: lookup.detection_refusal(det.parts.optics, margins))
+        if digest is None or not bool(ok):  # passing concrete values leave a derivative untouched (a mask of 1s)
+            w.require(ok, lambda: lookup.detection_refusal(det.parts.optics, margins))  # raises, or counts and NaNs
+            return
     if digest is not None:
         _PASSED[det].add(digest)
 

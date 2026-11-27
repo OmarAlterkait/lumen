@@ -284,7 +284,7 @@ class _Runs:
         seed = self.seen["ladder"] - 1
         dev = (lambda h: 0.0) if self.smooth else (lambda h: 50.0 * np.sqrt(h))
         m = 1.1 if self.wrong else 1.0
-        return None, {x: 10.0 + m * x * ad(seed) + np.sign(x) * dev(abs(x)) for x in hs + [-h for h in hs]}
+        return {x: 10.0 + m * x * ad(seed) + np.sign(x) * dev(abs(x)) for x in hs + [-h for h in hs]}
 
 
 def test_the_gradient_family_tests(monkeypatch):

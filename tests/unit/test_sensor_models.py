@@ -170,6 +170,35 @@ def test_a_datasheet_qe_above_the_cathodes_normal_absorptance_is_refused_whereve
     assert np.isnan(float(g(1.4))) and np.isfinite(float(g(1.0)))
 
 
+def test_a_derivative_s_values_are_checked_as_its_value_s_once(tmp_path, monkeypatch):
+    """Under an eager jax.jvp the run's value check reads the primal values (it reads no tangent): the QE <= A_n check
+    is computed once for them and remembered, not re-traced per call (0.3 s of SK's 0.4 s gradient-check call,
+    2026-11-26), and a failing value still counts and makes the derivative NaN, as traced."""
+    import sys
+
+    import jax
+
+    from lumen.build import lookup, values
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "examples"))
+    import example_tank
+
+    text = example_tank.GDML.read_text().replace('values="1.5*eV 0.0 5.0*eV 0.0"', 'values="1.5*eV 0.7 5.0*eV 0.7"')
+    (tmp_path / "tank.gdml").write_text(text)  # the cathode's A_n 0.3 at REFLECTIVITY 0.7, above the QE 0.25
+    det = lumen.load(lumen.convert(tmp_path / "tank.gdml", tmp_path / "tank.lumen", recipe=example_tank.RECIPE))
+    p, calls, margins = det.params(), [], lookup.detection_margins
+    monkeypatch.setattr(lookup, "detection_margins", lambda *a: calls.append(1) or margins(*a))
+
+    def run(s):
+        return jax.jvp(lambda t: values.check(det, p.scale("sensors/pmt/qe", t))[0]["sensors/pmt/qe"], (s,), (1.0,))
+
+    for _ in range(3):
+        _, d = run(1.0)
+    assert len(calls) == 1 and np.all(np.isfinite(np.asarray(getattr(d, "value", d)))), calls
+    _, d = run(1.4)  # QE 0.35 above A_n 0.3: counted, not raised, and the derivative is NaN
+    assert np.all(np.isnan(np.asarray(getattr(d, "value", d))))
+
+
 def test_an_unread_efficiency_under_a_sensor_model_is_recorded_not_warned(tmp_path):
     """The tutorial tank's cathode with EFFICIENCY 0.5 under lumen:sensor: the build records it in the entry's eff row
     (``Parts.key_rows``) and warns nothing."""
