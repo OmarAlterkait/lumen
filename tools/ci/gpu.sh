@@ -12,7 +12,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 OUT=${OUT:-$(mktemp -d)}
-echo "lumen $(git rev-parse --short HEAD), outputs in $OUT"
+# the processes below reuse each other's compiled programs, and the next run's: JAX's persistent cache (lumen sets none
+# itself), under lumen's cache root unless set (docs/howto/install.md)
+export JAX_COMPILATION_CACHE_DIR=${JAX_COMPILATION_CACHE_DIR:-$(python -c 'from lumen import _env; print(_env.cache_dir() / "jax")')}
+export JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS=${JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS:-0}
+echo "lumen $(git rev-parse --short HEAD), outputs in $OUT, compiled programs in $JAX_COMPILATION_CACHE_DIR"
 # the physics tier skips itself without a GPU (tests/physics/conftest.py): on a CPU fallback this script would pass
 # with nothing run, so it refuses first
 python -c 'import sys, jax; b = jax.default_backend(); sys.exit(0 if b == "gpu" else f"gpu.sh: JAX runs on {b}, not a GPU")'
