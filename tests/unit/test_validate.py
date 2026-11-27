@@ -306,7 +306,7 @@ def test_a_family_that_raises_fails_its_row_and_keeps_the_others(monkeypatch):
 
 
 class _Runs:
-    """A fake check: S sensors in G groups, N photons; AD (per photon) and values from functions of the seed."""
+    """A fake check: G = 2 groups of 2 sensors, N photons; AD (per photon) and values from functions of the seed."""
 
     def __init__(self, ad_tiny=0.0, production=8, k=4, smooth=True, wrong_ad=False):
         self.o, self.p0 = dict(seeds=k, groups=2, photons=50, production=production), None
@@ -317,30 +317,27 @@ class _Runs:
         c = np.random.default_rng(seed).random((50, 2, 2)) + shift
         return c + 1e-3 * (np.random.default_rng(3000 + seed).random((50, 2, 2)) - 0.5) if tiny else c
 
-    def jvp(self, fp, seed, eps=None, per_photon=False):
+    def jvp(self, fp, seeds, eps=None):
         if eps is not None:
-            self.seen["tiny"].add(seed)
-        c = self._pp(seed, self.ad_tiny if eps is not None else 0.0, tiny=eps is not None)
-        s = np.concatenate([c.sum(0).T.repeat(2, 1) / 2], 0)  # (2, S = 4): each group's light split over 2 sensors
-        return np.full((2, 4), 10.0), s, c
+            self.seen["tiny"] |= set(range(seeds))
+        shift = self.ad_tiny if eps is not None else 0.0
+        c = np.stack([self._pp(s, shift, tiny=eps is not None) for s in range(seeds)])
+        return np.full_like(c, 20.0 / 50), c  # the value: 20 per group
 
-    def value(self, p, seed, reference=None, eps=None, per_photon=False):
-        if per_photon:  # the value test's runs (the ladder's are not per photon)
-            self.seen["value"].add(eps)
-        c = np.random.default_rng(1000 + seed).random((50, 2, 2)) + 1.0
+    def value(self, p, seeds, reference=None, eps=None):  # the value test's runs (the fake ladder takes no runs)
+        self.seen["value"].add(eps)
+        c = np.stack([np.random.default_rng(1000 + s).random((50, 2, 2)) + 1.0 for s in range(seeds)])
         if reference is None:  # its own values: the same seed's light, another realisation of the last per mille
-            c = c + 1e-3 * (np.random.default_rng(2000 + seed).random((50, 2, 2)) - 0.5)
-        v = c.sum(0).T.repeat(2, 1) / 2
-        return (v, c) if per_photon else v
+            c = c + 1e-3 * np.stack([np.random.default_rng(2000 + s).random((50, 2, 2)) - 0.5 for s in range(seeds)])
+        return c
 
     def ladder(self, f, one_sided):
         self.seen["ladder"] += 1
-        ad = lambda s: np.random.default_rng(s).random((50, 2, 2)).sum(0).T.repeat(2, 1) / 2  # noqa: E731
+        ad = gradients.groups(np.stack([np.random.default_rng(s).random((50, 2, 2)) for s in range(self.o["seeds"])]))
         hs = [gradients.H / 2**k for k in range(4)]
-        seed = self.seen["ladder"] - 1
-        dev = (lambda h: 0.0) if self.smooth else (lambda h: 50.0 * np.sqrt(h))
+        dev = (lambda h: 0.0) if self.smooth else (lambda h: 100.0 * np.sqrt(h) * np.array([1.0, 1.0, 2.0]))
         m = 1.1 if self.wrong else 1.0
-        return {x: 10.0 + m * x * ad(seed) + np.sign(x) * dev(abs(x)) for x in hs + [-h for h in hs]}
+        return {x: np.array([20.0, 20.0, 40.0]) + m * x * ad + np.sign(x) * dev(abs(x)) for x in hs + [-h for h in hs]}
 
 
 def test_the_gradient_family_tests(monkeypatch):
@@ -352,7 +349,7 @@ def test_the_gradient_family_tests(monkeypatch):
     clean = _Runs()
     r = gradients.family(clean, ("k", "mul", None, True))
     assert r["passed"] is True and r["exact"]["applies"] and r["exact"]["ratio"] <= 1.0, r["note"]
-    assert clean.seen["tiny"] == set(range(8)) and clean.seen["ladder"] == 4
+    assert clean.seen["tiny"] == set(range(8)) and clean.seen["ladder"] == 1 and len(r["seeds"]["f0"]) == 4
     assert clean.seen["value"] == {gradients.TINY}  # both sides at the TINY roulette: they share every decision
     assert len(r["seeds"]["ad"]) == 8 and len(r["seeds"]["v_ref"]) == 4  # the per-seed statistics are kept
     off = gradients.family(_Runs(ad_tiny=0.05), ("k", "mul", None, True))
@@ -493,6 +490,23 @@ def _coupled(rng, k, n, delta, eps=0.01, w=0.005):
         a.append([pa.sum()]), b.append([pb.sum()])
         ca.append(np.stack([pa, pa], -1)[:, None]), cb.append(np.stack([pb, pb], -1)[:, None])
     return np.array(a), np.array(b), ca, cb
+
+
+def test_the_gradient_check_runs_its_seeds_as_blocks_of_few_launches():
+    """A seed is a block of N photons: the seeds a launch of at most ``api.CHUNK`` photons holds run in one simulate
+    (at seed j for the j-th launch), every seed once and in order, the first K seeds the same blocks whatever the
+    seeds asked for (the ladder's K and the production test's)."""
+    runs, calls = object.__new__(gradients._Runs), []
+    runs.o, runs.per_launch = dict(photons=3), 2
+
+    def f(j, m):
+        calls.append((j, m))
+        return (np.arange(j * 2 * 3 * 2, (j * 2 + m) * 3 * 2, dtype=float),)  # photon id x 2 cells: (m N, 1, 2)
+
+    (c,) = runs._blocks(f, 5)
+    assert calls == [(0, 2), (1, 2), (2, 1)] and c.shape == (5, 3, 1, 2)
+    assert np.array_equal(c.ravel(), np.arange(5 * 3 * 2)) and np.array_equal(runs._blocks(f, 3)[0], c[:3])
+    assert gradients.groups(c).shape == (5, 2, 2)
 
 
 def test_the_value_test_floor_is_the_unsampled_flips_variance():

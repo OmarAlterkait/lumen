@@ -6,11 +6,13 @@ A family is a parameter key the photon loop reads by reweighting (``Params.info(
 parameters): a probability with a domain (a fraction in [0, 1]) is added at min(v - lo, hi - v) (all at an edge:
 one-sided, inward), any other multiplied, v (1 + th) (one-sided, inward, where H_VALUE would leave its declared range: a
 group velocity at c). Each family is run alone on K seeds of ``photons`` photons from the entry's sources (isotropic, at
-its wavelength), through ``lumen.simulate`` as production runs it. Per seed the outputs are the sensors' arrivals Q and
-time-weighted arrivals Tw (each deposit's charge times its time, summed per sensor), summed in ``groups`` groups of
-sensors, and the totals. Three tests gate a family; the two statistical ones are ``stats.mean_test`` (the comparisons'
-one test: power from the effective number of contributing photons, Student scores, the largest over the outputs against
-its correlated null), each at ALPHA / (2 x the check's families), the look-elsewhere of the check:
+its wavelength), through ``lumen.simulate`` as production runs it; a seed is a block of photons with their own keys,
+as many blocks to a launch as fit ``api.CHUNK`` photons (one launch is the GPU's tail once, not once per seed). Per
+seed the outputs are the sensors' arrivals Q and time-weighted arrivals Tw (each deposit's charge times its time), each
+photon's summed in ``groups`` groups of sensors, and the totals. Three tests gate a family; the two statistical ones
+are ``stats.mean_test`` (the comparisons' one test: power from the effective number of contributing photons, Student
+scores, the largest over the outputs against its correlated null), each at ALPHA / (2 x the check's families), the
+look-elsewhere of the check:
 
 - **exact**: the forward derivative (AD) against the finite differences of the fixed-reference function
   F(th; reference th0) on the ladder h0 / 2^k, k = 0..3 (central, h0 = ``H``; one-sided inward at an edge, h0 =
@@ -61,7 +63,7 @@ import jax.numpy as jnp
 import numpy as np
 
 import lumen
-from lumen import sources
+from lumen import api, sources
 from lumen._core.domains import FRACTION
 from lumen.compare import photons, records, references
 from lumen.format.calibrations import Table
@@ -154,28 +156,11 @@ def at(params, fam, th):
     return params.set(key, Table(jnp.asarray(v.energy), new) if isinstance(v, Table) else new)
 
 
-def groups(a, ng):
-    """Return (..., ng + 1): ng groups of consecutive sensors, and the total last."""
-    idx = np.array_split(np.arange(a.shape[-1]), min(ng, a.shape[-1]))
-    return np.concatenate([np.stack([a[..., i].sum(-1) for i in idx], -1), a.sum(-1, keepdims=True)], -1)
-
-
-@dataclass(frozen=True)
-class _TimeSum:
-    """A readout of the deposit records summing each deposit's charge times its arrival time per sensor: the
-    time-weighted arrivals Tw (``lumen.diagnostics``, a records readout).
-
-    Summed from the deposits, its derivative is the derivative of the sum also on a sensor with no light at the
-    values (Q times the mean arrival time is 0 there, with derivative 0: light an edge row opens is missed).
-    """  # noqa: D205
-
-    sensors: int
-
-    def outputs(self):
-        return {"tw": (self.sensors, True)}
-
-    def emits(self, dep, weights=()):
-        return [("tw", jnp.where(dep.sensor >= 0, dep.sensor, -1), dep.q * dep.time)]
+def groups(c):
+    """Return (..., 2, G + 1) of per-photon outputs c (..., N, G, 2): each group's Q and Tw over the photons, and the
+    totals last."""  # noqa: D205, D209
+    s = np.swapaxes(np.asarray(c, np.float64).sum(axis=-3), -1, -2)
+    return np.concatenate([s, s.sum(-1, keepdims=True)], -1)
 
 
 @dataclass(frozen=True)
@@ -226,13 +211,13 @@ def disagreement(ca, cb):
     return (d * np.maximum(c - d, 0.0)).sum(-1)
 
 
-def _outputs(light):
-    """Return (2, S): the arrivals Q and the time-weighted arrivals Tw (``_TimeSum``)."""
-    return jnp.stack([light.arrivals, light.diagnostics["tw"]])
-
-
 class _Runs:
-    """The runs of one check: its detector, its source (the entry's points, one photon per row) and its seeds."""
+    """The runs of one check: its detector, its source (the entry's points, one photon per row) and its seeds.
+
+    A seed is a block of ``photons`` photons: seeds j m .. j m + m - 1 are the blocks of one simulate at seed j of m
+    copies of the source's rows (m the seeds a launch of at most ``api.CHUNK`` photons holds), each block's photons
+    independent of the others' (every photon draws from its own key) and the same in every run of the check.
+    """
 
     def __init__(self, det, spec, o):
         self.det, self.o, self.p0 = det, o, det.params()
@@ -240,35 +225,40 @@ class _Runs:
         pick = jax.random.randint(jax.random.PRNGKey(51), (o["photons"],), 0, len(x))
         self.src = sources.Point(jnp.asarray(x, F32)[pick], n_photons=1.0, lam=float(spec["wavelength"]))
         ns = len(det.parts.optics.sensor_pvs)
-        self.tw = _TimeSum(ns)
         idx = np.array_split(np.arange(ns), min(o["groups"], ns))
-        self.pg = _PhotonGroups(
-            o["photons"], tuple(int(g) for g in np.repeat(np.arange(len(idx)), [len(i) for i in idx]))
-        )
+        self.group_of = tuple(int(g) for g in np.repeat(np.arange(len(idx)), [len(i) for i in idx]))
+        self.per_launch = max(1, api.CHUNK // o["photons"])
 
-    def _light(self, p, seed, reference, eps, per_photon):
+    def _light(self, p, j, m, reference, eps):
+        """Return the per-photon groups (m photons, G, 2) of blocks j per_launch .. + m - 1: one simulate at seed j."""
         c = steps.Controls() if eps is None else steps.Controls(roulette=eps)
-        diag = (self.tw, self.pg) if per_photon else (self.tw,)
-        light = lumen.simulate(self.det, self.src, p, seed=seed, controls=c, reference=reference,
-                               _jump=False, diagnostics=diag)  # fmt: skip
-        out = _outputs(light)
-        return (out, light.diagnostics["pg"]) if per_photon else out
+        src = sources.Point(jnp.tile(self.src.position, (m, 1)), n_photons=1.0, lam=self.src.lam)
+        light = lumen.simulate(self.det, src, p, seed=j, controls=c, reference=reference, _jump=False,
+                               diagnostics=(_PhotonGroups(m * self.o["photons"], self.group_of),))  # fmt: skip
+        return light.diagnostics["pg"]
 
-    def value(self, p, seed, reference=None, eps=None, per_photon=False):
-        """Return (2, S) at ``p``, drawn at ``reference`` (None: at ``p``), at the roulette ``eps`` (None: default);
-        ``per_photon``: also each photon's Q and Tw per group (N, G, 2)."""  # noqa: D205, D209
-        out = self._light(p, seed, reference, eps, per_photon)
-        if not per_photon:
-            return out
-        return out[0], np.asarray(out[1], np.float64).reshape(self.o["photons"], -1, 2)
+    def _blocks(self, f, seeds):
+        """Return the arrays (seeds, N, G, 2) of f(j, m) (a tuple of per-photon groups) over the launches holding the
+        first ``seeds`` seeds."""  # noqa: D205, D209
+        out, n = [], self.o["photons"]
+        for j in range(-(-seeds // self.per_launch)):
+            m = min(self.per_launch, seeds - j * self.per_launch)
+            out.append([np.asarray(x, np.float64).reshape(m, n, -1, 2) for x in f(j, m)])
+        return [np.concatenate(x) for x in zip(*out, strict=True)]
 
-    def jvp(self, fam_p, seed, eps=None, per_photon=False):
-        """Return ((2, S) value, (2, S) forward derivative) of th -> value(fam_p(th)) at 0; ``per_photon``: also each
-        photon's derivative per group (N, G, 2)."""  # noqa: D205, D209
-        if not per_photon:
-            return jax.jvp(lambda t: self._light(fam_p(t), seed, None, eps, False), (F32(0.0),), (F32(1.0),))
-        (v, _), (d, dpg) = jax.jvp(lambda t: self._light(fam_p(t), seed, None, eps, True), (F32(0.0),), (F32(1.0),))
-        return v, d, np.asarray(dpg, np.float64).reshape(self.o["photons"], -1, 2)
+    def value(self, p, seeds, reference=None, eps=None):
+        """Return each photon's Q and Tw per group (seeds, N, G, 2) at ``p``, drawn at ``reference`` (None: at
+        ``p``), at the roulette ``eps`` (None: default)."""  # noqa: D205, D209
+        return self._blocks(lambda j, m: (self._light(p, j, m, reference, eps),), seeds)[0]
+
+    def jvp(self, fam_p, seeds, eps=None):
+        """Return (value, forward derivative) of th -> value(fam_p(th)) at 0, each (seeds, N, G, 2)."""
+        run = lambda t, j, m: self._light(fam_p(t), j, m, None, eps)  # noqa: E731
+        return tuple(self._blocks(lambda j, m: jax.jvp(lambda t: run(t, j, m), (F32(0.0),), (F32(1.0),)), seeds))
+
+    def arrivals(self, p, reference=None):
+        """Return the sensors' arrivals Q (S,) at ``p`` on seed 0."""
+        return lumen.simulate(self.det, self.src, p, seed=0, reference=reference, _jump=False).arrivals
 
     @staticmethod
     def ladder(f, one_sided):
@@ -313,32 +303,16 @@ def _seeds(runs, fam) -> tuple:
     sums over the seeds."""  # noqa: D205, D209
     edge, p = fam[1] == "edge", runs.p0
     fp = lambda t: at(p, fam, t)  # noqa: E731
-    k, ng = runs.o["seeds"], runs.o["groups"]
-    grp = lambda v: groups(np.asarray(v, np.float64), ng)  # noqa: E731
-    out: dict = {n: [] for n in ("ad", "tiny", "f0", "v_ref", "v_own")}
-    sums: dict = {n: 0.0 for n in ("ad", "tiny", "v_ref", "v_own", "disagree")}  # photon sums over the seeds
-    sides = []
-    for seed in range(max(k, runs.o.get("production", k))):
-        f0, ad, c = runs.jvp(fp, seed, per_photon=True)
-        _, tiny, ct = runs.jvp(fp, seed, eps=TINY, per_photon=True)
-        out["ad"].append(grp(ad))
-        out["tiny"].append(grp(tiny))
-        sums["ad"] = sums["ad"] + photon_sums(c)
-        sums["tiny"] = sums["tiny"] + photon_sums(ct)
-        if seed >= k:
-            continue
-        out["f0"].append(grp(f0))
-        ld = runs.ladder(lambda t, s=seed: runs.value(fp(t), s, reference=p), edge)
-        sides.append({h: grp(v) for h, v in ld.items()})
-        cs = []
-        for n, ref in (("v_ref", p), ("v_own", None)):  # the same seeds: F's own seed fluctuation cancels
-            v, c = runs.value(fp(F32(H_VALUE)), seed, reference=ref, eps=TINY, per_photon=True)
-            out[n].append(grp(v))
-            sums[n] = sums[n] + photon_sums(c)
-            cs.append(c)
-        sums["disagree"] = sums["disagree"] + disagreement(*cs)
-    g = {n: np.stack(v) for n, v in out.items()}  # (seeds, 2, G + 1)
-    ladder = {h: np.stack([sd[h] for sd in sides]) for h in sides[0]}
+    k = runs.o["seeds"]
+    flat = lambda c: c.reshape(-1, *c.shape[2:])  # noqa: E731 -- every seed's photons: their sums add over seeds
+    f0, c = runs.jvp(fp, max(k, runs.o.get("production", k)))
+    _, ct = runs.jvp(fp, max(k, runs.o.get("production", k)), eps=TINY)
+    ladder = runs.ladder(lambda t: groups(runs.value(fp(t), k, reference=p)), edge)
+    cr = runs.value(fp(F32(H_VALUE)), k, reference=p, eps=TINY)  # the same seeds: F's own seed fluctuation cancels
+    co = runs.value(fp(F32(H_VALUE)), k, eps=TINY)
+    g = dict(ad=groups(c), tiny=groups(ct), f0=groups(f0[:k]), v_ref=groups(cr), v_own=groups(co))
+    sums = {n: photon_sums(flat(v)) for n, v in (("ad", c), ("tiny", ct), ("v_ref", cr), ("v_own", co))}
+    sums["disagree"] = disagreement(flat(cr), flat(co))
     return g, ladder, sums
 
 
@@ -484,7 +458,7 @@ def _reverse(name, runs, fams):
         p = runs.p0
         for j, f in enumerate(fams):
             p = at(p, f, th[j])
-        return jnp.sum(a * runs.value(p, 0, reference=reference)[0])
+        return jnp.sum(a * runs.arrivals(p, reference))
 
     th0 = jnp.zeros(len(fams), F32)
     g, l0 = np.asarray(jax.grad(loss)(th0), np.float64), float(loss(th0))
