@@ -19,6 +19,7 @@ from toys import GPU
 
 import lumen
 from lumen import sources
+from lumen.build import pack
 from lumen.tools import check_gradient
 
 EXAMPLES = Path(__file__).resolve().parents[2] / "examples"
@@ -40,7 +41,7 @@ def _module(name):
 def tank(tmp_path_factory):
     """The tutorial's tank, converted with its own recipe."""
     et = _module("example_tank")
-    return lumen.load(lumen.convert(et.GDML, et.RECIPE, tmp_path_factory.mktemp("tank") / "tank.lumen"))
+    return lumen.load(lumen.convert(et.GDML, tmp_path_factory.mktemp("tank") / "tank.lumen", recipe=et.RECIPE))
 
 
 @pytest.fixture(scope="module")
@@ -50,7 +51,7 @@ def still(tmp_path_factory):
     d = tmp_path_factory.mktemp("still")
     text = et.GDML.read_text().replace('name="Water"', 'name="StillWater"').replace('ref="Water"', 'ref="StillWater"')
     (d / "still_tank.gdml").write_text(text)
-    return lumen.load(lumen.convert(d / "still_tank.gdml", et.RECIPE, d / "still_tank.lumen"))
+    return lumen.load(lumen.convert(d / "still_tank.gdml", d / "still_tank.lumen", recipe=et.RECIPE))
 
 
 def arrivals(det, src, params=None, seed=0, samples=N, reference=None):
@@ -139,7 +140,7 @@ def test_a_response_is_exact_after_tracking(tank, ex, response, key, theta0):
     simulation) are exact: AD equals the Richardson FD on every observable to its float32 resolution. (The seeds'
     z rules of ``passes`` judge Monte Carlo noise; here there is none, so the FD's own rounding would dominate them.)"""
     r = getattr(ex, response)
-    det = tank.with_responses(r)
+    det = lumen.load(tank.path, responses=(r,))
     k = f"sensors/pmt/{key}"
     assert k in det.params() and det.params().explain(k) == f"response {r.name}"
     lights = {}
@@ -250,7 +251,7 @@ def test_unit_weights_at_an_explicit_roulette_are_the_photon_loop_run_directly(l
     light = lumen.simulate(tank, src, samples=n, seed=3, controls=lumen.Controls(roulette=0.03))
     _, _, _, grid, lay = lumen.api._layouts(tank, None, 0)[0]
     model = lumen.api._model(tank, tuple(sorted(grid.reads)))
-    ops = steps.operands(model, jax.tree_util.tree_map(jnp.asarray, tank.pack(tank.params())), None,
+    ops = steps.operands(model, jax.tree_util.tree_map(jnp.asarray, pack.checked(tank, tank.params())), None,
                          steps.Controls(roulette=0.03))  # fmt: skip
     key = jax.random.key_data(jax.random.PRNGKey(3))
     m = lumen.api._layouts(tank, None, 0)[0][1]
@@ -340,7 +341,7 @@ def test_several_modelled_groups_fill_what_one_group_fills(tmp_path_factory):
     dets = []
     for name, groups in (("one", (one,)), ("two", two)):
         r = Recipe(name, et.RECIPE.detector_volume, groups=groups, sensor_columns=half)
-        dets.append(lumen.load(lumen.convert(gdml, r, tmp_path_factory.mktemp(name) / f"{name}.lumen")))
+        dets.append(lumen.load(lumen.convert(gdml, tmp_path_factory.mktemp(name) / f"{name}.lumen", recipe=r)))
     src = sources.Point((0.05, 0.02, 0.1), n_photons=float(N), lam=420.0)
     l1, l2 = (lumen.simulate(d, src, samples=N, seed=3) for d in dets)
     assert set(l2.groups) == {"pmt_a", "pmt_b"} and set(l1.groups) == {"pmt"}

@@ -86,9 +86,6 @@ FACET_BEHIND_BANDS, FACET_SHORT_ULPS, ZERO_STEP_BANDS = (
 ZERO_STEPS_BEFORE_PUSH, ZERO_STEPS_BEFORE_KILL = tol.ZERO_STEPS_BEFORE_PUSH, tol.ZERO_STEPS_BEFORE_KILL
 PUSH_DISTANCE_TOLERANCES = tol.PUSH_DISTANCE_TOLERANCES
 
-FLOAT32_EPS = float(np.finfo(np.float32).eps)
-BAND = BAND_ULPS * FLOAT32_EPS  # the float32 band per metre of coordinate scale
-
 
 class Precision(NamedTuple):
     """The navigator's floating-point precision: its name, its float dtype (jax, numpy), the integer of the same width
@@ -101,7 +98,7 @@ class Precision(NamedTuple):
     eps: float
 
 
-FLOAT32 = Precision("float32", jnp.float32, jnp.int32, np.float32, FLOAT32_EPS)
+FLOAT32 = Precision("float32", jnp.float32, jnp.int32, np.float32, float(np.finfo(np.float32).eps))
 FLOAT64 = Precision("float64", jnp.float64, jnp.int64, np.float64, float(np.finfo(np.float64).eps))
 PRECISIONS = {p.name: p for p in (FLOAT32, FLOAT64)}
 

@@ -175,8 +175,6 @@ class ReachGeometry:
     """A geometry whose query, given the free path (``s_free``), stops just past it where the crossing beyond cannot
     deposit (module docstring); every other attribute is the wrapped geometry's."""  # noqa: D205, D209
 
-    accepts_s_free = True
-
     def __init__(self, inner, host=None, report=None, rd=None):
         """``inner``: lumen's TrackedGeometry or a drop-in (the RegionGeometry)."""
         if host is None:
@@ -195,10 +193,10 @@ class ReachGeometry:
         """Return this geometry reading its arrays from the operands ``ops``."""
         return ReachGeometry(self.inner.bind(ops), self.host, self.report, ops["reach"])
 
-    def query(self, gp, x, d, cls, t_max, vol=-1, last=-1, sn=None, s_at=None, s_free=None):  # noqa: PLR0913
+    def query(self, x, d, t_max, vol=-1, last=-1, sn=None, s_at=None, s_free=None):  # noqa: PLR0913
         """Return the wrapped query; with ``s_free`` (the step's free path) bounded just past it where proven."""
         if s_free is None:
-            return self.inner.query(gp, x, d, cls, t_max, vol=vol, last=last, sn=sn, s_at=s_at)
+            return self.inner.query(x, d, t_max, vol=vol, last=last, sn=sn, s_at=s_at)
         R = self.nav.rdev()
         vol = jnp.asarray(vol, I32)
         c = R["comp"][jnp.clip(vol, 0, R["comp"].shape[0] - 1)]
@@ -218,7 +216,7 @@ class ReachGeometry:
         # float32's band in either precision: s comes from the float32 boxes
         look = (rules.GRAZE * rules.K_ON + 2) * rules.band(jnp.max(jnp.abs(x)) + s)
         tm = lax.stop_gradient(jnp.where(cand & ~far, jnp.minimum(jnp.asarray(t_max, self.nav.F), s + look), t_max))
-        return self.inner.query(gp, x, d, cls, tm, vol=vol, last=last, sn=sn, s_at=s_at)
+        return self.inner.query(x, d, tm, vol=vol, last=last, sn=sn, s_at=s_at)
 
 
 def reach_of(geom):

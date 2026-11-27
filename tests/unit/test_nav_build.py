@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from nav_toys import I32, defn, make_scene, nav_of, scene_nest
 
-from lumen.geometry import bvh, navigate, navigator_build, solids
+from lumen.geometry import bvh, navigate, navigator_build, solids, surface_id
 from lumen.geometry import cache as build_cache
 
 
@@ -100,8 +100,8 @@ def test_surface_codes_round_trip(toys):
     su, sm, FM = nav.SRF
     cases = [(0, 0, 1, True, False), (1, 0, 3, False, True), (nav.CH0, 2, -1, True, True), (2, -1, -1, False, False)]
     for item, leaf, face, o, e in cases:
-        s = nav.srf_pack(I32(item), I32(leaf), I32(face), jnp.bool_(o), jnp.bool_(e))
-        it, lf, fc, oo, kn, ee = (np.asarray(x) for x in nav.srf_decode(s))
+        s = surface_id.srf_pack(nav, I32(item), I32(leaf), I32(face), jnp.bool_(o), jnp.bool_(e))
+        it, lf, fc, oo, kn, ee = (np.asarray(x) for x in surface_id.srf_decode(nav, s))
         if leaf < 0:
             assert int(s) == item and not kn
             continue
@@ -125,9 +125,9 @@ def test_surface_codes_span_each_volumes_own_leaves(toys):
         for e in (False, True)
     ]
     it, lf, fc, o, e = (np.asarray(c) for c in zip(*cases, strict=True))
-    s = jax.vmap(nav.srf_pack)(I32(it), I32(lf), I32(fc), jnp.asarray(o), jnp.asarray(e))
+    s = jax.vmap(lambda *a: surface_id.srf_pack(nav, *a))(I32(it), I32(lf), I32(fc), jnp.asarray(o), jnp.asarray(e))
     assert len(np.unique(np.asarray(s))) == len(cases) and int(np.max(s)) < sm
-    d = jax.vmap(nav.srf_decode)(s)
+    d = jax.vmap(lambda c: surface_id.srf_decode(nav, c))(s)
     for got, want in zip(d[:3], (it, lf, fc), strict=True):
         np.testing.assert_array_equal(np.asarray(got), want)
     np.testing.assert_array_equal(np.asarray(d[3]), o)

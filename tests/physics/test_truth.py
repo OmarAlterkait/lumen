@@ -6,7 +6,7 @@
 - the hit point is on the sphere (radius A in the sensor's frame), its angle the point's polar angle; the arrival
   time is the path length over the group velocity, at least the straight distance's;
 - the event axis: per-label arrivals add up to the run's;
-- speed="fast" (the diffusion jump) in a Rayleigh liquid: the rows are those of the exact walk in law (count, time
+- the diffusion jump in a Rayleigh liquid: the rows are those of the exact walk in law (count, time
   profile, per-label counts), and the run records the fast level.
 """
 
@@ -64,17 +64,17 @@ def test_the_event_axis_adds_up_to_the_run(pmt_sphere):  # noqa: F811
 
 def test_truth_rows_with_the_jump_are_the_exact_walk_s_in_law(toy):
     """A Rayleigh liquid ball (0.1 m scattering length, 10 m absorption, every wall photon absorbed): the analog rows of
-    speed="fast" and "exact" (independent photons) agree in total, per label and in their time profile, and both
-    agree with the expected arrivals; the run records the level it ran."""
+    the jump's rows and the plain walk's (independent photons) agree in total, per label and in their time profile,
+    and both agree with the expected arrivals; the run records which loop ran."""
     det = toy("sphere", r=0.0, absorption=10.0, rayleigh=0.1).det
     n = 1 << 15
     src = lumen.sources.Point((0.0, 0.0, 0.2), n_photons=1.0, lam=400.0, label=np.arange(n) % 3)  # a photon per row
     rows = {}
     for sp, seed in (("exact", 21), ("fast", 22)):
-        light = lumen.simulate(det, src, samples=n, seed=seed, speed=sp, truth=Truth(keep="absorbed"))
+        light = lumen.simulate(det, src, samples=n, seed=seed, _jump=sp == "fast", truth=Truth(keep="absorbed"))
         assert dict(light.provenance)["speed"] == sp
         rows[sp] = light.truth
-    want = lumen.simulate(det, src, samples=n, seed=23, speed="fast")
+    want = lumen.simulate(det, src, samples=n, seed=23)
     a, e = float(np.sum(want.arrivals)), float(np.sqrt(np.sum(np.square(want.arrivals_error))))
     ex, fa = rows["exact"], rows["fast"]
     for h in (ex, fa):

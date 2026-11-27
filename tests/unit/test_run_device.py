@@ -11,10 +11,9 @@ import pytest
 from lumen import run as runner
 
 
-def test_backend_cuda_refuses_a_cpu_jax(monkeypatch):
-    monkeypatch.setattr(jax, "default_backend", lambda: "cpu")
-    with pytest.raises(runner.DeviceError, match="expects the GPU"):
-        runner.run(None, None, None, None, None, backend="cuda")
+def test_an_unknown_backend_is_refused():
+    with pytest.raises(ValueError, match="backend must be one of"):
+        runner.resolve_backend("cuda")  # 0.2.1's name: JAX_PLATFORMS=cuda with backend="auto" now
 
 
 @pytest.mark.parametrize(("env", "raises"), [({"JAX_PLATFORMS": "cuda"}, True), ({"JAX_PLATFORMS": "cpu"}, False),

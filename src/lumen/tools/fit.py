@@ -28,8 +28,9 @@ the fit is not converged. More samples or another source determine it, or ``fixe
 
 The fit takes Newton steps along the determined directions, each step's largest entry capped at ``max_step`` and halved
 while the Newton decrement rises, and has converged when the decrement U^T I^-1 U / 2 is below ``tol``. ``descend``
-takes first-order steps instead: Adam (Kingma and Ba, arXiv:1412.6980) along the score, ``lr`` its step in the vector's
-units. ``nll`` is Poisson's negative log-likelihood of the two runs' mean, less its Monte Carlo bias. ``coverage`` fits
+takes first-order steps instead: Adam (Kingma and Ba, arXiv:1412.6980) along the score, ``lr`` its step in the
+vector's units; it has no stopping rule, so it takes its ``steps`` and is judged by the same decrement at the end.
+``nll`` is Poisson's negative log-likelihood of the two runs' mean, less its Monte Carlo bias. ``coverage`` fits
 ``toys`` Poisson draws of the model at ``x`` (the mean of ``TRUTH_SEEDS`` other seeds), each from ``x`` at its own two
 seeds, and returns the pulls (fit - x) / sigma and the share of toys whose 1 sigma interval holds ``x`` (0.683 for a
 Gaussian estimator).
@@ -59,6 +60,8 @@ FOURTH = 3.0  # a Gaussian's fourth moment over its squared variance
 DETERMINED = 3.0  # the eigenvalue of a determined direction, in its Monte Carlo standard errors
 SEEDS = (0, 1)
 TRUTH_SEEDS = 8  # the seeds a coverage's truth is the mean of
+TOL = 1e-6  # the Newton decrement a fit has converged below (``fit``'s default, and ``descend``'s verdict)
+BETAS = (0.9, 0.999)  # Adam's decay rates for the first and second moments (Kingma and Ba, arXiv:1412.6980)
 F32_EPS = float(np.finfo(np.float32).eps)
 
 
@@ -66,9 +69,15 @@ def _f(model, space, seed):
     return lambda x: jnp.ravel(model(space.params(x), seed))
 
 
-def jacobian(model, space, x, seed: int = 0, entries=None):
-    """Return (J (outputs, P), mu (outputs,)) of the model at the vector ``x`` and one ``seed``: a forward derivative
-    per entry (only those of ``entries``, default all: the others' columns are 0)."""  # noqa: D205, D209
+def jacobian(model, space, x, seed: int = 0):
+    """Return (J (outputs, P), mu (outputs,)) of the model at the vector ``x`` and one ``seed``: one forward derivative
+    per entry of the vector."""  # noqa: D205, D209
+    return _jacobian(model, space, x, seed)
+
+
+def _jacobian(model, space, x, seed: int = 0, entries=None):
+    """Return ``jacobian`` with only the entries of ``entries`` differentiated (default all); the others' columns are
+    0, so a J of a subset is not an information matrix' J: the fit's own use only."""  # noqa: D205, D209
     f, x = _f(model, space, seed), jnp.asarray(x, jnp.float32)
     cols, mu = [], None
     todo = set(range(x.shape[0]) if entries is None else entries)
@@ -139,7 +148,7 @@ def _pair(model, space, x, seeds, entries=None):
     a, b = seeds
     if a == b:
         raise ValueError(f"the two seeds are both {a}: a fit needs two independent runs")
-    return _Pair(*jacobian(model, space, x, a, entries), *jacobian(model, space, x, b, entries))
+    return _Pair(*_jacobian(model, space, x, a, entries), *_jacobian(model, space, x, b, entries))
 
 
 def _dark(mean, n):
@@ -167,7 +176,7 @@ def _indices(space, keys, what="fisher: per_sensor"):
     return np.asarray(out, np.int64)
 
 
-def fisher(model, space, x, per_sensor=(), *, seeds=SEEDS):
+def fisher(model, space, x, *, per_sensor=(), seeds=SEEDS):
     """Return the Poisson Fisher information of the vector at ``x`` (the ``per_sensor`` keys eliminated), from the runs
     at the two ``seeds``: unbiased by their noise, so not positive definite where the data say less than the noise."""  # noqa: D205, D209
     F = _pair(model, space, x, seeds).information()
@@ -208,7 +217,7 @@ def _newton(pair, n, free):
     return d, 0.5 * float(np.sum(c**2 / w[ok]))
 
 
-def fit(model, space, data, x0=None, *, steps: int = 20, max_step: float = 0.1, tol: float = 1e-6, seeds=SEEDS,  # noqa: PLR0913 -- the fit's settings
+def fit(model, space, data, x0=None, *, steps: int = 20, max_step: float = 0.1, tol: float = TOL, seeds=SEEDS,  # noqa: PLR0913 -- the fit's settings
         fixed=()) -> FitResult:  # fmt: skip
     """Fit the space's keys to counts ``data`` from two runs at independent ``seeds`` (see the module docstring).
 
@@ -269,13 +278,16 @@ def _covariance(pair, n):
     return cov, int(ok.sum())
 
 
-def descend(model, space, data, x0=None, *, steps: int = 50, lr: float = 0.02, tol: float = 1e-3,  # noqa: PLR0913 -- the solver's settings
-            betas=(0.9, 0.999), seeds=SEEDS) -> FitResult:  # fmt: skip
-    """Fit the space's keys to counts ``data`` by ``steps`` first-order steps (Adam; see the module docstring)."""
+def descend(model, space, data, x0=None, *, steps: int = 50, lr: float = 0.02, seeds=SEEDS) -> FitResult:  # noqa: PLR0913 -- the solver's settings
+    """Fit the space's keys to counts ``data`` by ``steps`` first-order steps (Adam; see the module docstring).
+
+    The run always takes its ``steps`` (no stopping rule); its verdict is ``fit``'s, the Newton decrement at the end
+    against ``TOL``.
+    """
     n = np.asarray(data, np.float64).ravel()
     x = space.vector() if x0 is None else np.asarray(x0, np.float64)
     m, v, history, path = np.zeros_like(x), np.zeros_like(x), [], [x]
-    b1, b2 = betas
+    b1, b2 = BETAS
     for k in range(1, steps + 1):
         pair = _pair(model, space, x, seeds)
         g = -pair.score(n)[0]
@@ -285,7 +297,7 @@ def descend(model, space, data, x0=None, *, steps: int = 50, lr: float = 0.02, t
         x = x + d
         path.append(x)
     pair = _pair(model, space, x, seeds)
-    return _result(pair, space, x, history, path, n, np.arange(len(x)), tol, f"{steps} steps taken")
+    return _result(pair, space, x, history, path, n, np.arange(len(x)), TOL, f"{steps} steps taken")
 
 
 @dataclass(frozen=True)

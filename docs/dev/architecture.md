@@ -76,7 +76,7 @@ src/lumen/
 ├── params.py                  Params, Param; unit, range and gradient method per key; precedence
 ├── recipe.py                 Recipe, import_structure (every source ends there)
 ├── inputs.py                  a detector package's input files, checked by sha256 (its prepare: one pipeline)
-├── record.py, speed.py, testing.py   the deposit and photon records; simulate's speed; the checks packages share
+├── record.py, testing.py       the deposit and photon records; the checks the packages share
 ├── models.py                  medium models of your own: values (MediumModel), the build's table of them
 ├── diagnostics.py             per-photon diagnostics run beside the loop (Trace)
 ├── _core/                     frames, safe math, rng, the errors two layers share, checks (plug-in code checks),
@@ -135,14 +135,14 @@ hits, samples, likelihoods.
 
 ```python
 # import
-def convert(source, recipe=None, out=None, *, data=None, inputs=None, overwrite=False) -> Path
+def convert(source, out, *, recipe=None, data=None, inputs=None, overwrite=False) -> Path
                                        # GDML (+ recipe), YAML, or "package:name" (a lumen.DetectorEntry)
 def import_structure(df, sensor_set=None) -> ImportResult        # import rules, checks, sensor ids
 
 # public
 def load(path, *, calibration="nominal", parts=None, responses=(), precision=None) -> Detector
 def simulate(det, source, params=None, *, samples, seed, gate=None, events=None,
-             reference=None, controls=None, backend="auto", chunk=None, speed="fast", records=None,
+             reference=None, controls=None, backend="auto", chunk=None, records=None,
              diagnostics=(), truth=None) -> Light                # records: the slots a launch appends
 class Params(Mapping):  set, scale, info, explain        # an immutable pytree keyed by GDML names
 
@@ -211,7 +211,7 @@ def hits_nll(eh, data); def waveform_nll(w, data)
 | geometry | navigator array shapes, solid programs | navigator array values (geometry is not a parameter) |
 | surfaces, media | which surface types and channels exist; table knot counts | every property value |
 | sources, sensors | source type; sensor models and components per group | every field and value |
-| step | `StepConfig(edge_rows, levers, moving_source)` (`moving_source` dormant: always False) | `Controls(max_distance, roulette)` |
+| step | `StepConfig(edge_rows, jump)` (`jump`: the diffusion jump compiled in) | `Controls(max_distance, roulette)` |
 | histograms | their shape (sensors, λ knots, θ knots, time nodes); the gate | grid positions |
 | run | backend, `max_vertices`, the records' fields and capacity, the readout's blocks | photons, seed (raw key data), samples, `Params`, `reference` |
 
@@ -389,7 +389,6 @@ with T a calibration key.
 |---|---|---|
 | core | `x, d` (m), `t` (ns), `lam` (nm), `w`, `wr` (the weight at the reference values, stop-gradient: the roulette reads it), `alive`, `vertex` (step count and random-number counter), `er, ei` (Jones vector), `vol`, `srf`, `sn`, `nz` | always |
 | surface lookup | `cls` (class), `sensor` (sensor index) | always |
-| `moving` | a source-position derivative's per-photon state: a dormant slot (`StepConfig.moving_source`) | never in 0.2 |
 
 Diagnostics keep their own per-photon memory; they are never state. Sources fill a `Photons` row (`lumen.record`); the core builds the
 `Photon` and its optional parts in one place (`state.start`). `Deposit(sensor, q, time, lam, …, hit)` carries the hit
@@ -469,10 +468,10 @@ positions, seed, samples) and asserts zero new compilations.
   with role "support" (drawn with the shell as cover, a bounded per-facet derivative), and the gradient check reports
   rather than gates its exactness (a fixed-reference finite difference sees square-root terms at every step).
 
-**Source-position derivatives** are not in 0.2 (the moving-source method was removed; decision of 2026-11-20). What a
-return as a module of its own needs is kept dormant: the static switch `StepConfig.moving_source` (True is refused),
-the per-photon slot `Photon.moving`, the navigator's `surface_at` (re-evaluate the winning surface without walking)
-and the one `custom_jvp` rule.
+**Source-position derivatives** are not in 0.2 (the moving-source method was removed; decision of 2026-11-20). A
+tangent on a source's `MOVING` field raises `GradientNotAvailable`. The method would need a separately compiled step
+carrying per-photon state; what is still here for it is the navigator's `surface_at` (re-evaluate the winning surface
+without walking) and the one `custom_jvp` rule.
 
 User-facing text for these limits: `docs/explanation/known-limits.md`.
 
@@ -650,7 +649,7 @@ products. The report is generated from the JSON records every `python -m lumen.c
 | Item | Rule |
 |---|---|
 | tallymap | pinned by commit in `pyproject.toml` (decision 7); FFMA contraction off (it changes bits) |
-| backend | `run.resolve_backend` is the only place backends are decided: `"auto"`, `"cuda"` and `"cpu"` are tallymap's kernel backend (`"auto"`), on the device JAX places the loop on (CUDA on a GPU, C++/OpenMP on the CPU, exact sums on both); `"cuda"` also expects the GPU (`check_device`), `"cpu"` is put on the CPU, inputs there and outputs back (`run.on_device`); `"xla"` is tallymap's plain-JAX backend, the same exact sums, compared with the GPU at 2.5e-4 (XLA's CPU and GPU math differ in the last bits) |
+| backend | `run.resolve_backend` is the only place backends are decided: `"auto"` and `"cpu"` are tallymap's kernel backend (`"auto"`), on the device JAX places the loop on (CUDA on a GPU, C++/OpenMP on the CPU, exact sums on both); `"auto"` expects the GPU where the environment says one is there (`check_device`, `_env.gpu_expected`), `"cpu"` is put on the CPU, inputs there and outputs back (`run.on_device`); `"xla"` is tallymap's plain-JAX backend, the same exact sums, compared with the GPU at 2.5e-4 (XLA's CPU and GPU math differ in the last bits) |
 | environment | only `_env.py` reads the environment (decision 18); what it reads is listed in its docstring |
 | tooling | src layout, hatchling + hatch-vcs, ruff at 120 columns, pre-commit, mypy on host code, type hints on the public API |
 | style, docstrings | `style.md` (numbered rules; the hooks and `pyproject.toml` cite them by number) |

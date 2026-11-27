@@ -109,4 +109,4 @@ def lined_tank(out):
     src.write_text(gdml)
     # the liner is the skin of the tank's mother: leaving the tank, Geant4 meets it, and so does lumen
     recipe = dataclasses.replace(example_tank.RECIPE, name="lined_tank")
-    return lumen.convert(src, recipe, Path(out) / "lined_tank.lumen")
+    return lumen.convert(src, Path(out) / "lined_tank.lumen", recipe=recipe)

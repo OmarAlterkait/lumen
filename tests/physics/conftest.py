@@ -45,7 +45,7 @@ def toy(tmp_path_factory):
         if digest not in made:
             src = root / f"{recipe.name}_{digest}.gdml"
             src.write_text(gdml)
-            made[digest] = lumen.load(lumen.convert(src, recipe, root / f"{recipe.name}_{digest}.lumen"))
+            made[digest] = lumen.load(lumen.convert(src, root / f"{recipe.name}_{digest}.lumen", recipe=recipe))
         key = (digest, step)
         if key not in made:
             made[key] = toys.setup(made[digest], step=step)

@@ -80,6 +80,6 @@ def test_a_table_s_knot_energies_are_the_detector_s(tank):  # noqa: F811
     v = p0[k]
     moved = p0.set(k, Table(np.asarray(v.energy) * 1.001, np.asarray(v.value)))
     with pytest.raises(values.InvalidValue, match="knot energies"):
-        det.pack(moved)
+        pack.checked(det, moved)
     assert int(jax.jit(lambda q: values.check(det, q)[2])(moved)) == len(v.energy)
     assert int(jax.jit(lambda q: values.check(det, q)[2])(p0)) == 0

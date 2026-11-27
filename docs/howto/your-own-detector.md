@@ -101,7 +101,7 @@ meets the skin of the volume Geant4 enters there: a sibling that holds the detec
 from lumen.gdml import reader, repair
 
 def convert(gdml, out):
-    path = lumen.convert(gdml, RECIPE, out, overwrite=True)
+    path = lumen.convert(gdml, out, recipe=RECIPE, overwrite=True)
     det = lumen.load(path)
     for line in det.file.report:
         if "left out" in line:
@@ -339,7 +339,7 @@ total: lumen / Geant4 = 1.0017 +- 0.0078; chi2/ndf = 14.5/12
 lumen's answers, point by point:
 
 ```bash
-python -m lumen.compare geometry lumen-examples/demo_barrel.lumen --gdml lumen-examples/demo_barrel_fixed.gdml \
+python -m lumen.compare geometry-file lumen-examples/demo_barrel.lumen --gdml lumen-examples/demo_barrel_fixed.gdml \
        --g4ref /path/to/g4ref --out lumen-examples/geometry_check
 ```
 ```

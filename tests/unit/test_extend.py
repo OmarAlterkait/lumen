@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 import lumen
+from lumen.build import pack
 from lumen.params import Param, Params, declared
 
 
@@ -263,9 +264,9 @@ def test_a_medium_model_passed_as_a_value_builds_with_its_keys(lined):
     src = det.parts.key_rows
     assert src[("media", "Water", "rayleigh", "lobe", "g")].key == "materials/Water/g"
     q = p.set("materials/Water/g", 0.5)
-    named = det.pack(q)  # a value set: applied to the file (the declared property added) and packed
+    named = pack.checked(det, q)  # a value set: applied to the file (the declared property added) and packed
     assert named is not None
-    t = jax.jvp(lambda g: det.pack(p.set("materials/Water/g", g)), (jnp.float32(0.9),), (jnp.float32(1.0),))[1]
+    t = jax.jvp(lambda g: pack.checked(det, p.set("materials/Water/g", g)), (jnp.float32(0.9),), (jnp.float32(1.0),))[1]
     assert any(float(jnp.abs(x).max()) == 1.0 for x in jax.tree_util.tree_leaves(t))  # g reaches the packed rows
     assert ex.water_hg.name == "mylab:water_hg"
 
@@ -341,24 +342,25 @@ def test_lumen_s_own_models_are_the_build_s_table(lined):
         lumen.medium_model("lumen:geant4")
 
 
-def test_with_responses_adds_keys_and_refuses_a_taken_one(lined):
-    det = lumen.load(lined)
+def test_load_responses_adds_keys_and_refuses_a_taken_one(lined):
     ex = _examples()
-    d2 = det.with_responses(ex.saturating_pe, ex.my_waveform)
+    d2 = lumen.load(lined, responses=(ex.saturating_pe, ex.my_waveform))
     assert d2.params()["sensors/pmt/adc_per_pe"] == 10.0 and "sensors/pmt/sat" in d2.params()
-    assert d2.with_responses(ex.saturating_pe).params()["sensors/pmt/sat"] == 300.0  # the same response again
+    same = lumen.load(lined, responses=(ex.saturating_pe, ex.saturating_pe))  # the same response twice
+    assert same.params()["sensors/pmt/sat"] == 300.0
     taken = lumen.response(group="pmt", params={"gain": Param("ADC", default=1.0)})(lambda h, v: v["gain"])
     with pytest.raises(ValueError, match="keys the detector has already"):
-        det.with_responses(taken)
+        lumen.load(lined, responses=(taken,))
 
 
 def test_a_calibration_of_a_response_loads_with_the_response(lined, tmp_path, monkeypatch):
-    """A calibration saved after with_responses holds the response's keys: it loads with load(responses=), and without
+    """A calibration saved on a detector loaded with a response holds the response's keys: it loads with the same
+    load(responses=), and without
     them it names the unknown key (UnknownParamKey, the nearest keys), not a bare KeyError."""
     from lumen.params import UnknownParamKey
 
     ex = _examples()
-    d2 = lumen.load(lined).with_responses(ex.saturating_pe)
+    d2 = lumen.load(lined, responses=(ex.saturating_pe,))
     d2.save_calibration(d2.params().set("sensors/pmt/sat", 250.0), "satcal", tmp_path)
     monkeypatch.setenv("LUMEN_DETECTORS", str(tmp_path))
     back = lumen.load(lined, calibration="satcal", responses=(ex.saturating_pe,))

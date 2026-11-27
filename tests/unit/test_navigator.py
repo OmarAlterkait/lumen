@@ -29,7 +29,7 @@ from nav_toys import (
 
 from lumen.build import lowering, tracked
 from lumen.compare import oracle
-from lumen.geometry import navigate, solids
+from lumen.geometry import navigate, solids, surface_id
 from lumen.rules import navigation
 
 
@@ -179,14 +179,14 @@ def test_live_t_second_derivative_matches_float64_fd(toys):
 def held_and_query(nav, o, d, v, u):
     """[(t, normal), first and second derivatives along u] of the query (fq) and of the held surface (fs)"""
     G = tracked.TrackedGeometry(nav, nav.n + 1, np.full(nav.n + 1, -1, np.int32))
-    q = G.query(None, o, d, 0, 10.0, vol=v)
+    q = G.query(o, d, 10.0, vol=v)
 
     def fq(oo, dd):
-        r = G.query(None, oo, dd, 0, 10.0, vol=v)
+        r = G.query(oo, dd, 10.0, vol=v)
         return r["t"], r["normal"]
 
     def fs(oo, dd):
-        return G.surface(None, q, oo, dd)
+        return G.surface(q, oo, dd)
 
     out = []
     for f in (fq, fs):
@@ -266,7 +266,7 @@ def test_turning_back_at_the_face_just_left_enters_it(toys):
     v_out, x0 = int(r1["vol_after"]), o + np.float32(r1["t"]) * np.array([0, 0, -1], np.float32)
     assert r1["hit"] and v_out != v_in and int(r1["item"]) == v_in, r1
     srf = int(r1["srf"])  # the tank, its bottom face, the outward sign: the state
-    assert int(nav.srf_decode(srf)[0]) == v_in and bool(nav.srf_decode(srf)[4]), srf
+    assert int(surface_id.srf_decode(nav, srf)[0]) == v_in and bool(surface_id.srf_decode(nav, srf)[4]), srf
     rng = np.random.default_rng(1)
     N = 300
     X = np.repeat(x0[None], N, 0).astype(np.float32)
@@ -542,7 +542,7 @@ def test_a_mesh_face_within_the_band_ahead_is_met():
     kb = int(np.argmin(np.abs(V0 - Bt[0]).sum(1)))
     o = np.asarray([0.5950872302055359, 1.4237298965454102, 1.8702424764633179], np.float32)
     d = np.asarray([-0.053876541554927826, 0.9535114169120789, -0.2965017557144165], np.float32)
-    srf = nav.srf_pack(I32(nav.CH0), I32(ka), I32(-1), jnp.bool_(True), jnp.bool_(True))
+    srf = surface_id.srf_pack(nav, I32(nav.CH0), I32(ka), I32(-1), jnp.bool_(True), jnp.bool_(True))
     q = one(query(nav, o, d, 0, srf, t_max=10.0))
     assert bool(q["hit"]) and int(q["leaf"]) == kb and float(q["t"]) < 1e-5, (float(q["t"]), int(q["leaf"]), ka, kb)
 
@@ -624,7 +624,7 @@ def test_a_long_mesh_triangle_is_met_at_its_plane(case):
     V1 = np.asarray(nav.dev()["V1"], np.float64)
     ka = int(np.argmin(np.abs(V0 - A[0]).sum(1) + np.abs(V1 - A[1]).sum(1)))
     kb = int(np.argmin(np.abs(V0 - Bt[0]).sum(1) + np.abs(V1 - Bt[1]).sum(1)))
-    srf = nav.srf_pack(I32(nav.CH0), I32(ka), I32(-1), jnp.bool_(o_flag), jnp.bool_(True))
+    srf = surface_id.srf_pack(nav, I32(nav.CH0), I32(ka), I32(-1), jnp.bool_(o_flag), jnp.bool_(True))
     q = one(query(nav, o, d, 0, srf, sn=sn, t_max=10.0))
     nb = np.cross(Bt[1] - Bt[0], Bt[2] - Bt[0])
     short = 3 * 2.0**-23 * 2.0 / abs(float(np.dot(nb / np.linalg.norm(nb), d)))

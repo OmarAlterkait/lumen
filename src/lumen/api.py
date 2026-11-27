@@ -1,6 +1,6 @@
 """The public API: ``convert``, ``load``, ``simulate``, ``Detector`` and ``Light``.
 
-    path = lumen.convert("tank.gdml", recipe, "tank.lumen")                 # once (recipe: lumen.Recipe)
+    path = lumen.convert("tank.gdml", "tank.lumen", recipe=recipe)   # once (recipe: lumen.Recipe)
     det = lumen.load("tank.lumen")                                           # a path
     p = det.params()                                                         # every parameter, by GDML name
     src = lumen.sources.Point(position=(0.0, 0.0, 0.0), lam=400.0, n_photons=1e6)
@@ -30,7 +30,6 @@ import jax.numpy as jnp
 import numpy as np
 
 from lumen import _cache, _env, sources
-from lumen import speed as spd
 from lumen._core.errors import refusing
 from lumen._core.rng import MAX_PHOTONS, SOURCE_STREAM
 from lumen._core.safe import traced
@@ -68,16 +67,6 @@ class Detector:
     _params: object = None
     precision: str = "float32"
 
-    @property
-    def scene(self):
-        """Return the lowered scene (the detector volume cut out)."""
-        return self.parts.scene
-
-    @property
-    def tree(self):
-        """Return the volume tree."""
-        return self.parts.tree
-
     def params(self):
         """Return the resolved parameters (``lumen.Params``)."""
         return self._params
@@ -104,24 +93,6 @@ class Detector:
         if d is None:
             raise ValueError("save_calibration: give a directory (LUMEN_DETECTORS is not set)")
         return cal.save(cal.Calibration(name, self.name, self.digest, changed, note), d)
-
-    def with_responses(self, *responses):
-        """Return this detector with the parameters of sensor responses (``lumen.response``) added at their defaults.
-
-        Each response's keys ``sensors/<group>/<name>`` join ``params()``; a key already there keeps its value. A
-        calibration that sets them is loaded with the responses: ``lumen.load(..., responses=)``.
-        """
-        from lumen.build import build
-
-        return dataclasses.replace(self, _params=build.add_responses(self._params, self.sensor_set, responses))
-
-    def pack(self, params=None):
-        """Return the engine's packed parameter arrays for ``params`` (default: this detector's), its values checked
-        (``lumen.build.values``: a concrete value outside what the detector holds raises ``InvalidValue``)."""  # noqa: D205, D209
-        from lumen.build import pack, values
-
-        params = self._params if params is None else params
-        return pack.pack(self, values.check(self, params)[0])
 
     def sensor_table(self) -> SensorTable:
         """Return the sensors in the order of ``Light.arrivals`` (``SensorTable``: placed volume, sensor entry, world
@@ -153,7 +124,7 @@ def _same(a, b) -> bool:
     return bool(np.array_equal(np.asarray(a), np.asarray(b)))
 
 
-def convert(source, recipe=None, out=None, *, data=None, inputs: dict | None = None,
+def convert(source, out, *, recipe=None, data=None, inputs: dict | None = None,
             overwrite: bool = False) -> Path:  # fmt: skip
     """Convert a detector into a detector file at ``out``; return its path.
 
@@ -161,21 +132,19 @@ def convert(source, recipe=None, out=None, *, data=None, inputs: dict | None = N
 
     - a GDML file, with its ``recipe`` (``lumen.Recipe``: what a GDML file cannot say) and the recipe's ``inputs``;
     - a detector written in YAML (a ``.yaml`` file, a directory of them, or a list of either; ``lumen.format.yaml``);
-    - a detector package's detector, ``"package:name"`` (``lumen.convert("lumen_wc:sk", out=...)``): the package's
+    - a detector package's detector, ``"package:name"`` (``lumen.convert("lumen_wc:sk", out)``): the package's
       ``DETECTORS[name]`` (``lumen.DetectorEntry``: its recipe, its GDML and the recipe's inputs, relative paths under
       ``data``, default ``LUMEN_DATA``, else ``data`` under lumen's cache root). A package that ships or checks files
       defines ``prepare(recipe, gdml, inputs)``, a context manager yielding the three as converted (a shipped
       compressed GDML decompressed and its sha256 checked, a recipe made from its checked inputs): lumen's one pipeline,
       ``prepare, expected = lumen.inputs.package(REFERENCES, GDML_DIR)``.
 
-    YAML carries its own decisions: pass ``recipe=None``. Their structure is finished as every source is:
+    YAML carries its own decisions: leave ``recipe`` out. Their structure is finished as every source is:
     the general import rules, the structural checks, the sensor ids (``lumen.recipe.import_structure``).
 
     The detector file and its sensor set are written under a temporary name and renamed into place whole
     (``lumen._cache.directory``): a reader never sees part of one.
     """
-    if out is None:
-        raise TypeError("convert: out, the detector file's path, is required")
     out = Path(out)
     if out.exists() and not overwrite:
         raise io.FormatError(f"{out} exists: a detector file is never overwritten (pass overwrite=True)")
@@ -260,8 +229,8 @@ def _convert_once(source, recipe, out: Path, inputs: dict | None = None) -> Path
 def _import(source, recipe, inputs):
     """Return the import result of a source (``convert``), with the placement check's lines in its report."""
     if not _is_gdml(source) and recipe is not None:
-        raise ValueError("convert: only a GDML file takes a recipe; a YAML detector holds its own decisions: pass "
-                         "recipe=None")  # fmt: skip
+        raise ValueError("convert: only a GDML file takes a recipe; a YAML detector holds its own decisions: leave "
+                         "recipe out")  # fmt: skip
     if _is_yaml(source):
         from lumen.recipe import import_yaml
 
@@ -350,8 +319,9 @@ def load(path, *, calibration: str = cal.NOMINAL, parts: dict | None = None, res
     materials read by those models instead of the file's (``lumen.models``). The build's model table holds the values;
     the loaded detector's file carries their names (never code: a file naming a part not passed here is refused), so
     its digest (and a calibration saved from it) records the choice. Which parts are hooks: docs/howto/extending.md.
-    ``responses``: sensor responses (``lumen.response``) whose parameters join before the calibration is applied, so a
-    calibration saved after ``with_responses`` loads.
+    ``responses``: sensor responses (``lumen.response``) whose parameters join (each response's keys
+    ``sensors/<group>/<name>``, at their defaults; a key the sensor model has already is refused) before the
+    calibration is applied, so a calibration that sets them loads.
     ``precision``: the navigator's, "float32" or "float64": its coordinates, frames, roots and intervals
     and the photon's position in that precision, the physics in float32 (``lumen.rules.navigation``). float64 tracks
     volumes thinner than float32's band (a coating of a few um at metres from the origin) for every photon, at about
@@ -460,8 +430,8 @@ def _with_models(df, models: dict):
 
 
 # ------------------------------------------------------------------------------------------------------ simulate
-# a built detector's Parts -> {(deposit fields carried, analog, speed levers): Model}:
-# one compile per detector and layout, shared by the detector's copies (with_responses keeps its Parts), released with
+# a built detector's Parts -> {(deposit fields carried, analog, jump, precision): Model}:
+# one compile per detector and layout, shared by the detector's copies (they keep its Parts), released with
 # the Parts (weak keys)
 _MODELS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 # a Detector -> {(gate, events): its groups' layouts (``_group_layouts``)}: the sensor models and the groups'
@@ -540,8 +510,9 @@ class Light:
     Carlo error (from their per-photon second moment, ``lumen.readout.grid.moment_error``), the mean arrival time (ns),
     the histograms (``lumen.readout``) of each group with a
     sensor model and the run's health; ``provenance`` (static) says how it was made (the seed, samples, chunk,
-    backend, detector, calibration, the step's controls, each group's gate, and the speed run: "fast", "exact", or
-    "exact (<why>)" for a run the fast walk cannot serve, ``lumen.speed``). Readout functions take
+    backend, detector, calibration, the step's controls, each group's gate, and the loop run: "fast" (the diffusion
+    jump, ``lumen.transport.fastpath``), or "exact (diagnostics)" for a probe run the jump cannot serve). Readout
+    functions take
     ``(light.group(name), params)``. ``groups``: {group: Histograms} of every modelled group (None without).
     ``diagnostics``: the diagnostics' cells by output name (``simulate(..., diagnostics=)``; None without).
     ``truth``: the truth rows (``simulate(..., truth=)``: ``lumen.readout.TruthHits``; None without). With
@@ -696,28 +667,27 @@ def _group_layouts(det, gate, events: int) -> list:
     return out
 
 
-def _model(det, local: tuple = (), analog=False, levers=None):
-    """Return the detector's Model of a layout (per deposit fields, analog, speed levers), with
+def _model(det, local: tuple = (), analog=False, jump: bool = False):
+    """Return the detector's Model of a layout (per deposit fields, analog, the diffusion jump on), with
     the rows of the detector's edge rule (``_edge_rows``)."""  # noqa: D205, D209
     from lumen.build import tracked
     from lumen.geometry import reach
     from lumen.transport import step as steps
 
     _check_x64("simulate", det.precision)
-    levers = spd.EXACT if levers is None else levers
     models = _MODELS.setdefault(det.parts, {})
-    k = (local, analog, levers, det.precision)
+    k = (local, analog, jump, det.precision)
     if k not in models:
         geom = tracked.from_parts(det.parts, cache=True, precision=det.precision)
         geom = reach.reach_of(geom)  # a bulk step's query bounded by its free path where no sensor is reachable (exact)
-        jump = None
-        if "jump" in levers:  # lumen.speed: the jump's data from this detector (no media: it can act nowhere: off)
+        data = None
+        if jump:  # the jump's data from this detector (no media: it can act nowhere, so off)
             from lumen.transport import fastpath
 
-            jump = fastpath.prepare(geom, det.parts.optics, det.parts.library)
-            levers = levers if jump.media else levers - {"jump"}
-        cfg = steps.StepConfig(edge_rows=_edge_rows(det), levers=levers)
-        models[k] = steps.Model(geom, det.parts.optics, cfg, local=local, analog=analog, jump=jump)  # fmt: skip
+            data = fastpath.prepare(geom, det.parts.optics, det.parts.library)
+            jump = bool(data.media)
+        cfg = steps.StepConfig(edge_rows=_edge_rows(det), jump=jump)
+        models[k] = steps.Model(geom, det.parts.optics, cfg, local=local, analog=analog, jump=data)  # fmt: skip
     return models[k]
 
 
@@ -898,7 +868,7 @@ def _recorded(v):
 
 def simulate(det, source, params=None, *, samples: int | None = None, seed: int, gate=None,  # noqa: C901, PLR0913, PLR0915
              events: int | None = None, reference=None, controls=None, backend: str = "auto", chunk: int | None = None,
-             speed: str = "fast", records: int | None = None, diagnostics=(), truth=None) -> Light:  # fmt: skip
+             records: int | None = None, diagnostics=(), truth=None, _jump: bool = True) -> Light:  # fmt: skip
     """Trace ``samples`` Monte Carlo photons from ``source`` through ``det`` and return the light at each sensor.
 
     Parameters
@@ -939,10 +909,11 @@ def simulate(det, source, params=None, *, samples: int | None = None, seed: int,
         that does, kept for the later launches. A given chunk caps the launch, and a launch of it whose records do
         not fit is refused (MemoryError). Under ``jax.jit`` or ``jax.vmap`` the chunks after the first run in one
         ``lax.scan`` (one launch's memory, whatever their number).
-    backend : {"auto", "cuda", "cpu", "xla"}
+    backend : {"auto", "cpu", "xla"}
         "auto": tallymap's compiled photon loop on the device JAX runs on: CUDA on a GPU, else the CPU (which needs
-        a C++ compiler with OpenMP, such as g++). "cuda": the same, and a GPU must be there. "cpu": the same on the
-        CPU, also on a GPU machine (the results come back to JAX's default device). "xla":
+        a C++ compiler with OpenMP, such as g++); where the environment says a GPU is there (``JAX_PLATFORMS=cuda``,
+        Slurm's GPU variables) and JAX does not run on one, the run is refused (``DeviceError``). "cpu": the same on
+        the CPU, also on a GPU machine (the results come back to JAX's default device). "xla":
         tallymap's plain-JAX backend: no compiler needed, slow, for tests and small photon counts; the same exact sums.
     controls : lumen.Controls, optional
         The step limits ``max_distance``, ``roulette`` (default ``Controls()``). A ``max_distance`` of
@@ -961,9 +932,6 @@ def simulate(det, source, params=None, *, samples: int | None = None, seed: int,
         derivative at the reference); its expectation is the light at ``params``. At
         ``reference=params`` the light is the default run's, exactly. Its derivative is never taken. A source's
         spectrum must lie inside the reference's support (``lumen.build.values``).
-    speed : {"fast", "exact"}
-        "fast" (the default: the diffusion walk, exact in law, validated against "exact") or "exact" (no fast
-        estimator). See ``lumen.speed``.
     records : int, optional
         An optional override: the most deposit records a launch appends, whose power of two is each launch's slots
         (to shrink the memory a traced run takes). Without it a run with values takes its slots from its launches'
@@ -976,13 +944,17 @@ def simulate(det, source, params=None, *, samples: int | None = None, seed: int,
         Per-photon diagnostics (``lumen.diagnostics``): their cells in ``Light.diagnostics`` by output name. A probe
         (it sees every step: ``lumen.diagnostics.Trace``) runs in one chunk (``samples <= chunk``) and exact, recorded
         as ``("speed", "exact (diagnostics)")``; a records diagnostic is built from the deposit records like the
-        readout and follows ``speed``.
+        readout and runs with the jump.
     truth : lumen.readout.Truth, optional
         Truth rows in ``Light.truth`` (``lumen.readout.TruthHits``): the analog record of the run, one row per
         detected photon (``lumen.readout.truth``). Each source row stands for at most one photon (``samples`` at least
         the photons emitted), the roulette is a number <= 1, nothing is differentiated (a traced value carrying a
         derivative is refused), and the photons' fates are decided at the run's own values: a ``reference`` other
         than ``params`` is refused.
+    _jump : bool, optional
+        Private, for lumen's own validation (``python -m lumen.compare gate --speed``, ``mc run --speed``): False
+        compiles the plain Rayleigh walk instead of the diffusion jump (``lumen.transport.fastpath``), the same
+        estimator in law, so two runs of one seed are bitwise alike. A probe diagnostic runs without the jump anyway.
 
     Returns
     -------
@@ -1034,7 +1006,6 @@ def simulate(det, source, params=None, *, samples: int | None = None, seed: int,
 
     def run(params, source, reference, seed, controls, derivative):  # noqa: C901, PLR0912, PLR0915 -- the run, in order
         """Return the run's arrays; ``derivative``: inside the derivative's rule."""
-        on, ran[0] = spd.resolve(speed, probes=bool(probes))
         model = _model(det, local, truth is not None, on)
         packed = _to_device(pack.pack(det, params))
         ref = None if reference is None else jax.tree_util.tree_map(jax.lax.stop_gradient,
@@ -1064,7 +1035,7 @@ def simulate(det, source, params=None, *, samples: int | None = None, seed: int,
         rows_of = []  # the truth rows of each chunk
         concrete = all(jax.core.is_concrete(x) for x in jax.tree_util.tree_leaves((ops, key, first_rows)))
 
-        def launch(first, count, rows, cap, free):  # one chunk's photon loop at ``cap`` record slots
+        def launch(first, count, rows, cap):  # one chunk's photon loop at ``cap`` record slots
             labels, analog = rows.label, (_analog_weights(rows.w, count) if truth is not None else None)
             ev_bad = _check_events(labels, count, n_ev) if n_ev else 0  # refused here: before any launch
             rows = rows._replace(label=labels if n_ev else None)  # a label enters the records as the event
@@ -1106,7 +1077,7 @@ def simulate(det, source, params=None, *, samples: int | None = None, seed: int,
             # the first guess: records=, else the most slots a launch of this shape ran with in an earlier run
             start = cap if cap is not None else runner.pow2(records) if records is not None else seen.get(shape)
             slots = runner.capacity(room, rows=size, counted=start)
-            t, labels, ev_bad = launch(first, count, rows, slots, free)
+            t, labels, ev_bad = launch(first, count, rows, slots)
             appended = int(t.count)
             over, need = runner.overflow(appended, t.dropped, slots)
             if over:  # past its slots: the outputs are poisoned; again at the count's power of two
@@ -1142,11 +1113,11 @@ def simulate(det, source, params=None, *, samples: int | None = None, seed: int,
 
             def body(c, fc):  # one chunk: its launch, refused when it overflows (``guard``), added into the cells
                 acc, nonfinite, bad = c
-                t, _, ev_bad = launch(fc[0], fc[1], emit_rows(fc[0], fc[1]), slots, free)
+                t, _, ev_bad = launch(fc[0], fc[1], emit_rows(fc[0], fc[1]), slots)
                 runner.guard(t, slots, size)
                 return add(acc, nonfinite, bad, t, free, ev_bad), None
 
-            t, _, ev_bad = launch(0, spans[0][1], first_rows, slots, free)
+            t, _, ev_bad = launch(0, spans[0][1], first_rows, slots)
             runner.guard(t, slots, size)
             acc, nonfinite, bad = add(acc, nonfinite, bad, t, free, ev_bad)
             first_rows = None
@@ -1175,8 +1146,10 @@ def simulate(det, source, params=None, *, samples: int | None = None, seed: int,
         _truth_rows[0] = None if truth is None else tr.join(rows_of, truth, int(samples), tabs)
         return arrivals, err, mean_t, health, groups or None, diag
 
-    spd.resolve(speed)  # a speed that is neither level is refused before the run
-    ran, read, _truth_rows, sizes = [speed], [controls], [None], [size0]
+    # the diffusion jump (``lumen.transport.fastpath``), unless a probe diagnostic sees every step: then the exact loop
+    on = bool(_jump) and not probes
+    ran = "fast" if on else ("exact (diagnostics)" if probes else "exact")
+    read, _truth_rows, sizes = [controls], [None], [size0]
     arrivals, err, mean_t, health, groups, diag = _with_rule(run, inputs)
     health = health._replace(invalid=health.invalid + invalid)
     gates = tuple((lay.group.name, lay.gate) for lay in layouts if lay.group is not None)
@@ -1189,9 +1162,9 @@ def simulate(det, source, params=None, *, samples: int | None = None, seed: int,
         ("calibration", det.calibration),
         ("controls", tuple(zip(controls._fields, map(_recorded, read[0]), strict=True))),
         ("gate", gates),
-        ("speed", ran[0]),
+        ("speed", ran),
     )
-    prov += (("parts", parts),) if (parts := _parts_record(det, ran[0] == "fast")) else ()
+    prov += (("parts", parts),) if (parts := _parts_record(det, on)) else ()
     prov += (("events", n_ev),) if n_ev else ()
     prov += (("truth", dataclasses.astuple(truth)),) if truth else ()
     return Light(

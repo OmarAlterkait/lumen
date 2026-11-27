@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import numpy as np
 import toys
 
+from lumen.build import pack
 from lumen.rules import navigation
 from lumen.transport import state
 from lumen.transport import step as steps
@@ -15,7 +16,7 @@ F32 = jnp.float32
 
 def test_a_pushed_photon_takes_the_class_of_where_it_lands(toy):
     s = toy("sphere", r=0.0, absorption=2.0)
-    ops = steps.operands(s.model, s.det.pack(s.det.params()), None, steps.Controls())
+    ops = steps.operands(s.model, pack.checked(s.det, s.det.params()), None, steps.Controls())
     nav = steps.geometry(s.model, ops).nav
     cls = nav.dev()["cls"]
     x0 = jnp.asarray([0.0, 0.0, toys.A], F32)

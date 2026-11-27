@@ -79,7 +79,7 @@ def test_an_event_counts_the_deposit_as_the_charge_check_does_on_a_cathode_read_
 
     text = example_tank.GDML.read_text().replace('values="1.5*eV 0.0 5.0*eV 0.0"', 'values="1.5*eV 0.7 5.0*eV 0.7"')
     (tmp_path / "tank.gdml").write_text(text)
-    det = lumen.load(lumen.convert(tmp_path / "tank.gdml", example_tank.RECIPE, tmp_path / "tank.lumen"))
+    det = lumen.load(lumen.convert(tmp_path / "tank.gdml", tmp_path / "tank.lumen", recipe=example_tank.RECIPE))
     assert np.allclose(normal_absorptance(det.parts.library, det.parts.optics, [400.0]), 0.3, rtol=1e-6)
     centres = photons.sensor_centres(photons.setup(det))
     (tmp_path / "run").mkdir()

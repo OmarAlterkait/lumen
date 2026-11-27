@@ -1,4 +1,4 @@
-"""The diffusion jump's data and step code (``lumen.speed`` "fast"): the clearance bound with a mesh in a jump medium,
+"""The diffusion jump's data and step code (``StepConfig.jump``): the clearance bound with a mesh in a jump medium,
 the walk inside the clearance ball, and the tangents it carries."""
 
 from types import SimpleNamespace
@@ -6,10 +6,8 @@ from types import SimpleNamespace
 import jax
 import jax.numpy as jnp
 import numpy as np
-import pytest
 from nav_toys import defn, make_scene, scene_mesh
 
-from lumen import speed
 from lumen.geometry import clearance, navigate, navigator_build, solids
 from lumen.media import phase
 from lumen.transport import fastpath
@@ -258,21 +256,18 @@ def test_the_clearance_bound_counts_only_the_volumes_the_navigator_can_be_in():
     np.testing.assert_array_equal(np.asarray(traced), np.asarray(eager))  # a first fast run may be under jax.jit
 
 
-def test_speed_default_is_fast_and_a_run_it_cannot_serve_records_exact():
-    """The default level is "fast" (truth rows included: the walk is the photon's own path); a probe diagnostic and a
-    source-position derivative compile no lever and record "exact (<why>)"; "exact" asked for is recorded as "exact",
-    never with a reason; any other speed is refused."""
+def test_the_jump_is_on_by_default_and_a_probe_run_compiles_without_it():
+    """A run takes the diffusion jump by default (truth rows included: the walk is the photon's own path) and records
+    ``("speed", "fast")``; a probe diagnostic sees every step, so it compiles the plain walk and records
+    "exact (diagnostics)". There is no public speed argument: the private ``_jump`` serves lumen's own validation."""
     import inspect
 
     import lumen
+    from lumen.transport.step import StepConfig
 
-    assert inspect.signature(lumen.simulate).parameters["speed"].default == "fast"
-    assert speed.resolve("fast") == (speed.FAST, "fast")
-    assert speed.resolve("exact") == (speed.EXACT, "exact")
-    assert speed.resolve("fast", probes=True) == (speed.EXACT, "exact (diagnostics)")
-    assert speed.resolve("exact", probes=True) == (speed.EXACT, "exact")
-    with pytest.raises(ValueError, match="speed is 'fast' or 'exact'"):
-        speed.resolve(None)
+    sig = inspect.signature(lumen.simulate).parameters
+    assert "speed" not in sig and sig["_jump"].default is True
+    assert StepConfig().jump is False  # the reference code, the plain Rayleigh walk
 
 
 def test_the_grid_reads_the_rayleigh_length_as_built():

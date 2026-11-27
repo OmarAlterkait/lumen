@@ -48,7 +48,7 @@ def scan(loss, space, axes: dict, x0=None) -> ScanResult:
     def at(values):
         x = jnp.asarray(x0, jnp.float32)
         for k, v in zip(keys, values, strict=True):
-            x = x.at[offsets[k]].set(jnp.log(v) if space.log(k) else v / space.scales.get(k, 1.0))
+            x = x.at[offsets[k]].set(jnp.log(v) if space.log(k) else v)
         return x
 
     shape = tuple(len(v) for v in vals)
@@ -92,7 +92,7 @@ def profile(model, space, data, key: str, values, x0=None, **fit_kw) -> ProfileR
     nll, xs = [], []
     for v in np.asarray(values, np.float64):
         x = x0.copy()
-        x[j] = np.log(v) if space.log(key) else v / space.scales.get(key, 1.0)
+        x[j] = np.log(v) if space.log(key) else v
         r = fit(model, space, data, x, fixed=(key,), **fit_kw)
         xs.append(r.x)
         nll.append(r.nll)

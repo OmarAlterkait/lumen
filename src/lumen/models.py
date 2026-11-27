@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import dataclasses
 import functools
+import weakref
 from collections.abc import Callable
 
 import numpy as np
@@ -43,7 +44,9 @@ from lumen.params import Param
 
 # the checks a model's code passes at its first build (``lumen.build.library``, ``lumen._core.checks``), by
 # (model, lobe name)
-_CHECKED: set = set()
+# a MediumModel of your own -> the lobe names already checked for it (``lumen.build.library``):
+# weak keys, so a model a caller drops is not held for the process's life
+_CHECKED: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
 @dataclasses.dataclass(frozen=True, eq=False)

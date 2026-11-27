@@ -13,7 +13,7 @@ from lumen.format import io
 
 
 def test_the_content_digest_covers_the_detector_volume(tmp_path):
-    df = io.read(lumen.convert(write(tmp_path, _toy()), RECIPE, tmp_path / "toy.lumen"))
+    df = io.read(lumen.convert(write(tmp_path, _toy()), tmp_path / "toy.lumen", recipe=RECIPE))
     d0 = io.content_digest(io.to_files(df))
     assert io.content_digest(io.to_files(dataclasses.replace(df, detector_volume="WorldLV"))) != d0
     assert io.content_digest(io.to_files(dataclasses.replace(df, report=("another line",)))) == d0  # words only
@@ -21,7 +21,7 @@ def test_the_content_digest_covers_the_detector_volume(tmp_path):
 
 def test_the_content_digest_leaves_out_the_name(tmp_path):
     """One detector converted under two names has one digest, so a calibration transfers."""
-    df = io.read(lumen.convert(write(tmp_path, _toy()), RECIPE, tmp_path / "toy.lumen"))
+    df = io.read(lumen.convert(write(tmp_path, _toy()), tmp_path / "toy.lumen", recipe=RECIPE))
     d0 = io.content_digest(io.to_files(df))
     assert io.content_digest(io.to_files(dataclasses.replace(df, name="another"))) == d0
     (tmp_path / "toy.lumen" / "solids.json").write_text("{}\n")
@@ -35,7 +35,8 @@ def test_the_detector_digest_covers_the_sensor_value_sets(tmp_path):
     from lumen.format import sensorsets
 
     groups = tuple(dataclasses.replace(g, values=TOY_SET, settings={}) for g in RECIPE.groups)
-    path = lumen.convert(write(tmp_path, _toy()), dataclasses.replace(RECIPE, groups=groups), tmp_path / "toy.lumen")
+    path = lumen.convert(write(tmp_path, _toy()), tmp_path / "toy.lumen",
+                         recipe=dataclasses.replace(RECIPE, groups=groups))  # fmt: skip
     det = lumen.load(path)
     modelled = [g for g in det.sensor_set.groups if g.values is not None]
     assert modelled and all(isinstance(g.values, dict) for g in modelled)

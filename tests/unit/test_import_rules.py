@@ -21,7 +21,7 @@ HOLDERS = (((-500, 0, -500), None), ((500, 0, -500), (0, 180, 0)), ((-500, 0, 50
 def convert(tmp_path, text):
     src = tmp_path / "film.gdml"
     src.write_text(text)
-    return lumen.load(lumen.convert(src, RECIPE, tmp_path / "film.lumen"))
+    return lumen.load(lumen.convert(src, tmp_path / "film.lumen", recipe=RECIPE))
 
 
 def test_a_wls_box_thinner_than_the_band_is_refused(tmp_path):

@@ -86,6 +86,15 @@ def pack(detector, params) -> dict:
     return lookup.pack(detector.parts.optics, named(detector, params))
 
 
+def checked(detector, params=None) -> dict:
+    """Return ``pack`` of ``params`` (default: the detector's) with the value checks run first
+    (``lumen.build.values``: a concrete value outside what the detector holds raises ``InvalidValue``)."""  # noqa: D205, D209
+    from lumen.build import values
+
+    p = detector.params() if params is None else params
+    return pack(detector, values.check(detector, p)[0])
+
+
 def _guarded(params, key):
     """Return a key's value, a traced one's derivative refused where there is none: a method not available in this
     version (``lumen.params.PENDING``)."""  # noqa: D205, D209

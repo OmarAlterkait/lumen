@@ -25,7 +25,7 @@ def _drive(det_path, out):
 
     import lumen
     from lumen import run as runner
-    from lumen.build import tracked
+    from lumen.build import pack, tracked
     from lumen.compare import photons
     from lumen.readout import fill
     from lumen.readout.grid import Grid
@@ -39,7 +39,7 @@ def _drive(det_path, out):
     z = jnp.zeros(N, jnp.float32)
     x = jnp.tile(jnp.asarray([0.3, 0.0, 0.0], jnp.float32), (N, 1))
     rows = Photons(x, jnp.asarray(d, jnp.float32), z, z + 400.0, z + 1.0, jnp.zeros((N, 2, 3), jnp.float32))
-    ops = steps.operands(model, det.pack(det.params()), None, steps.Controls())
+    ops = steps.operands(model, pack.checked(det, det.params()), None, steps.Controls())
     loop = photons.loop(fill.HistogramLayout(len(det.parts.optics.sensor_pvs), Grid.bands((300.0, 600.0))))
     t = runner.run(loop, model, ops, rows, jax.random.key_data(jax.random.PRNGKey(0)),
                    max_vertices=500, backend="auto")  # fmt: skip
@@ -63,7 +63,7 @@ def test_a_program_loaded_from_the_cache_is_bitwise_a_fresh_compile(tmp_path):
 
     import lumen
 
-    det_path = lumen.convert(write(tmp_path, _toy()), RECIPE, tmp_path / "toy.lumen")
+    det_path = lumen.convert(write(tmp_path, _toy()), tmp_path / "toy.lumen", recipe=RECIPE)
     cache_root = tmp_path / "lumen_cache"  # fresh
     every = {
         "JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS": "0",

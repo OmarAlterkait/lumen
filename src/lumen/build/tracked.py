@@ -7,8 +7,8 @@ diagonal). This module joins the two:
 the class of every navigator volume by its placed-volume name, and the query in the form the step reads.
 
     geom = from_parts(parts)                   # parts: lumen.build.build.build(...); or from_scene(scene, optics)
-    q = geom.query(None, x, d, cls, t_max, vol=vol, last=srf, sn=sn)       # dict, the step's contract
-    t, n = geom.surface(None, q, x, d)         # the winner's (t, normal), live in (x, d)
+    q = geom.query(x, d, t_max, vol=vol, last=srf, sn=sn)                 # dict, the step's contract
+    t, n = geom.surface(q, x, d)               # the winner's (t, normal), live in (x, d)
 """
 
 from __future__ import annotations
@@ -83,8 +83,10 @@ class TrackedGeometry:
         """Hash by identity (a static argument of the step)."""
         return id(self)
 
-    def query(self, gp, x, d, cls, t_max, vol=-1, last=-1, sn=None, s_at=None):  # noqa: PLR0913 -- the step's contract
-        """Return the next visible crossing in the step's form (dict; ``gp`` and ``cls`` are not read).
+    def query(self, x, d, t_max, vol=-1, last=-1, sn=None, s_at=None, s_free=None):  # noqa: PLR0913 -- the step's contract
+        """Return the next visible crossing in the step's form (dict).
+
+        ``s_free``, the step's free path, is not read here: ``lumen.geometry.reach`` is the geometry that reads it.
 
         ``vol`` < 0: not known (a source's photon), located here, once; ``last``: the srf the photon sits on;
         ``sn``: the normal of the event that left it; ``s_at``: a bulk event's distance (``vol_at``, the volume the ray
@@ -109,7 +111,7 @@ class TrackedGeometry:
         """Return this geometry with its navigator reading the operands ``ops`` (``Navigator.operands``)."""
         return TrackedGeometry(self.nav.bind(ops), self.n_classes, self.sensor_of_vol, self.vertex_tab)
 
-    def surface(self, gp, q, x, d):
+    def surface(self, q, x, d):
         """Return (t, normal) of the surface query q met, live in the ray (x, d) (``navigate.surface_at``)."""
         return navigate.surface_at(self.nav, q, x, d)
 

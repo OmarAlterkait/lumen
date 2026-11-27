@@ -77,7 +77,7 @@ def run_source(det, diag, source, per_call, seed):
     acc, n_calls = None, max(1, int(round(nph / per_call)))
     for i in range(n_calls):
         src = sources.Point(x_m, n_photons=float(per_call), lam=lam)
-        light = lumen.simulate(det, src, samples=per_call, chunk=per_call, seed=seed + i, speed="exact",
+        light = lumen.simulate(det, src, samples=per_call, chunk=per_call, seed=seed + i, _jump=False,
                                diagnostics=(diag,))  # fmt: skip
         out = photons.detected(light, diag) | {k: np.asarray(v, np.float64) for k, v in light.health._asdict().items()}
         acc = out if acc is None else {name: acc[name] + v for name, v in out.items()}
@@ -211,7 +211,7 @@ def check(name, *, detector=None, extra=(), **options) -> list:
     orig = read_reference(references.product(orig_id, spec, extra)) if orig_id else None
     if orig is not None and not (np.allclose(orig["x_mm"], ref["x_mm"]) and np.allclose(orig["energy"], ref["energy"])):
         raise ValueError(f"charge entry {name!r}: {orig_id} does not run {spec['reference']}'s sources")
-    det = lumen.load(detector or spec["detector"], precision=spec.get("precision"))  # None: the detector's own
+    det = lumen.load(detector or spec["detector"])  # at the detector file's own precision
     split = spec.get("split_ev")  # every wavelength the source emits, in one band or two at the split
     s = photons.setup(det, (-np.inf, HC / split, np.inf) if split else None)
     nb = len(s.lam_edges) - 1

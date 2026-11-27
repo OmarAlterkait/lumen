@@ -152,11 +152,11 @@ The error comes from the photons' own spread: for each PMT, the sum over photons
 added to it (`lumen.readout.grid.moment_error`), which estimates the variance of independent photons without bias.
 Keep `seed` fixed inside anything you differentiate or fit, so that every call uses the same random numbers.
 
-**Fast and exact runs.** `simulate` runs `speed="fast"` by default: in a medium that only scatters (Rayleigh), a
-photon walks its own scatterings inside a ball the geometry proves empty, without asking the geometry at each one. It
-is the same estimator in law with other random numbers, not an approximation. `speed="exact"` turns it off, bit for
-bit the plain loop. A run the fast walk cannot serve (a derivative on the source position, a probe diagnostic) runs exact by
-itself; `light.provenance` records which level ran (`("speed", "fast")`, or `"exact (<why>)"`).
+**The diffusion jump.** In a medium that only scatters (Rayleigh), a photon walks its own scatterings inside a ball
+the geometry proves empty, without asking the geometry at each one. It is the same estimator in law with other random
+numbers, not an approximation, so there is nothing to choose: every run takes it where the detector gives it
+something to do. A probe diagnostic (`lumen.diagnostics.Trace`) sees every step, so it runs the plain loop;
+`light.provenance` records which ran (`("speed", "fast")` or `"exact (diagnostics)"`).
 
 ## 3. A hit map
 

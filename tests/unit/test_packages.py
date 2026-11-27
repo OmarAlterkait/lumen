@@ -27,11 +27,11 @@ def test_a_package_name_resolves_to_its_gdml_recipe_and_inputs(package, tmp_path
 
 def test_a_package_name_refuses_a_recipe_an_unknown_name_and_a_stray_data(package, tmp_path):
     with pytest.raises(ValueError, match="names its own recipe"):
-        api.convert("toy_package:toy", "R", tmp_path / "x.lumen", data=tmp_path)
+        api.convert("toy_package:toy", tmp_path / "x.lumen", recipe="R", data=tmp_path)
     with pytest.raises(ValueError, match="no detector 'nope'"), api.package_detector("toy_package:nope", data=tmp_path):
         pass
     with pytest.raises(ValueError, match="data directory of a detector package"):
-        api.convert(tmp_path / "x.gdml", "R", tmp_path / "x.lumen", data=tmp_path)
+        api.convert(tmp_path / "x.gdml", tmp_path / "x.lumen", recipe="R", data=tmp_path)
 
 
 def test_a_package_detector_is_what_its_prepare_yields_while_open(package, tmp_path):

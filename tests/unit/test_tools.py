@@ -32,16 +32,14 @@ def p0(converted):  # noqa: F811
 
 
 def test_a_space_is_its_keys_values_transformed_by_their_range(p0):
-    s = tools.Space(p0, [R, ABS, SA], scales={SA: 0.1})
+    s = tools.Space(p0, [R, ABS, SA])
     assert s.sizes == (2, 2, 1) and s.log(R) and s.log(ABS) and not s.log(SA)
     x = s.vector()
-    np.testing.assert_allclose(x[:2], np.log(p0[R].value)) and np.testing.assert_allclose(x[4], p0[SA] / 0.1)
-    back = s.params(x + np.r_[0.1, 0.0, 0.0, 0.0, 0.5])
+    np.testing.assert_allclose(x[:2], np.log(p0[R].value)) and np.testing.assert_allclose(x[4], p0[SA])
+    back = s.params(x + np.r_[0.1, 0.0, 0.0, 0.0, 0.05])
     assert isinstance(back[R], Table) and np.array_equal(back[R].energy, p0[R].energy)
     np.testing.assert_allclose(back[R].value[0], p0[R].value[0] * np.exp(0.1), rtol=1e-6)
     np.testing.assert_allclose(back[SA], p0[SA] + 0.05, rtol=1e-6)
-    with pytest.raises(ValueError, match="a scale is for a key"):
-        tools.Space(p0, [R], scales={R: 2.0})
 
 
 def test_the_jacobian_is_one_forward_derivative_per_entry(p0):
@@ -55,12 +53,12 @@ def test_the_jacobian_is_one_forward_derivative_per_entry(p0):
 
 
 def test_the_fit_recovers_the_values_its_data_were_made_at(p0):
-    s = tools.Space(p0, [R, SA], scales={SA: 0.1})
-    truth = s.vector() + np.r_[-0.15, 0.1, 0.4]
+    s = tools.Space(p0, [R, SA])
+    truth = s.vector() + np.r_[-0.15, 0.1, 0.04]
     data = np.asarray(model(s.params(truth)), np.float64)  # the expectation: no noise, an exact optimum
     res = tools.fit(model, s, data, steps=50)
     np.testing.assert_allclose(res.x, truth, atol=1e-3)  # the model runs in float32
-    assert res.history and res.history[-1]["nll"] <= 1e-6 * data.sum()
+    assert res.history and res.nll <= 1e-6 * data.sum()  # at the fit (history: where each step starts)
     # the covariance is the inverse Fisher information at the fit; its standard errors in the keys' own units
     F = tools.fisher(model, s, res.x)
     np.testing.assert_allclose(res.cov, np.linalg.inv(F), rtol=1e-3)
@@ -133,8 +131,8 @@ def test_a_factor_key_is_one_number_on_its_whole_value(p0):
 
 
 def test_first_and_second_order_reach_the_same_fit_and_record_their_paths(p0):
-    s = tools.Space(p0, [SA], scales={SA: 0.1}, factors=[R, ABS])
-    truth = s.vector() + np.r_[0.4, -0.1, 0.15]
+    s = tools.Space(p0, [SA], factors=[R, ABS])
+    truth = s.vector() + np.r_[0.04, -0.1, 0.15]
     data = np.asarray(model(s.params(truth)), np.float64)
     second = tools.fit(model, s, data, steps=50)
     first = tools.descend(model, s, data, steps=400, lr=0.02)
@@ -152,8 +150,8 @@ def test_first_and_second_order_reach_the_same_fit_and_record_their_paths(p0):
 
 
 def test_the_profile_is_lowest_at_the_fit_and_toys_cover_the_truth(p0):
-    s = tools.Space(p0, [SA], scales={SA: 0.1}, factors=[R])
-    truth = s.vector() + np.r_[0.3, -0.1]
+    s = tools.Space(p0, [SA], factors=[R])
+    truth = s.vector() + np.r_[0.03, -0.1]
     rng = np.random.default_rng(3)
     data = rng.poisson(50.0 * np.asarray(model(s.params(truth)), np.float64))
     m50 = lambda p, seed=0: 50.0 * model(p)  # noqa: E731 -- brighter, so the likelihood is close to Gaussian
@@ -172,8 +170,8 @@ def test_the_plots_draw(p0, tmp_path):
     mpl.use("Agg")
     from lumen.tools import plot
 
-    s = tools.Space(p0, [SA], scales={SA: 0.1}, factors=[R])
-    truth = s.vector() + np.r_[0.2, -0.1]
+    s = tools.Space(p0, [SA], factors=[R])
+    truth = s.vector() + np.r_[0.02, -0.1]
     data = np.asarray(model(s.params(truth)), np.float64)
     loss = lambda p: tools.poisson_nll(model(p), data)  # noqa: E731
     fits = {"first": tools.descend(model, s, data, steps=5), "second": tools.fit(model, s, data, steps=5)}
@@ -194,14 +192,14 @@ def test_a_fit_reports_convergence_a_singular_information_and_leaves_dark_cells_
     two REFLECTIVITY knots enters) gives its rank and infinite variance on the entries it reaches, not a pseudo-inverse;
     a cell with counts where the model makes no light has no Poisson likelihood and is left out of the sum, counted in
     ``dropped``, not refused."""
-    s = tools.Space(p0, [SA], scales={SA: 0.1}, factors=[R])
-    truth = s.vector() + np.r_[0.3, -0.1]
+    s = tools.Space(p0, [SA], factors=[R])
+    truth = s.vector() + np.r_[0.03, -0.1]
     data = np.asarray(model(s.params(truth)), np.float64)
     short = tools.fit(model, s, data, steps=1)
     assert not short.converged and "1 steps taken" in short.reason and short.rank == 2
     full = tools.fit(model, s, data, steps=50)
     assert full.converged and full.rank == 2 and np.all(np.isfinite(full.cov)), full.reason
-    s2 = tools.Space(p0, [R, SA], scales={SA: 0.1})
+    s2 = tools.Space(p0, [R, SA])
 
     def mean_knots(p, seed=0):
         r = jnp.mean(p[R].value)
@@ -220,8 +218,8 @@ def test_a_fit_reports_convergence_a_singular_information_and_leaves_dark_cells_
 def test_toy_data_is_the_mean_of_other_seeds_drawn(p0):
     """``toy_counts`` is the mean of ``TRUTH_SEEDS`` runs at ``seed`` .. ``seed + TRUTH_SEEDS - 1``, Poisson drawn with
     ``seed``: the recipe ``coverage`` fits toys from, so data never come from a seed the fit runs at."""
-    s = tools.Space(p0, [SA], scales={SA: 0.1}, factors=[R])
-    x = s.vector() + np.r_[0.2, -0.1]
+    s = tools.Space(p0, [SA], factors=[R])
+    x = s.vector() + np.r_[0.02, -0.1]
     n = tools.toy_counts(model, s, x, seed=11)  # model ignores the seed: the mean is the model itself
     mu = np.asarray(model(s.params(x)), np.float64)
     assert np.array_equal(n, np.random.default_rng(11).poisson(mu))

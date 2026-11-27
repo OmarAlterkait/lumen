@@ -257,7 +257,8 @@ def toy(tmp_path_factory):
     (tmp / "facets.gdml").write_text(TOY)
     groups = tuple(SensorGroup(g, rule="any_entry", lv=lv, settings={"entry_efficiency": 1.0})
                    for g, lv in (("above", "SenseA"), ("below", "SenseB")))  # fmt: skip
-    det = lumen.load(lumen.convert(tmp / "facets.gdml", Recipe("facets", "StackLV", groups=groups), tmp / "f.lumen"))
+    recipe = Recipe("facets", "StackLV", groups=groups)
+    det = lumen.load(lumen.convert(tmp / "facets.gdml", tmp / "f.lumen", recipe=recipe))
     n, th = TOY_N_PHOTONS, math.radians(TOY_THETA)
     src = FromArrays(np.tile([0.0, 0.0, 0.002], (n, 1)), np.tile([math.sin(th), 0.0, -math.cos(th)], (n, 1)),
                      np.zeros(n), np.full(n, 400.0), np.ones(n))  # fmt: skip

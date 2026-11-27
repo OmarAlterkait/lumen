@@ -29,7 +29,7 @@ def test_the_plain_jax_backend_agrees_with_the_gpu(toy):
     th = jnp.zeros(2, jnp.float32)
     e = th.at[0].set(1.0)
     p0, fams = families(s, ".R[", "Liquid:absorption")
-    gpu = [float(np.mean(x)) for x in jax.jvp(charge(s, p0, fams, rows_at(N), backend="cuda"), (th,), (e,))]
+    gpu = [float(np.mean(x)) for x in jax.jvp(charge(s, p0, fams, rows_at(N), backend="auto"), (th,), (e,))]
     with jax.default_device(jax.devices("cpu")[0]):
         sc = toys.setup(s.det)  # its own navigator arrays, on the CPU
         p0c, famc = families(sc, ".R[", "Liquid:absorption")

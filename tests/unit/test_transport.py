@@ -122,7 +122,7 @@ def test_the_photon_has_only_the_parts_asked_for():
     row = jax.tree_util.tree_map(lambda a: a[0], _row())
     ph = state.start(row, 5, 2)
     assert ph.analog is None and ph.gen is None
-    assert int(ph.vol) == 5 and int(ph.cls) == 2 and bool(ph.alive) and ph.moving is None
+    assert int(ph.vol) == 5 and int(ph.cls) == 2 and bool(ph.alive)
     assert float(ph.wr) == float(ph.w) == 1.0  # the reference weight starts at the weight
     assert int(state.start(row, -1, 0, gen=True).gen) == 0
 

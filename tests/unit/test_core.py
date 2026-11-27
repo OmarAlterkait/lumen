@@ -108,8 +108,9 @@ def test_each_tolerance_covers_the_error_it_is_stated_against():
     from lumen.rules import navigation
     from lumen.rules import tolerances as tol
 
-    assert navigation.BAND == tol.BAND_ULPS * float(np.finfo(np.float32).eps)
-    assert min(tol.WORLD_BOX_PAD_REL, tol.KIND_BOX_PAD_REL, tol.TORUS_PAD_REL) >= navigation.BAND
+    band = tol.BAND_ULPS * navigation.FLOAT32.eps  # the float32 band per metre of coordinate scale
+    assert band == tol.BAND_ULPS * float(np.finfo(np.float32).eps)
+    assert min(tol.WORLD_BOX_PAD_REL, tol.KIND_BOX_PAD_REL, tol.TORUS_PAD_REL) >= band
     assert tol.WORLD_BOX_PAD_ABS >= tol.BAND_FLOOR
     eps64 = tol.POSE_ULPS * float(np.finfo(np.float64).eps)
     assert min(tol.SAME_POSE, tol.HOLE_POSE_TOL, tol.BOX_PAD, tol.LINEAR_REL, tol.TORUS_AXIAL, tol.PARALLEL,

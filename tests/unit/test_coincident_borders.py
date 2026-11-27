@@ -207,7 +207,7 @@ def _counted(tmp, name, text, sensor_lv, source):
     (tmp / f"{name}.gdml").write_text(text)
     recipe = Recipe(name, "GasLV", groups=(SensorGroup("caps", rule="any_entry", lv=sensor_lv,
                                                        settings={"entry_efficiency": 1.0}),))  # fmt: skip
-    det = lumen.load(lumen.convert(tmp / f"{name}.gdml", recipe, tmp / f"{name}.lumen"))
+    det = lumen.load(lumen.convert(tmp / f"{name}.gdml", tmp / f"{name}.lumen", recipe=recipe))
     light = lumen.simulate(det, source, samples=1 << 15, seed=3)
     return float(light.arrivals.sum()), float(light.health.lost[0])
 

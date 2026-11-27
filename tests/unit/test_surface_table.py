@@ -19,7 +19,7 @@ import surface_reference as ref
 from surface_reference import DETECT
 
 import lumen
-from lumen.build import lookup
+from lumen.build import lookup, pack
 from lumen.rules.entries import SensorEntry, SurfaceEntry
 from lumen.surfaces import types
 from lumen.surfaces.outcomes import FAR_SIDE, N_OUTCOMES, STRAIGHT
@@ -178,7 +178,7 @@ def test_every_toy_detector_row_is_the_per_type_formula_bit_for_bit(name, tmp_pa
 
     det = lumen.load(builder.save(builder_toys.TOYS[name](), tmp_path / f"{name}.lumen"))
     o, lib = det.parts.optics, det.parts.library
-    pk = jax.tree_util.tree_map(jnp.asarray, det.pack())["surfaces"]
+    pk = jax.tree_util.tree_map(jnp.asarray, pack.checked(det))["surfaces"]
     g = np.random.default_rng(5)
     with jax.disable_jit():
         for i, (stype, origin) in enumerate(o.rows):

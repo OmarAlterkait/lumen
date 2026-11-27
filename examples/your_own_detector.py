@@ -40,7 +40,7 @@ def section(title):
 
 def convert(gdml, out):
     """Convert ``gdml`` under the recipe; print what Geant4 would not read and the import left out."""
-    path = lumen.convert(gdml, RECIPE, out, overwrite=True)
+    path = lumen.convert(gdml, out, recipe=RECIPE, overwrite=True)
     det = lumen.load(path)
     for line in det.file.report:
         if "left out" in line:

@@ -11,7 +11,7 @@ material, and the placement name where both place the point inside some placed v
 suffix, as Geant4 strips them). Then the scene as simulated (the detector volume lowered as ``lumen.build.build``
 lowers it, the sensors kept): its material where it places the point inside the detector.
 
-    python -m lumen.compare geometry DETECTOR_FILE --gdml FILE --g4ref BINARY --out DIR [--uniform N --surface N]
+    python -m lumen.compare geometry-file DETECTOR_FILE --gdml FILE --g4ref BINARY --out DIR [--uniform N --surface N]
 
 Writes ``DIR/geometry.json`` (the counts and the most common mismatches) and ``DIR/mismatches.npz``. To probe with a
 Geant4 that runs in another image (g4ref built for Geant4 11.2.2), split the run in three: ``--write-points FILE``
@@ -241,7 +241,7 @@ def main(argv=None) -> int:
     A mesh (tessellated solid) is an opaque part that holds no point by design, so a point Geant4 places inside one
     is lumen's mother volume: those points are counted and listed, never a failure.
     """
-    ap = argparse.ArgumentParser(prog="python -m lumen.compare geometry", description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(prog="python -m lumen.compare geometry-file", description=__doc__.splitlines()[0])
     ap.add_argument("detector_file")
     ap.add_argument("--gdml", required=True, help="the GDML the detector file was converted from")
     ap.add_argument("--g4ref", help="the g4ref binary (Geant4 10.7.4)")

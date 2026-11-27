@@ -29,7 +29,7 @@ from toys import EXACT
 import lumen
 from lumen import run as runner
 from lumen._core.safe import literal
-from lumen.build import tracked
+from lumen.build import pack, tracked
 from lumen.compare import photons
 from lumen.format.sensorsets import SensorGroup
 from lumen.readout import fill
@@ -108,8 +108,8 @@ def detectors(tmp_path_factory):
             groups = tuple(SensorGroup(f"ring{i}", rule="any_entry", lv=f"volRing{i}",
                                        settings={"entry_efficiency": 1.0}) for i in range(rings))  # fmt: skip
             recipe = Recipe(f"mie_{case}", "volWorld", groups=groups)
-            out[(case, rings)] = lumen.load(lumen.convert(write_gdml(d / "mie.gdml", case, rings), recipe,
-                                                          d / "mie.lumen"))  # fmt: skip
+            out[(case, rings)] = lumen.load(lumen.convert(write_gdml(d / "mie.gdml", case, rings),
+                                                          d / "mie.lumen", recipe=recipe))  # fmt: skip
         return out[(case, rings)]
 
     return get
@@ -226,7 +226,7 @@ def f1_bins(gf, gb, r, length=L_MIE, n_a=400, n_u=64):
 @pytest.mark.parametrize("case", ["A", "B", "water"])
 def test_isotropic_sphere_charge_direct_light_and_single_scatters(detectors, case):
     det = detectors(case, 1)
-    o = simulate(det, det.pack(), emission(N_ISO, seed=1))
+    o = simulate(det, pack.checked(det), emission(N_ISO, seed=1))
     q = float(np.asarray(o["charge:0"]).sum())  # one sensor, one band: its moment is the total's
     err = float(moment_error(np.asarray(o["charge2:0"]).sum(), q, N_ISO))
     z_q = (q / N_ISO - 1.0) / (err / N_ISO)
@@ -254,7 +254,7 @@ def _scaled(p, m, which, th):
 
 
 def _jvp(det, which, rows, cfg=None, seed=7):
-    p0 = jax.tree_util.tree_map(jnp.asarray, det.pack())
+    p0 = jax.tree_util.tree_map(jnp.asarray, pack.checked(det))
     m = medium_key(p0)
 
     rec = 2 * int(simulate(det, p0, rows, reference=p0, cfg=cfg, seed=seed)["records"])  # for jax.jit
@@ -302,7 +302,7 @@ def test_single_scatter_derivatives_in_the_lobe_constants(detectors, which):
 
 def test_the_forward_ratio_at_its_edge_keeps_its_one_sided_derivative(detectors):
     det = detectors("water", 1)  # r = 1 with both lobes defined: WITHIN
-    p0 = det.pack()
+    p0 = pack.checked(det)
     m = medium_key(p0)
     rows = estimator.edge_rows(det.parts.optics, [("media", m, "mie", "lobe", "forward_ratio")])
     assert rows == estimator.EdgeRows(lobes=((m, "mie", "forward_ratio"),))
@@ -324,7 +324,7 @@ def test_the_forward_ratio_at_its_edge_keeps_its_one_sided_derivative(detectors)
 
 def test_forward_and_reverse_mode_agree(detectors):
     det = detectors("A", 1)
-    p0 = jax.tree_util.tree_map(jnp.asarray, det.pack())
+    p0 = jax.tree_util.tree_map(jnp.asarray, pack.checked(det))
     m = medium_key(p0)
     rows = emission(1 << 16, seed=4)
     c = jnp.asarray(np.random.default_rng(0).normal(size=len(ELL) - 1), jnp.float32)
@@ -351,7 +351,7 @@ def test_ring_toy_against_geant4(detectors, case, geant4):
         counts, t_sum, t2_sum, launched = g["counts"], g["t_sum"], g["t2_sum"], int(g["launched"])
     assert man[name]["hits"] == int(counts.sum())
     det = detectors(case, 36)
-    o = simulate(det, det.pack(), emission(N_RING, seed=5, iso=False), seeds=SEEDS)
+    o = simulate(det, pack.checked(det), emission(N_RING, seed=5, iso=False), seeds=SEEDS)
     ring = np.array([int(pv.rsplit("pvRing", 1)[1].split("/")[0]) for pv in det.parts.optics.sensor_pvs])
     q = np.zeros((SEEDS, 36))
     tw = np.zeros((SEEDS, 36))

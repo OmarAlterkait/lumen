@@ -103,11 +103,11 @@ def add_responses(params, sensor_set, responses):
     groups = {g.name for g in sensor_set.groups}
     for r in responses:
         if r.group not in groups:
-            raise ValueError(f"with_responses: {r.name!r} reads group {r.group!r}; the groups are {sorted(groups)}")
+            raise ValueError(f"load(responses=): {r.name!r} reads group {r.group!r}; the groups are {sorted(groups)}")
         taken = [r.prefix + k for k, _ in r.declared if r.prefix + k in params
                  and params.explain(r.prefix + k) != f"response {r.name}"]  # fmt: skip
         if taken:
-            raise ValueError(f"with_responses: {r.name!r} declares {taken}, keys the detector has already "
+            raise ValueError(f"load(responses=): {r.name!r} declares {taken}, keys the detector has already "
                              "(rename them)")  # fmt: skip
         params = r.parameters(params)
     return params
