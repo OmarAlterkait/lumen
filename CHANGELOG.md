@@ -270,6 +270,13 @@ seven detectors' float32 arrays and the NEXT toy's fractions are unchanged, bit 
   that run's own, never a later run's guess. The outputs are the same bit for bit. Per photon on an A100 (2^20
   photons, after a first run): SK 0.57 us (was 0.99), the others unchanged; the first run of a shape still runs
   again.
+- **The gradient check runs blocks of seeds per launch**: each seed ran its own `simulate`, so every seed paid the
+  photon loop's tail and the call's host overhead. A seed is now a block of photons with its own keys, and as many
+  blocks as fit one launch (`api.CHUNK` photons) run in one `simulate`: a central family's 288 calls become 14 (16
+  seeds). Per family: SK 117 -> 82 s on an RTX 2080 Ti and 83 -> 38 s on an A100, IWCD 152 -> 98 s (2080 Ti),
+  float64 NEXT-100 296 -> 128 s (A100) and 745 -> 515 s (2080 Ti). The statistics are those of independent seeds as
+  before, but the random streams change, so a family's recorded values move within their noise: the verdicts are the
+  same over the 43 families compared (SK, IWCD, NEXT-100).
 
 ### Pinned
 
