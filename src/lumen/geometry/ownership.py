@@ -65,32 +65,43 @@ def box_of(node):
 
 
 # ------------------------------------------------------------------------------------------------ boxes in solids
-def _leaf_boxes(lf, c, Q, h):  # noqa: N803 -- Q the boxes' axes
+def _leaf_consts(lf):
+    """Return what ``_leaf_boxes`` reads of a leaf beside the box: |N|, the quadric's own frame (``quad_frame``), its
+    symmetric A and the bounds of A's eigenvalues taken with 0 (None for a torus)."""  # noqa: D205, D209
+    if lf.kind != "q":
+        return None
+    if not lf.has_q:
+        return np.abs(lf.N), None
+    A = 0.5 * (lf.A + lf.A.T)
+    ev = np.linalg.eigvalsh(A)
+    return np.abs(lf.N), (*so.quad_frame(lf), A, min(float(ev.min()), 0.0), max(float(ev.max()), 0.0))
+
+
+def _leaf_boxes(lf, c, Q, h, k=None):  # noqa: N803 -- Q the boxes' axes
     """Return per oriented box (centres c (m, 3), axes Q (m, 3, 3) as columns -- None: the solid's axes --, half h
     (m, 3), in the solid's frame) whether the leaf may hold a point of it and whether it surely holds all of it
     (first-order bounds of its plane and quadric functions over the box, the quadric's curvature bounding the rest; a
-    torus: never sure)."""  # noqa: D205, D209
+    torus: never sure); ``k`` the leaf's ``_leaf_consts`` (None: computed here)."""  # noqa: D205, D209
     m = len(c)
     if lf.kind != "q":
         return np.ones(m, bool), np.zeros(m, bool)
+    an, qk = _leaf_consts(lf) if k is None else k
     may, sure = np.ones(m, bool), np.ones(m, bool)
     if lf.N.shape[0]:
         v = (c - lf.origin) @ lf.N.T - lf.H
-        r = h @ np.abs(lf.N).T if Q is None else (np.abs(np.matmul(lf.N, Q)) @ h[:, :, None])[:, :, 0]
-        may &= np.all(v - r <= 0.0, 1)
-        sure &= np.all(v + r <= 0.0, 1)
-    if lf.has_q:
-        qo, bq, cq = so.quad_frame(lf)
-        A = 0.5 * (lf.A + lf.A.T)
-        ev = np.linalg.eigvalsh(A)
+        r = h @ an.T if Q is None else (np.abs(np.matmul(lf.N, Q)) @ h[:, :, None])[:, :, 0]
+        may &= (v - r <= 0.0).all(1)
+        sure &= (v + r <= 0.0).all(1)
+    if qk is not None:
+        qo, bq, cq, A, elo, ehi = qk
         y = c - lf.origin - qo
         yA = y @ A
-        q = np.sum(yA * y, 1) + 2.0 * y @ bq + cq
+        q = (yA * y).sum(1) + 2.0 * y @ bq + cq
         gr = 2.0 * (yA + bq)
-        g = np.sum(np.abs(gr if Q is None else np.matmul(gr[:, None, :], Q)[:, 0, :]) * h, 1)
-        hh = np.sum(h * h, 1)
-        may &= q - g + min(float(ev.min()), 0.0) * hh <= 0.0
-        sure &= q + g + max(float(ev.max()), 0.0) * hh <= 0.0
+        g = (np.abs(gr if Q is None else np.matmul(gr[:, None, :], Q)[:, 0, :]) * h).sum(1)
+        hh = (h * h).sum(1)
+        may &= q - g + elo * hh <= 0.0
+        sure &= q + g + ehi * hh <= 0.0
     return may, sure
 
 
@@ -127,14 +138,14 @@ def _corners(c, Q, h):  # noqa: N803 -- Q the boxes' axes
 
 
 def flat(node):
-    """Return (expr, leaves, per leaf whether it is convex) of a CSG solid, the form ``relation`` reads; None for a
-    mesh. Convex: planes, and a quadric of non-negative curvature."""  # noqa: D205, D209
+    """Return (expr, leaves, per leaf whether it is convex, per leaf its ``_leaf_consts``) of a CSG solid, the form
+    ``relation`` reads; None for a mesh. Convex: planes, and a quadric of non-negative curvature."""  # noqa: D205, D209
     if _is_mesh(node):
         return None
     expr, leaves = so.flatten(node)
     convex = [lf.kind == "q" and (not lf.has_q or float(np.linalg.eigvalsh(0.5 * (lf.A + lf.A.T)).min())
                                   > -CONVEX_TOL) for lf in leaves]  # fmt: skip
-    return expr, leaves, convex
+    return expr, leaves, convex, [_leaf_consts(lf) for lf in leaves]
 
 
 def relation(fl, c, Q, h):  # noqa: N803 -- Q the boxes' axes
@@ -144,13 +155,13 @@ def relation(fl, c, Q, h):  # noqa: N803 -- Q the boxes' axes
     interval bounds of ``_leaf_boxes``, and a convex leaf holds a box exactly when it holds its eight corners; a union
     holds a box one side holds, an intersection one both hold, a difference one its first holds and its second
     misses."""  # noqa: D205, D209
-    expr, leaves, convex = fl
+    expr, leaves, convex, consts = fl
+    x = _corners(c, Q, h).reshape(-1, 3) if any(convex) else None
     out = []
-    for lf, cv in zip(leaves, convex, strict=True):
-        may, sure = _leaf_boxes(lf, c, Q, h)
+    for lf, cv, k in zip(leaves, convex, consts, strict=True):
+        may, sure = _leaf_boxes(lf, c, Q, h, k)
         if cv:
-            x = _corners(c, Q, h)
-            sure = sure | so._leaf_inside(lf, x.reshape(-1, 3)).reshape(len(c), 8).all(1)
+            sure = sure | so._leaf_inside(lf, x).reshape(len(c), 8).all(1)
         out.append((may, sure))
     return _expr_boxes(expr, out)
 
@@ -184,21 +195,40 @@ def relate_poses(fi, bi, fo, L, t, want):  # noqa: N803 -- L the rotations
     """
     L, t = np.asarray(L, float).reshape(-1, 3, 3), np.asarray(t, float).reshape(-1, 3)
     m = len(L)
-    res = np.zeros(m, bool)
     if fo is None or not m:
-        return res
+        return np.zeros(m, bool)
+    zero = np.zeros(m, np.int64)
+    box = [np.repeat(np.asarray(x, float)[None], m, 0) for x in bi]
+    return _relate([fi], [fo], zero, zero, *box, L, t, want)
+
+
+def _grouped(flats, ids, c, Q, h):  # noqa: N803 -- Q the boxes' axes
+    """Return ``relation`` (may, sure) per box, box k of ``flats[ids[k]]`` (None: a mesh, may and never sure)."""
+    may, sure = np.ones(len(c), bool), np.zeros(len(c), bool)
+    o = np.argsort(ids, kind="stable")
+    cut = np.flatnonzero(np.r_[True, ids[o][1:] != ids[o][:-1], True])
+    for g0, g1 in zip(cut[:-1], cut[1:], strict=True):
+        r = o[g0:g1]
+        fl = flats[ids[r[0]]] if len(r) else None
+        if fl is not None:
+            may[r], sure[r] = relation(fl, c[r], None if Q is None else Q[r], h[r])
+    return may, sure
+
+
+def _relate(fis, fos, pi, po, c, h, L, t, want):  # noqa: N803, PLR0913 -- L the rotations
+    """Return per pose ``relate_poses`` of the inner solid ``fis[pi[k]]`` (box c[k], h[k]) in the outer ``fos[po[k]]``
+    (never None): the poses of every pair proved together, each pose's pieces as alone."""  # noqa: D205, D209
+    m = len(L)
+    res = np.zeros(m, bool)
     live = np.ones(m, bool)
     task = np.arange(m)
-    c = np.repeat(np.asarray(bi[0], float)[None], m, 0)
-    h = np.repeat(np.asarray(bi[1], float)[None], m, 0)
     for _ in range(SPLITS + 1):
         Lk = L[task]
-        may, sure = relation(fo, np.matmul(Lk, c[:, :, None])[:, :, 0] + t[task], Lk, h)
+        may, sure = _grouped(fos, po[task], np.matmul(Lk, c[:, :, None])[:, :, 0] + t[task], Lk, h)
         ok, bad = (~may, sure) if want == "apart" else (sure, ~may)
-        if fi is not None:
-            imay, isure = relation(fi, c, None, h)
-            live[task[bad & isure]] = False
-            ok = ok | ~imay
+        imay, isure = _grouped(fis, pi[task], c, None, h)
+        live[task[bad & isure]] = False
+        ok = ok | ~imay
         keep = ~ok & live[task]
         cnt = np.bincount(task[keep], minlength=m)
         res |= live & (cnt == 0)  # every piece decided
@@ -257,13 +287,10 @@ class Proofs:
             self.nears[key] = flat(node)
         return self.nears[key]
 
-    def _prove(self, a, b, L, t, want):  # noqa: N803 -- L the rotations
-        """Return per pose of solid a in solid b's frame (``x = L[k] y + t[k]``) whether a is proved apart from /
-        inside b: each solid without the subtrahends of its top chain that miss the other's box at that pose, the
-        poses keeping the same ones proved together, ``PROOF_BATCH`` at a time."""  # noqa: D205, D209
-        got = np.zeros(len(L), bool)
-        if not len(L):
-            return got
+    def _jobs(self, a, b, L, t):  # noqa: N803 -- L the rotations
+        """Return [(fi, fo, poses)] for the poses of solid a in solid b's frame (``x = L[k] y + t[k]``): each solid
+        without the subtrahends of its top chain that miss the other's box at that pose, the poses keeping the same
+        ones together."""  # noqa: D205, D209
         box_a, box_b = self.u.box[a], self.u.box[b]
         ko = self._kept(b, *_regions(box_a, L, t))
         if box_b is None:
@@ -272,12 +299,36 @@ class Proofs:
             ki = self._kept(a, *_regions(box_b, np.transpose(L, (0, 2, 1)), -np.einsum("mji,mj->mi", L, t)))
         rows = np.c_[ki, ko]
         grp = np.unique(rows, axis=0, return_inverse=True)[1].ravel() if rows.shape[1] else np.zeros(len(L), int)
+        out = []
         for g in range(int(grp.max()) + 1):
             idx = np.flatnonzero(grp == g)
-            fi, fo = self._near(a, ki[idx[0]]), self._near(b, ko[idx[0]])
-            for s0 in range(0, len(idx), PROOF_BATCH):
-                js = idx[s0 : s0 + PROOF_BATCH]
-                got[js] = relate_poses(fi, box_a, fo, L[js], t[js], want)
+            out.append((self._near(a, ki[idx[0]]), self._near(b, ko[idx[0]]), idx))
+        return out
+
+    def _prove(self, ka, kb, L, t, want):  # noqa: N803 -- L the rotations
+        """Return per pose of solid ka[k] in solid kb[k]'s frame (``x = L[k] y + t[k]``) whether it is proved apart
+        from / inside it: the poses of every pair of solids proved together, ``PROOF_BATCH`` at a time (``_relate``)."""  # noqa: D205, D209
+        got = np.zeros(len(L), bool)
+        flats, fid, poses = [], {}, []  # the distinct flats, by identity; per job (inner's, outer's, its poses)
+        for a, b in {(int(x), int(y)) for x, y in zip(ka, kb, strict=True)}:
+            sel = np.flatnonzero((ka == a) & (kb == b))
+            if self.u.box[a] is None:  # an unbounded solid: nothing is proved
+                continue
+            for fi, fo, idx in self._jobs(a, b, L[sel], t[sel]):
+                if fo is None:  # a mesh: nothing is proved
+                    continue
+                for f in (fi, fo):
+                    if id(f) not in fid:
+                        fid[id(f)] = len(flats)
+                        flats.append(f)
+                poses.append((fid[id(fi)], fid[id(fo)], np.full(len(idx), a), sel[idx]))
+        if not poses:
+            return got
+        pi, po, ka_, js = (np.concatenate([np.broadcast_to(p[k], len(p[3])) for p in poses]) for k in range(4))
+        box = [np.stack([np.asarray(self.u.box[k][x], float) for k in ka_]) for x in (0, 1)]
+        for s0 in range(0, len(js), PROOF_BATCH):
+            q = slice(s0, s0 + PROOF_BATCH)
+            got[js[q]] = _relate(flats, flats, pi[q], po[q], box[0][q], box[1][q], L[js[q]], t[js[q]], want)
         return got
 
     def __call__(self, inner, outer, want):
@@ -307,14 +358,9 @@ class Proofs:
             else:
                 todo.append(j)
         todo_a = np.asarray(todo, np.int64)
-        pair = np.c_[ki[first[todo_a]], ko[first[todo_a]]] if len(todo_a) else np.zeros((0, 2), np.int64)
-        for a, b in {(int(x), int(y)) for x, y in pair}:
-            sel = todo_a[(pair[:, 0] == a) & (pair[:, 1] == b)]
-            if u.box[a] is None:  # an unbounded solid: nothing is proved
-                sel = sel[:0]
-            got[sel] = self._prove(a, b, L[first[sel]], t[first[sel]], want)
-            for j in sel:
-                self.memo[(want, uk[j].tobytes())] = bool(got[j])
+        got[todo_a] = self._prove(ki[first[todo_a]], ko[first[todo_a]], L[first[todo_a]], t[first[todo_a]], want)
+        for j in todo_a:
+            self.memo[(want, uk[j].tobytes())] = bool(got[j])
         return out | got[inv]
 
     def apart(self, a, b):
@@ -540,12 +586,9 @@ def _meet(boxes, a, b, u=None, zero=False):
     return ok
 
 
-def _sibling_pairs(u, boxes, zero=False):
-    """Return the sibling pairs (i < j) whose oriented boxes overlap deeper than the contact tolerance (``zero``: any).
-
-    Per mother, its daughters' boxes are swept in the frame most of them share (the wires of one plane), then tested
-    as oriented boxes.
-    """
+def _box_pairs(u, boxes):
+    """Return the sibling pairs (i < j) whose boxes may overlap: per mother, its daughters' boxes swept in the frame
+    most of them share (the wires of one plane); two daughters, the pair (what the sweep drops, ``_meet`` drops)."""  # noqa: D205, D209
     c, h, _, _, _ = boxes
     par = np.asarray(u.parent)
     out = []
@@ -555,15 +598,28 @@ def _sibling_pairs(u, boxes, zero=False):
         s = order[g0:g1]
         if len(s) < 2:
             continue
-        _, inv, cnt = np.unique(u.R[s].reshape(len(s), 9), axis=0, return_inverse=True, return_counts=True)
-        Rm = u.R[s][np.flatnonzero(inv.ravel() == np.argmax(cnt))[0]]
-        M = np.einsum("ji,njk->nik", Rm, u.R[s])
+        if len(s) == 2:
+            out.append(s[None])
+            continue
+        Rs = u.R[s]
+        if (Rs == Rs[0]).all():  # one frame: the most common one
+            Rm = Rs[0]
+        else:
+            _, inv, cnt = np.unique(Rs.reshape(len(s), 9), axis=0, return_inverse=True, return_counts=True)
+            Rm = Rs[np.flatnonzero(inv.ravel() == np.argmax(cnt))[0]]
+        M = np.einsum("ji,njk->nik", Rm, Rs)
         cg = np.einsum("nij,nj->ni", M, c[s]) + u.t[s] @ Rm
         hg = np.einsum("nij,nj->ni", np.abs(M), h[s])
         p = _sweep(cg - hg, cg + hg)
         if len(p):
             out.append(s[p])
-    P = np.sort(np.concatenate(out), 1) if out else np.zeros((0, 2), np.int64)
+    return np.sort(np.concatenate(out), 1) if out else np.zeros((0, 2), np.int64)
+
+
+def _sibling_pairs(u, boxes, zero=False, cand=None):
+    """Return the sibling pairs (i < j) whose oriented boxes overlap deeper than the contact tolerance (``zero``: any):
+    of the pairs ``_box_pairs`` gives (``cand``: already given), those ``_meet`` keeps."""  # noqa: D205, D209
+    P = _box_pairs(u, boxes) if cand is None else cand
     return P[_meet(boxes, P[:, 0], P[:, 1], u, zero)] if len(P) else P
 
 
@@ -655,14 +711,21 @@ def _clips(u, boxes, proofs):
     return tuple(clips)
 
 
-def _linked(u, boxes, proofs):
-    """Return (the linked sibling pairs (i < j), the pairs deeper than the contact tolerance): boxes meeting deeper
-    than the tolerance (``_sibling_pairs``), the lowered holes' ``forced`` pairs apart, the pairs proved apart out."""  # noqa: D205, D209
+def _code(pairs, n):
+    """Return one integer per unit pair (m, 2) of n units."""
+    return pairs[:, 0] * n + pairs[:, 1]
+
+
+def _linked(u, boxes, proofs, cand=None):
+    """Return (the linked sibling pairs (i < j), the pairs deeper than the contact tolerance, by ``_code``): boxes
+    meeting deeper than the tolerance (``_sibling_pairs``), the lowered holes' ``forced`` pairs apart, the pairs proved
+    apart out."""  # noqa: D205, D209
     forced = np.asarray(u.forced, np.int64).reshape(-1, 2)
-    P = _sibling_pairs(u, boxes)
-    fset = {tuple(sorted(map(int, p))) for p in forced}
-    P = np.array([p for p in P if tuple(map(int, p)) not in fset], np.int64).reshape(-1, 2)
-    deep = {tuple(map(int, p)) for p in P} | fset  # deeper than the tolerance: linked, or proved apart
+    n = len(u.parent)
+    P = _sibling_pairs(u, boxes, cand=cand)
+    fcode = _code(np.sort(forced, 1), n)
+    P = P[~np.isin(_code(P, n), fcode)]
+    deep = np.union1d(_code(P, n), fcode)  # deeper than the tolerance: linked, or proved apart
     return P[~proofs.apart(P[:, 0], P[:, 1])], deep  # a link proved apart shares no point
 
 
@@ -684,9 +747,10 @@ def resolve(u):
     boxes = _boxes(u)
     proofs = Proofs(u)
     forced = np.asarray(u.forced, np.int64).reshape(-1, 2)
-    P, deep = _linked(u, boxes, proofs)
-    T = np.array([p for p in _sibling_pairs(u, boxes, zero=True) if tuple(map(int, p)) not in deep],
-                 np.int64).reshape(-1, 2)  # fmt: skip
+    cand = _box_pairs(u, boxes)
+    P, deep = _linked(u, boxes, proofs, cand)
+    T = _sibling_pairs(u, boxes, zero=True, cand=cand)
+    T = T[~np.isin(_code(T, n), deep)]
     pos, own = owners_of(proofs, P, forced)
     pairs = np.concatenate([own, forced])
     prio = _preorder(np.asarray(u.parent), pos)

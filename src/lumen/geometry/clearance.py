@@ -25,7 +25,7 @@ x, again a lower bound (the distance is 1-Lipschitz), so any spacing gives a pro
 how tight it is, i.e. how often and how far the jump goes (speed), never what it is allowed to do.
 
 It runs on the device in float64 (``jax.experimental.enable_x64``) over flat evaluation lists, each volume and mesh
-only at the nodes it can bound below ``cap`` (``bound``): no pruning order to prove.
+only at the nodes it can bound below ``cap`` and below what the leaf bounds already gave (``bound``).
 
     g = grid(nav, volumes, h)              # lo, n of a grid over the volumes' boxes
     clear = bound(nav, g["lo"], h, g["n"], cap)
@@ -179,16 +179,58 @@ def _ranges(blo, bhi, lo, h, n, pad):
     return a, np.maximum(b - a + 1, 0) * (bhi >= blo).all(-1, keepdims=True)
 
 
+BLOCK = 16  # nodes along each axis of the blocks pass A's ranges are cut into (speed only: the result is the same)
+
+
+def _near(U, it, i0, dim, blo, bhi, lo, h, n):  # noqa: N803, PLR0913 -- U the bound so far
+    """Return (box, first node index, range dims) of the pieces of pass A's ranges worth evaluating.
+
+    Pass A's ranges (boxes ``it``, ranges i0, dim) are cut into ``BLOCK``-node blocks; a block is kept where the
+    distance between the box and the block's nodes' box is at most the largest bound so far there (U, at the nodes)
+    plus one spacing.
+
+    A block left out holds no node where the box's term is below the bound so far: the term is the node's distance to
+    the box to within float64 rounding (relative 1e-15 of the coordinates), and that distance exceeds U there by a
+    spacing. So the minimum, the result, is unchanged.
+    """
+    nb = -(-np.asarray(n) // BLOCK)
+    Um = np.pad(U, [(0, int(x)) for x in nb * BLOCK - n]).reshape(nb[0], BLOCK, nb[1], BLOCK, nb[2], BLOCK)
+    Um = Um.max((1, 3, 5)) + h  # U >= 0: the padding raises no maximum
+    b0 = [np.arange(int(x)) * BLOCK for x in nb]  # per axis, the blocks' first and last node indices
+    b1 = [np.minimum(x + BLOCK, int(m)) - 1 for x, m in zip(b0, n, strict=True)]
+    gap, over = [], []
+    for ax in range(3):
+        g = np.maximum(
+            np.maximum(blo[it, ax, None] - (lo[ax] + h * b1[ax]), lo[ax] + h * b0[ax] - bhi[it, ax, None]), 0
+        )
+        gap.append(g)
+        over.append((b0[ax] < (i0[:, ax] + dim[:, ax])[:, None]) & (b1[ax] >= i0[:, ax, None]))
+    out = [(it[:0], i0[:0], dim[:0])]
+    step = max(1, (1 << 22) // int(np.prod(nb)))
+    for s0 in range(0, len(it), step):
+        sl = slice(s0, s0 + step)
+        d2 = gap[0][sl, :, None, None] ** 2 + gap[1][sl, None, :, None] ** 2 + gap[2][sl, None, None, :] ** 2
+        keep = (
+            (d2 <= Um[None] ** 2) & over[0][sl, :, None, None] & over[1][sl, None, :, None] & over[2][sl, None, None, :]
+        )
+        r, *bk = np.nonzero(keep)
+        r = r + s0
+        a0 = np.stack([np.maximum(i0[r, ax], b0[ax][bk[ax]]) for ax in range(3)], -1)
+        a1 = np.stack([np.minimum(i0[r, ax] + dim[r, ax] - 1, b1[ax][bk[ax]]) for ax in range(3)], -1)
+        out.append((it[r], a0, a1 - a0 + 1))
+    return tuple(np.concatenate([o[k] for o in out]) for k in range(3))
+
+
 def bound(nav, lo, h, n, cap):
     """Return the proven clearance (float32, shape n) at the nodes lo + h i, at most ``cap`` (m) before the band.
 
-    On the device in float64 (``jax.experimental.enable_x64``), in two passes over flat evaluation lists: (A) for every
-    volume and mesh, the distance to its box at the nodes within ``cap`` of it that lie outside it; (B) at the nodes of
-    its box that lie inside it, a volume's leaf bound, a mesh's 0 (inside: the box distance is 0, with the same
-    arithmetic as pass A, so each node takes exactly one of the two terms of each volume). The ranges are padded by
-    one node (a superset whatever the rounding). A node's value is min(cap, every term): a term >= cap cannot lower
-    it (no pruning to prove). The volumes are those the navigator can be in (``navigator_build.navigable``), and
-    every mesh.
+    On the device in float64 (``jax.experimental.enable_x64``), in two passes over flat evaluation lists: (B) at the
+    nodes of its box that lie inside it, a volume's leaf bound, a mesh's 0; (A) for every volume and mesh, the distance
+    to its box at the nodes within ``cap`` of it that lie outside it, where it may be below the bound pass B left
+    (``_near``) (inside: the box distance is 0, with the same arithmetic as pass A, so each node takes exactly one of
+    the two terms of each volume). The ranges are padded by one node (a superset whatever the rounding). A node's
+    value is min(cap, every term): a term >= cap, or above the bound so far, cannot lower it. The volumes are those
+    the navigator can be in (``navigator_build.navigable``), and every mesh.
     """
     import jax.numpy as jnp
     from jax.experimental import enable_x64
@@ -217,22 +259,24 @@ def bound(nav, lo, h, n, cap):
                    l0=jnp.asarray(l0), nl=jnp.asarray(nl))  # fmt: skip
         npl = np.asarray(T["np_"], np.int64)  # per kind: its leaves (NL) and the most planes of one of them (P)
         pk = np.array([max(1, int(npl[a : a + b].max(initial=1))) for a, b in zip(l0, nl, strict=True)], np.int64)
-        for p, pad in enumerate((cap, 0.0)):
+        for p, pad in ((1, 0.0), (0, cap)):  # pass B, then pass A
             i0, dim = _ranges(lo_w, hi_w, lo, h, n, pad)
             cnt = np.prod(dim, -1)
             cnt[:nv] = np.where(seen, cnt[:nv], 0)  # a volume the navigator cannot be in bounds nothing it meets
             items = np.flatnonzero(cnt > 0)
-            key = (
-                np.zeros((len(items), 2), np.int64)
-                if p == 0
-                else np.stack(
+            if p == 0:  # pass A: the pieces of its ranges that may lower the bound so far
+                vol, i0, dim = _near(np.asarray(out[:-1]).reshape(tuple(n)), items, i0[items], dim[items], lo_w, hi_w,
+                                     lo, h, n)  # fmt: skip
+                groups = [(0, 0, vol, i0, dim)]
+            else:
+                key = np.stack(
                     [np.where(items < nv, nl[kind_all[items]], 1), np.where(items < nv, pk[kind_all[items]], 1)], -1
                 )
-            )
-            for NL, P in np.unique(key, axis=0):  # pass B: one group per (leaves, planes), its calls sized to it
-                it = items[np.all(key == (NL, P), -1)]
-                start = np.concatenate([[0], np.cumsum(cnt[it])]).astype(np.int64)
-                sd, i0d, dimd = jnp.asarray(start), jnp.asarray(i0[it]), jnp.asarray(dim[it])
+                groups = [(NL, P, items[g], i0[items[g]], dim[items[g]])  # one group per (leaves, planes)
+                          for NL, P in np.unique(key, axis=0) for g in [np.all(key == (NL, P), -1)]]  # fmt: skip
+            for NL, P, it, gi0, gdim in groups:  # its calls sized to it
+                start = np.concatenate([[0], np.cumsum(np.prod(gdim, -1))]).astype(np.int64)
+                sd, i0d, dimd = jnp.asarray(start), jnp.asarray(gi0), jnp.asarray(gdim)
                 vol, mesh = jnp.asarray(it), jnp.asarray(it >= nv)
                 E = 1 << 22 if p == 0 else 1 << max(10, int(np.log2(EVALS // (32 * int(NL) * int(P)))))
                 for e0 in range(0, int(start[-1]), E):

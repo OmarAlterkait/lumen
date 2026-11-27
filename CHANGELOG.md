@@ -223,6 +223,14 @@ seven detectors' float32 arrays and the NEXT toy's fractions are unchanged, bit 
 
 ### Faster
 
+- **A first fast run of a detector**: the diffusion jump's clearance grid evaluated every volume's box distance at
+  every grid node within reach of it (SK: 33k boxes at 16.7M nodes); a box is now evaluated only on the blocks of
+  nodes where it may lower the bound the leaf bounds already gave, the same grid bit for bit. The navigator's
+  ownership proved one pose at a time and swept every mother's daughters twice: the poses of every pair of solids
+  are proved together and the sweep runs once, the same ownership bit for bit. A cold first call (empty caches, 2^20
+  photons) on an A100 takes 79 s on SK (was 222 s), 69 s on IWCD (265 s), 102 s on HK (341 s) and 140 s on
+  NEXT-100 (170 s); on an RTX 2080 Ti 128 s on SK (was 511 s). The clearance grid is cached by content as before, so
+  a warm cache was already fast. `tools/ci/gpu.sh` sets JAX's persistent compilation cache unless set.
 - **Loading a detector of many placements**: a block of cells, a placement in each and a border per cell (a SuperFGD:
   each cube's core inside its drilled coating, fibers through the cubes), loaded in a time quadratic in its cells.
   A border's touching instances were found by scanning every instance of its two physvols, for each border: they are
