@@ -75,17 +75,20 @@ def test_a_start_within_the_band_of_coincident_faces_leaves_every_one_of_them():
     """A start inside the innermost of three volumes whose +z faces coincide, within the on-face band of that face
     and heading out, ends beyond all three: the on-face rule's zero-length exit is relocated past the face, not into
     a mother whose own face the photon has not passed (a bulk event in a flush film: its light is the mother's
-    otherwise, read with the mother's surface).
+    otherwise, read with the mother's surface). Within one band of the face the exit is zero-length; farther (still
+    within K_ON bands) it is met at its own distance.
     """
     from lumen.rules import navigation
 
     _, nav = toy("coincident")
     inner, world = nav.names.index("env_0/glass_0/inner_0"), nav.names.index("")
     band = navigation.band(0.3)  # inner, glass and env are flush at z = 0.3
-    for depth in (0.5 * band, 3.0 * band):  # within K_ON bands of the face: the start is on it
+    for depth in (0.5 * band, 3.0 * band):  # within K_ON bands of the face: the on-face rule finds it
         for d in ([0.0, 0.0, 1.0], [0.99, 0.0, 0.141]):  # straight out, and grazing (the on-face rule's own window)
             r = one(query(nav, [0.0, 0.0, 0.3 - depth], d, inner, t_max=10.0))
-            assert bool(r["hit"]) and bool(r["zero"]) and float(r["t"]) == 0.0, (depth, d)
+            t = 0.0 if depth < band else depth / d[2]
+            assert bool(r["hit"]) and bool(r["zero"]) == (depth < band), (depth, d)
+            assert abs(float(r["t"]) - t) <= 0.05 * t, (depth, d, float(r["t"]), t)
             assert int(r["vol_after"]) == world, (depth, d, nav.names[int(r["vol_after"])])
             assert float(r["normal"][2]) < -0.99, (depth, d, r["normal"])  # the face's normal, against the ray
 

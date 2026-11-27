@@ -182,32 +182,48 @@ opaque.
 
 **What.** The navigator decides at a face within its band, 8 ulps of its precision at a coordinate scale
 (`lumen.rules.navigation.band`). In float32, the default, the band at a decision is that of the photon's ray: its
-start's largest coordinate plus the distance travelled, 9.5e-7 per metre. A coating a few bands thick where it sits
-can still be stepped over, its far face taken for the near one, or a photon re-emitted in it put in the volume
-behind it, by photons whose rays started far away: whether a coating is tracked depends on each photon's path.
+start's largest coordinate plus the distance travelled, 9.5e-7 per metre. A face more than one band from the photon is
+met at its own distance, so a coating more than a band thick where it sits is entered, crossed and left at its true
+depth, and what happens in it (a WLS shift, its absorption) does. A coating thinner than the band is stepped over:
+the photon is located past it, or bounces between its faces in zero-length steps until the stuck rule pushes it
+through. Its entry can still depend on each photon's path (a ray that started far away has a wider band).
 
-**Measured** (the geometry of `tests/unit/test_precision.py`, against exact float64 geometry: a coating on a backing
-block, its top face shared with a gas volume; 288 configurations of height 0.05-5 m, thickness 0.75-8 float32 bands
-where it sits, path 1 mm-5 m, angle 0-75 deg, 48 rays each). In float32, coatings of at least 2.5 bands at 0.5 m or
-more are entered in every configuration whose rays started at most 0.3 m away, and in 65 % of those from 1.5 to 5 m;
-whether a photon is located inside follows step * cos(theta) < T, with step the band at the photon's path, in 214 of
-216 configurations. A photon re-emitted at 10 % of the depth heading out at 3 deg is put in the backing in every
-configuration. A coating standing in the gas is entered in 71 % of the configurations from 1.5 to 5 m away. NEXT-100's
-TPB (2 to 5.4 um, 2.5 to 8.5 bands where it sits) left its S2 light 8 % low at the PMTs and 10 % at the SiPMs against
-nexus. In float64 every configuration is right but those with a 36 nm coating and a re-emission 3.6 nm from its face,
-and NEXT-100 agrees with nexus to 0.4 %. Against Geant4 11.3.0 on NEXT-100's own GDML (`tools/g4ref`, 1e6 photons
-from each of four points in the active gas and one in the EL gap), Geant4 over lumen is 0.99 to 1.06 per sensor group
-in float64 and 1.13 to 1.87 in float32, worst from the far end of the drift: 1.47 at the PMTs and 1.87 at the SiPMs
-from 0.4 m below the top of the active volume, against 1.13 and 1.15 from the EL gap.
+**Measured since** a face more than one band away is met at its own distance (it was taken for the face the photon
+sits on up to the on-face tolerance, 4 bands, so coatings up to 4 bands thick were stepped over). The coating of
+`tests/unit/test_precision.py` in float32 (heights 0.5, 1.4, 5 m; 1.5, 2.5, 4, 6 bands; rays from 1 mm, 0.3 m, 5 m
+away at 0, 45, 75 deg; 8 rays each): entered, crossed to the backing and left into the gas at the true depth (to
+4 float32 ulps of the height) by 864 of 864 rays, 552 before; re-emissions at 10 % and 50 % of the depth at 3, 15,
+60 deg leave into the volume they head for in every case and at their true distance whenever the face is more than a
+band away (936 of 1152, 288 before; the rest are faces under one band, met at zero length). The NEXT toy's `wls` case
+(1 um shifting TPB, 1.7 to 2.1 bands) against Geant4 11.3.0, Geant4 / lumen in float32: 0.986 +- 0.013 at the PMT and
+0.993 +- 0.044 at the SiPMs (1.880 and 1.914 before); float64 0.985 and 0.993. NEXT-100 (2^20 photons, 171.96 nm),
+float64 / float32 light: 1.0000 +- 0.0047 from the drift centre and 0.9992 +- 0.0057 from the EL gap (1.137 and
+1.066 before); float32 then takes 13 % and 9 % longer on an RTX 2080 Ti (14.8 and 14.6 s), still 3.2 times faster
+than float64. A 0.1 um coating (0.2 band) on the toy's light tube still gives 3.4 times float64's light in float32.
 
-**The limit.** In float32, a volume a few bands thick at the scale of the photons' paths (4 bands: 3.8 um per metre
-of start coordinate plus path) is not tracked for every photon. Load a detector with such coatings in float64
+**Measured before that change** (the geometry of `tests/unit/test_precision.py`, against exact float64 geometry: a
+coating on a backing block, its top face shared with a gas volume; 288 configurations of height 0.05-5 m, thickness
+0.75-8 float32 bands where it sits, path 1 mm-5 m, angle 0-75 deg, 48 rays each). In float32, coatings of at least 2.5
+bands at 0.5 m or more are entered in every configuration whose rays started at most 0.3 m away, and in 65 % of those
+from 1.5 to 5 m; whether a photon is located inside follows step * cos(theta) < T, with step the band at the photon's
+path, in 214 of 216 configurations. A photon re-emitted at 10 % of the depth heading out at 3 deg is put in the backing
+in every configuration. A coating standing in the gas is entered in 71 % of the configurations from 1.5 to 5 m away.
+NEXT-100's TPB (2 to 5.4 um, 2.5 to 8.5 bands where it sits) left its S2 light 8 % low at the PMTs and 10 % at the SiPMs
+against nexus. In float64 every configuration is right but those with a 36 nm coating and a re-emission 3.6 nm from its
+face, and NEXT-100 agrees with nexus to 0.4 %. Against Geant4 11.3.0 on NEXT-100's own GDML (`tools/g4ref`, 1e6 photons
+from each of four points in the active gas and one in the EL gap), Geant4 over lumen is 0.99 to 1.06 per sensor group in
+float64 and 1.13 to 1.87 in float32, worst from the far end of the drift: 1.47 at the PMTs and 1.87 at the SiPMs from
+0.4 m below the top of the active volume, against 1.13 and 1.15 from the EL gap.
+
+**The limit.** In float32, a volume thinner than one band at the scale of the photons' paths (9.5e-7 m per metre of
+start coordinate plus path) is not tracked. Load a detector with such coatings in float64
 (`lumen.load(..., precision="float64")`): its band is its 1 nm floor at any detector scale, so volumes down to tens of
 nm are tracked, at about +20 % time on an A100 and 3.4 times on an RTX 2080 Ti (docs/dev/decisions.md, 29). Its recipe
 can say so once and for all (`Recipe(..., precision="float64")`): the detector file carries it, `lumen.load` uses it
-when you pass no precision, and loading that detector in float32 warns. A run says how much of its light met such
-a layer: `light.health.pushed`, the weight the stuck rule pushed past two faces closer than the band (0 where every
-layer is resolved; NEXT-100 from the drift centre, 0.052 in float32 and 0 in float64). The
+when you pass no precision, and loading that detector in float32 warns. `light.health.pushed` is the weight the stuck
+rule pushed past two faces closer than the band; it counts only the photons that bounce in such a layer, not those
+located past it, so it understates the light the layer misses (the 0.1 um coating above: 0.0020 pushed while the
+light is 3.4 times float64's). NEXT-100 from the drift centre pushes 4.5e-6 in float32 and 0 in float64. The
 conversion still refuses a WLS box thinner than float32's band where it sits (decision 9).
 
 A gap below the band is merged the same way: the float32 navigator steps from one volume straight into the other, so

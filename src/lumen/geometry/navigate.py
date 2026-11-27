@@ -402,11 +402,18 @@ class Navigator:
         # did; else none
         lf = jnp.where(zero, jnp.where(by_s, sd[1], jnp.where(on, fr["leaf"], I32(-1))), lf)
         f = jnp.where(zero, jnp.where(by_s, sd[2], jnp.where(on, fr["face"], I32(-1))), f)
-        te = jnp.where(zero, ctx.t_lo, jnp.where(h, t, self.F(HUGE)))
+        # a face the on-face rule put the start on that lies more than one band from it (the far face of a layer
+        # thinner than K_ON bands, entered through a neighbour's face) is not one the photon sits on: it is met at
+        # its own distance, so the layer is crossed, not stepped over
+        by_on = zero & on & ~by_s
+        x0 = ctx.od + ctx.t_lo * ctx.dd
+        apart = by_on & pick(by_on, lambda: surface_id.face_dist(self, i, jnp.maximum(lf, 0), f, x0) > ctx.band,
+                             lambda: jnp.bool_(False))  # fmt: skip
+        te = jnp.where(apart, fr["t"], jnp.where(zero, ctx.t_lo, jnp.where(h, t, self.F(HUGE))))
         # own is item 0: it sets the best (its exit, HUGE if none); a daughter beats it on a tie (the entry-tie rule)
         wins = rules.entry_wins(te, self.rank(i), b, self.rank(b[1]))
         better = own | (clip & h & (te < b[0])) | (~is_own & (zero | h) & wins)
-        return _choose(better, (te, i, lf, f, zero, own), b)
+        return _choose(better, (te, i, lf, f, zero & ~apart, own), b)
 
     def _visit(self, ctx, i, b, is_own):
         if self.n_mesh:

@@ -10,13 +10,13 @@ Its four cases switch on one kind of surface each, and every one of them is a fe
 - ``glisur``: the glisur ground dielectric_dielectric borders gas <-> TPB, which hold across coincident faces only;
 - ``all``: every surface together, the end-to-end counts per sensor group;
 - ``wls``: ``all`` with the coatings shifting the light (as NEXT's TPB does) and 1 um thick, and sensors blind to the
-  unshifted light: only a navigator that resolves the coating sees anything, so this is the float32 limit end to end.
+  unshifted light: only a navigator that resolves the coating sees anything.
 
 Each case's detected fractions per group are compared with g4ref's on the same GDML (``tests/data/next_toy``
 ``geant4.json``, Geant4 11.3.0; the toy reads no property whose Geant4 10.7.4 path differs, so one release stands for
-both). Every case is checked in float64, the two that do not touch the coatings in float32 as well, the end-to-end
-counts of ``all`` at both precisions (its 3 um coating is 1.9 float32 bands where it sits, so float32 still tracks
-it), and the float32 deficit of ``wls`` (47 % of the PMT light and 46 % of the SiPMs').
+both). Every case is checked in float32 and in float64, and the end-to-end counts of ``all`` at both precisions. The
+1 um coatings of ``wls`` are 1.7 to 2.1 float32 bands where they sit: more than one band, so float32 resolves them; a
+coating thinner than the band is still stepped over, and the run counts the light pushed through it.
 """
 
 import json
@@ -35,8 +35,8 @@ SAMPLES = 1 << 18
 GROUPS = ("pmt", "sipm")
 
 
-def _detector(tmp, case, precision="float32"):
-    """Convert one case of the toy and load it at ``precision``."""
+def _detector(tmp, case, precision="float32", gdml=None):
+    """Convert one case of the toy (or the GDML ``gdml`` in its place) and load it at ``precision``."""
     import lumen
     from lumen.format.sensorsets import SensorGroup
     from lumen.recipe import Recipe
@@ -44,8 +44,8 @@ def _detector(tmp, case, precision="float32"):
     groups = (SensorGroup("pmt", rule="border_into", lv="PMT_PHOTOCATHODE"),
               SensorGroup("sipm", rule="border_into", lv="SIPM_SENSE"))  # fmt: skip
     out = tmp / f"next_toy_{case}_{precision}.lumen"
-    path = lumen.convert(DATA / f"next_toy_{case}.gdml", out, recipe=Recipe(f"next_toy_{case}", "GAS", groups=groups),
-                         overwrite=True)  # fmt: skip
+    path = lumen.convert(gdml or DATA / f"next_toy_{case}.gdml", out,
+                         recipe=Recipe(f"next_toy_{case}", "GAS", groups=groups), overwrite=True)  # fmt: skip
     return lumen.load(path, precision=precision)
 
 
@@ -94,9 +94,15 @@ needs_reference = pytest.mark.skipif(not GEANT4, reason="no Geant4 reference for
 
 @pytest.mark.slow  # converts and simulates the toy: minutes on a CPU
 @needs_reference
-@pytest.mark.parametrize("case", ["plain", "sigma1"])
-def test_the_skin_sensors_and_a_sigma_alpha_of_one_match_geant4_in_float32(tmp_path, case):
-    """The cases that do not need the coatings: float32 tracks them as Geant4 does."""
+@pytest.mark.parametrize("case", ["plain", "sigma1", "glisur", "all", "wls"])
+def test_every_case_matches_geant4_in_float32(tmp_path, case):
+    """Every feature together in float32, the 1 um shifting coating of ``wls`` too.
+
+    Measured at this test's 2^18 photons per source, Geant4 / lumen on ``wls``: 0.986 +- 0.013 at the PMT and
+    0.993 +- 0.044 at the SiPMs; 1.880 and 1.914 before a face more than one band from the photon was met at its own
+    distance (the coating's far face, within the on-face tolerance, was taken for the face the photon sat on: the
+    photon stepped over the coating and was never shifted).
+    """
     _agree(case, _fractions(_detector(tmp_path, case)))
 
 
@@ -127,35 +133,15 @@ def test_the_same_counts_at_both_precisions_where_the_coating_is_thick_enough(tm
 
 
 @pytest.mark.slow
-@needs_reference
-def test_float32_loses_the_light_of_a_shifting_coating_and_float64_does_not(tmp_path):
-    """The ``wls`` case is the float32 limit end to end, and the reason NEXT-100 needs float64.
-
-    Its coating is 1 um (0.63 of float32's band where it sits) and shifts the light, and the sensors are blind to the
-    unshifted light, so a photon counts only if the navigator put it inside the coating. Measured at this test's
-    2^18 photons per source, Geant4 / lumen: in float64 0.985 at the PMT (1.1 sigma) and 0.991 at the SiPMs
-    (0.2 sigma), so lumen agrees; in float32 1.887 (46 sigma) and 1.865 (14 sigma), so a float32 run loses 47 % of
-    the PMT light and 46 % of the SiPMs' (docs/explanation/known-limits.md, "Thin layers"). Before the flush-film
-    fix the same run gave 1.033 and 2.445: keeping the surface across a sub-band bulk event, which a flush film
-    needs, costs the PMT light this coating never had and gives back some of the SiPMs'. float64's agreement is
-    checked with the other cases (``test_every_case_matches_geant4_in_float64``); here the float32 deficit is the
-    record.
-    """
-    ref = GEANT4["wls"]
-    got = _fractions(_detector(tmp_path, "wls"))
-    for g, least in (("pmt", 1.03), ("sipm", 1.5)):
-        ratio = ref[g] / got[g][0]
-        assert ratio > least, (g, got[g], ref[g], ratio)
-
-
-@pytest.mark.slow
 def test_a_run_counts_the_light_it_pushes_through_a_layer_it_does_not_resolve(tmp_path):
-    """A photon between the two faces of the ``wls`` coating, closer than float32 resolves, takes zero-length steps
-    until the stuck rule pushes it past both: the run counts that weight in ``health.pushed``.
+    """A photon between the two faces of a coating thinner than float32's band (the ``wls`` light tube's, 0.1 um
+    thick here: 0.2 band) takes zero-length steps until the stuck rule pushes it past both: the run counts that
+    weight in ``health.pushed``.
 
-    Measured at this test's 2^16 photons from the source by the SiPM board (start weight 1): float32 pushes 0.33,
-    float64, which resolves the coating, none; on NEXT-100 (2^20 photons, 171.96 nm) float32 pushes 0.052 from the
-    drift centre and 0.027 from the EL gap, float64 none. Before the count a run did not say so.
+    Measured at this test's 2^16 photons from the source by the SiPM board (start weight 1): float32 pushes 0.0020,
+    float64, which resolves the coating, none. A sub-band layer is mostly located past instead, which nothing counts:
+    float32's light is 3.4 times float64's there. The 1 um coating, which float32 resolves, is pushed 0.0008 (0.33
+    before its far face was met at its own distance).
     """
     import lumen
     from lumen import units
@@ -166,6 +152,9 @@ def test_a_run_counts_the_light_it_pushes_through_a_layer_it_does_not_resolve(tm
                                samples=1 << 16, seed=11)  # fmt: skip
         return float(np.sum(np.asarray(light.health.pushed)))
 
-    assert pushed(_detector(tmp_path, "wls")) > 0.2
+    gdml = tmp_path / "next_toy_wls_sub_band.gdml"
+    text = (DATA / "next_toy_wls.gdml").read_text()
+    gdml.write_text(text.replace('rmax="500.001"', 'rmax="500.0001"'))
+    assert pushed(_detector(tmp_path, "wls", gdml=gdml)) > 1e-3
     with enable_x64():
-        assert pushed(_detector(tmp_path, "wls", "float64")) == 0.0
+        assert pushed(_detector(tmp_path, "wls", "float64", gdml=gdml)) == 0.0
