@@ -7,6 +7,17 @@ now, and what to do.
 
 ### Results that change
 
+- **float32 crosses a layer more than one band thick.** A face more than one band from the photon is now met at its own
+  distance; it was taken for the face the photon sat on up to the on-face tolerance (4 bands), so a coating up to
+  4 float32 bands thick entered through its neighbour's face (a TPB coating on teflon, entered from the gas) was
+  stepped over in zero-length steps and nothing in it happened (no WLS shift). NEXT-100's float32 light rises by
+  13.7 % from the drift centre and 6.6 % from the EL gap and now matches float64 (1.0000 +- 0.0047, 0.9992 +- 0.0057);
+  the NEXT toy's `wls` case matches Geant4 in float32 (0.986 +- 0.013 PMT, 0.993 +- 0.044 SiPMs; was 1.88, 1.91); its
+  pushed light falls from 0.33 to 0.0008, NEXT-100's from 0.052 to 4.5e-6. float32 NEXT-100 runs 9 to 13 % longer.
+  The seven released detectors move within their noise (2^20 photons, float32: total charge by at most 9e-5, IWCD;
+  no sensor by more than 0.4 of its error; MicroBooNE on the exact loop unchanged bit for bit). A layer thinner than
+  one band is still stepped over: load such a detector in float64.
+
 - **A unified ground surface's sigma_alpha reads up to 1 rad** (was 0.707 rad), G4OpticalSurface's default value
   (nexus's SiPM board mask, for one): four more rows of the unified tables, at their stated accuracy. Above 1 rad the
   surface is still refused: there Geant4's own facet draw departs from the distribution it states and lumen draws

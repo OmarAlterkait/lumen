@@ -101,6 +101,34 @@ def test_a_coating_is_entered_crossed_and_left_whatever_the_path(x64, z0):
 
 
 @pytest.mark.parametrize("z0", ZS)
+def test_in_float32_a_coating_more_than_a_band_thick_is_crossed_at_its_depth(z0):
+    """In float32, a coating 1.5 and 4 float32 bands thick is entered, crossed to its far face and, reflected there,
+    left into the gas, each at its true depth (to 4 float32 ulps of the height), by rays from 1 mm and 5 m away at 0,
+    45 and 75 deg: a face more than one band from the photon is met at its own distance, never taken for the face it
+    sits on."""
+    for k in (1.5, 4.0):
+        t = k * band32(z0)
+        nav = nav_of(_coating(z0, t))
+        film, backing, gas = (nav.defs.index(s) for s in ("film", "backing", "gas"))
+        top, bot = _faces(nav, "film", t)
+        for path in (1e-3, 5.0):
+            for theta in (0.0, 45.0, 75.0):
+                x0, d = _rays(z0, path, theta)
+                c = math.cos(math.radians(theta))
+                tol, at = 4 * float(np.finfo(F32).eps) * z0 / c, (k, path, theta)
+                r1 = query(nav, x0, d, locate(nav, x0))
+                assert np.all(r1["vol_after"] == film), (at, r1["vol_after"])
+                x1 = x0 + r1["t"][:, None] * d
+                r2 = query(nav, x1, d, r1["vol_after"], last=r1["srf"], sn=r1["normal"])
+                assert np.all(r2["vol_after"] == backing), (at, r2["vol_after"])
+                np.testing.assert_allclose(r2["t"], (x1[:, 2] - bot) / c, rtol=0, atol=tol, err_msg=str(at))
+                x2 = x1 + r2["t"][:, None] * d
+                r3 = query(nav, x2, d * np.array([1.0, 1.0, -1.0]), film, last=r2["srf"], sn=r2["normal"])
+                assert np.all(r3["vol_after"] == gas), (at, r3["vol_after"])
+                np.testing.assert_allclose(r3["t"], (top - x2[:, 2]) / c, rtol=0, atol=tol, err_msg=str(at))
+
+
+@pytest.mark.parametrize("z0", ZS)
 def test_a_reemission_in_a_coating_leaves_where_it_heads(x64, z0):
     t = 2.5 * band32(z0)
     nav = nav_of(_coating(z0, t), "float64")

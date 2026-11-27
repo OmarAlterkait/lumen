@@ -17,6 +17,11 @@ the float32 resolution of the coordinates, the **band**. The rules, each with th
   but farther perpendicularly is looked for up to ``GRAZE`` times farther: a ray leaving its face at an angle theta
   is K_ON bands from it after K_ON / sin(theta) bands, so ``GRAZE`` sets the shallowest angle the start's face is
   still recognised at, asin(1 / GRAZE) = 0.22 deg; below it the face is a new crossing (a zero-length step).
+  A face found so, but more than one band from the start perpendicularly (``surface_id.face_dist``), is not one the
+  photon sits on (the band is the resolution: endpoints closer than it are one crossing): it is met at its own
+  distance. That is the far face of a layer thinner than K_ON bands entered through a neighbour's coincident face
+  (a coating on its backing, entered from the gas): the layer is crossed, so what happens in it (a WLS shift, its
+  absorption) does; a layer thinner than one band is still stepped over (the stuck rule below).
   A bulk event within ``ZERO_STEP_BANDS`` bands of the start leaves the photon on the surface it sat on
   (``lumen.transport.step``: its point has not moved off that face, so its side there is still its direction's), and a
   zero-length crossing whose solid gives no face of its own (a point one ulp beyond the face just crossed) is read on
