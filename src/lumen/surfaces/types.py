@@ -213,9 +213,14 @@ def chained_cuts(*p):
 
     Cumulative sums clipped to [0, 1] and differenced: any values, even ones summing past 1, give a distribution,
     and the last share is the rest. The clip's derivative is ``clip01``'s, so on the closed simplex (values >= 0
-    summing to <= 1) the derivative is that of the linear map, also on its faces (R = 1, a zero value).
+    summing to <= 1) the derivative is that of the linear map, also on its faces (R = 1, a zero value), except along
+    a value at 0 where a cumulative sum it enters is 1: that value can only grow, and its growth is cut away
+    (Geant4's draw never passes 1: at R = 1 a TRANSMITTANCE changes nothing), so its derivative there is 0.
     """
-    c = clip01(jnp.cumsum(jnp.stack(jnp.broadcast_arrays(*p)), 0))
+    p = jnp.stack(jnp.broadcast_arrays(*p))
+    s = jnp.cumsum(p, 0)
+    z = jnp.cumsum(jnp.where(p <= 0.0, p, 0.0), 0)  # the values at 0, whose tangents are taken off where s is 1
+    c = clip01(s) - jnp.where(s == 1.0, z - jax.lax.stop_gradient(z), 0.0)
     edges = jnp.concatenate([jnp.zeros_like(c[:1]), c, jnp.ones_like(c[:1])], 0)
     return tuple(edges[1:] - edges[:-1])
 
