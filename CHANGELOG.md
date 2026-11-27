@@ -47,6 +47,13 @@ now, and what to do.
   SK's lost weight, light that reached a surface with no row, goes to 0.
 - A run costs 1% to 6% more time (median 3%): a relocation past a face now reads that face's normal and the point's
   distance from it.
+- **A zero surface value past a full cut has no derivative.** Geant4's draw against REFLECTIVITY, then REFLECTIVITY +
+  TRANSMITTANCE never passes 1, so at REFLECTIVITY 1 a TRANSMITTANCE of 0 can grow without changing anything; its
+  derivative was the linear one (straight share +1, absorbed share -1) although the light did not change. NEXT-100's
+  four ground dielectric_dielectric surfaces (REFLECTIVITY and TRANSMITTANCE at Geant4's defaults) gave a
+  TRANSMITTANCE derivative of +0.065 on its 171.96 nm check against a finite difference of 0; it is 0 now. The same
+  holds for any chained Geant4 cut (the unified reflection constants too). No released detector's other surface is
+  at such a point; values do not change.
 
 ### Removed (breaking)
 

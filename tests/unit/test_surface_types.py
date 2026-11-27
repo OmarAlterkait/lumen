@@ -261,6 +261,18 @@ def test_clip01_cuts_keep_the_linear_derivative_on_the_simplex_faces():
         np.testing.assert_array_equal(np.asarray(g), [1.0, -1.0])
 
 
+def test_a_zero_share_past_a_full_cut_has_no_derivative():
+    # Geant4's draw never passes 1: at R = 1 a TRANSMITTANCE growing from 0 changes nothing (NEXT-100's ground
+    # dielectric_dielectric surfaces, R and T at their defaults), while R's own derivative stays the linear one
+    g = jax.jacfwd(lambda x: jnp.stack(types.chained_cuts(*x)))(jnp.asarray([1.0, 0.0], F32))
+    np.testing.assert_array_equal(np.asarray(g), [[1.0, 0.0], [0.0, 0.0], [-1.0, 0.0]])
+    p = {"R": F32(1.0), "T": F32(0.0), "polish": F32(0.01), "eff": F32(0.0)}
+    ctx = ctx_of(0.8, 1.0, 1.6)
+    row = lambda t: full(types.GLISUR_DIELECTRIC, {**p, "T": t}, ctx)  # noqa: E731
+    np.testing.assert_array_equal(np.asarray(row(F32(0.01)) - row(F32(0.0))), 0.0)  # the value: no change
+    np.testing.assert_array_equal(np.asarray(jax.jvp(row, (F32(0.0),), (F32(1.0),))[1]), 0.0)
+
+
 def test_glisur_types_name_their_facet_path_lobe():
     assert types.GLISUR_METAL.glossy == "glisur"
     assert types.UNIFIED_METAL.glossy == types.REFLECTOR.glossy == "unified"
