@@ -264,6 +264,10 @@ def _once(fn, model, *args):
     return j(model.static, *args)
 
 
+# the weight the stuck rule pushed (``lumen.api.Health.pushed``): a sum of its own that each step adds to, not a fate
+# total, so that it is not part of the photon's loop state, which a gradient keeps 2C+1 copies of per photon (tallymap's
+# checkpoints) in the reverse kernel's local memory
+PUSHED = "pushed"
 HEALTH_SUMS = (*HEALTH, "truncated")  # a photon's health, as it ends: its fates and the weight the guard stopped
 
 
@@ -294,7 +298,7 @@ def _loop(static, ops, rows, key, first_id, n_active, analog=None):  # noqa: PLR
     kernel = name == KERNEL
     if kernel:
         _env.tallymap_cache()  # tallymap's kernels under lumen's cache root, not tallymap's own default in HOME
-    shapes = {}
+    shapes = {PUSHED: (1, True)}  # (cells, exact) of each sum: health.pushed's, the diagnostics'
     for dg in diagnostics:
         shapes |= dg.outputs()
     outputs = {k: tm.Sum((cells,), fixed_point=exact) for k, (cells, exact) in shapes.items()}
@@ -326,6 +330,7 @@ def _loop(static, ops, rows, key, first_id, n_active, analog=None):  # noqa: PLR
                 dep = dep._replace(label=x["row"].label)
             tl = tl.append(RECORDS, record(dep, w0, fid + x["id"], fields), when=dep.sensor >= 0)
             acc = acc + fates(dep)  # the photon's fate totals: added to the health once, when it ends
+            tl = tl.add(PUSHED, jnp.int32(0), dep.pushed * w0)  # a tally, not a carry (``PUSHED``)
             adds, mem2 = [], []
             seen = absolute(dep, w0) if diagnostics else dep
             for dg, m in zip(diagnostics, mem, strict=True):
