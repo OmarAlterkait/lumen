@@ -277,3 +277,27 @@ def test_the_grid_reads_the_rayleigh_length_as_built():
     optics = SimpleNamespace(media=[SimpleNamespace(channels=[SimpleNamespace(name="rayleigh")])], media_names=["W"])
     library = SimpleNamespace(media={"W": SimpleNamespace(params={"rayleigh": {"length": table}})})
     assert fastpath._shortest_rayleigh(optics, library, 0) == 20.0
+
+
+def test_the_clearance_bound_skips_only_terms_above_the_bound_so_far(monkeypatch):
+    """Pass A evaluates a box only on the blocks of nodes where it may lower the bound pass B left (``_near``): the
+    bound is bitwise the one every term gives, from fewer evaluations."""
+    nav, (optics, library), _, _ = _toy()
+    G = fastpath.prepare(SimpleNamespace(nav=nav), optics, library).grids[0]
+    near, evals = clearance._near, {}
+
+    def count(name, f):
+        def g(*a):
+            out = f(*a)
+            evals[name] = int(np.prod(out[2], -1).sum())
+            return out
+
+        return g
+
+    monkeypatch.setattr(clearance, "BLOCK", 4)  # blocks small enough for the toy's grid to have many
+    monkeypatch.setattr(clearance, "_near", count("pruned", near))
+    pruned = clearance.bound(nav, G["lo"], G["h"], G["n"], float(np.max(G["clear"])) + 1.0)
+    monkeypatch.setattr(clearance, "_near", count("all", lambda U, it, i0, dim, *_: (it, i0, dim)))
+    every = clearance.bound(nav, G["lo"], G["h"], G["n"], float(np.max(G["clear"])) + 1.0)
+    assert pruned.tobytes() == every.tobytes()
+    assert evals["pruned"] < evals["all"], evals

@@ -108,6 +108,7 @@ geometry/bvh.py | <module> | 4.0 | 1 | choice | stated in place: ... when its da
 geometry/clearance.py | _leaf_eval | 4.0 | 1 | structural | exact math (quadratic formula's 4ac)
 geometry/clearance.py | bound | 10 | 1 | choice | no stated reason in place
 geometry/clearance.py | bound | 32 | 1 | choice | no stated reason in place
+geometry/clearance.py | <module> | 16 | 1 | choice | stated in place: nodes along each axis of the blocks pass A's ranges are cut into (speed only)
 geometry/csg.py | <module> | 8 | 1 | choice | stated in place: a scan computes the intervals of its solid's first CACHE leaves once
 geometry/csg_build.py | <module> | 3 | 2 | structural | an operation code (an identity)
 geometry/csg_build.py | <module> | 31 | 1 | choice | stated in place: the operand stack lives in one int32's bits
