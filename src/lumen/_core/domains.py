@@ -10,7 +10,7 @@ import math
 
 FRACTION = (0.0, 1.0)  # a probability or a share
 POSITIVE = (0.0, math.inf)  # a yield, a time constant, an extinction index: 0 admitted
-LENGTH = (math.ulp(0.0), math.inf)  # a length: > 0 (a length of 0 is an infinite rate)
+LENGTH = (0.0, math.inf)  # a length: >= 0 (0 is an infinite rate: Geant4 interacts at once, G4VDiscreteProcess)
 INDEX = (1.0, math.inf)  # a refractive index
 QUANTITIES = {"index": INDEX, "length": LENGTH, "fraction": FRACTION, "extinction": POSITIVE}  # a law's output
 

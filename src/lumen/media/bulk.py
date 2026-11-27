@@ -73,6 +73,18 @@ def mie(length: laws.Law) -> Channel:
     return Channel("mie", phase.MIE_HG, length)
 
 
+def rate(length):
+    """Return the rate 1 / L (1/m) of a mean free path ``L`` (m).
+
+    A length of 0 is Geant4's mean free path of 0, the interaction at once: its rate is 1 / (the smallest normal
+    float32), about 8.5e37 per metre, finite, so a path of 0 still attenuates by exp(-mu * 0) = 1 and every longer one
+    by 0, and its derivative is 0 (scaling a 0 leaves it 0), where 1 / 0 would give inf * 0 = NaN for both.
+    """
+    tiny = jnp.finfo(jnp.float32).tiny
+    ok = length >= tiny
+    return jnp.where(ok, 1.0 / jnp.where(ok, length, 1.0), 1.0 / tiny)
+
+
 def evaluate(medium, p, lam):
     """Return the medium at wavelength ``lam`` (nm).
 
@@ -87,10 +99,10 @@ def evaluate(medium, p, lam):
         out["n"] = medium.index(p["index"], lam)
         out["n_g"] = laws.group_index(medium.index)(p["index"], lam)
     out["mu_abs"] = (
-        1.0 / medium.absorption(p["absorption"], lam) if medium.absorption is not None else jnp.zeros_like(lam)
+        rate(medium.absorption(p["absorption"], lam)) if medium.absorption is not None else jnp.zeros_like(lam)
     )
     out["mu"] = (
-        jnp.stack([1.0 / c.length(p[c.name]["length"], lam) for c in medium.channels], -1)
+        jnp.stack([rate(c.length(p[c.name]["length"], lam)) for c in medium.channels], -1)
         if medium.channels
         else jnp.zeros(jnp.shape(lam) + (0,))
     )

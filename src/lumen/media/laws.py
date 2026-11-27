@@ -6,7 +6,7 @@ A ``Law`` is static (hashable by identity; its form, parameter names and output 
 
 =========  ===============  ===================================================
 index      n >= 1           refractive indices
-length     L > 0 (m)        absorption and scattering lengths
+length     L >= 0 (m)       absorption and scattering lengths (0: an infinite rate)
 fraction   0 <= f <= 1      reflectances, efficiencies, yields per photon
 extinction k >= 0           a complex index's imaginary part
 =========  ===============  ===================================================

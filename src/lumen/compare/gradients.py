@@ -41,6 +41,8 @@ needs no power); a statistical test whose outputs all lack power (too few contri
 show at its level) and an exactness test with no cell tested give no result; a row with no test passing is reported,
 as is a family with no effect on this light and no failure (AD at both roulettes below ``F32_EPS`` |F| on every seed:
 it moves the totals by less than their float32 resolution). A failing row's note names the test and its statistic.
+A family whose run raises is a failing row whose note carries the error's message, and the check goes on: one family
+never costs the others their rows or the record its file.
 The summary row passes by ``stats.gate``: some row passes and none fails. The per-seed statistics (group arrays, the
 ladder, the photon sums) are kept in the row (``seeds``), so the tests can be recomputed from the records.
 ``reverse``: ``jax.grad`` of a fixed random weighting of the sensors' arrivals, every family traced, against the same
@@ -413,7 +415,16 @@ def check(name, *, detector=None, photons=None, seeds=None, reverse=None, only=(
     nf, out = len(fams), []
     for j in range(nf) if shard is None else range(shard[0], nf, shard[1]):
         t1 = time.time()
-        r = family(runs, fams[j], tests=2 * nf)  # each family's value and production tests
+        try:
+            r = family(runs, fams[j], tests=2 * nf)  # each family's value and production tests
+        except Exception as e:  # a family that raises is a failing row, not a lost record
+            out.append(records.row("gradients", name, f"dQ {fams[j][0]}", None, passed=False,
+                       reference="fixed-reference finite differences on the same seeds", mode=fams[j][1],
+                       note=f"raised {type(e).__name__}: {e}", seconds=time.time() - t1,
+                       shard_of=shard[1] if shard else 1, families_total=nf, family=j, settings=o))  # fmt: skip
+            if log:
+                log(f"{name} {fams[j][0]}: raised {type(e).__name__}: {e}, FAIL ({time.time() - t1:.0f} s)")
+            continue
         out.append(records.row("gradients", name, f"dQ {fams[j][0]}", r["ad"], r["ad_e"], z=r["production"]["z"],
                                passed=r["passed"], reference="fixed-reference finite differences on the same seeds",
                                mode=r["mode"], fd=r["fd"], exact=r["exact"], value_test=r["value"],
