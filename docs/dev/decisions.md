@@ -384,5 +384,14 @@ In a run the rate of a length of 0 is 1 / (the smallest normal float32), about 8
 1 / 0: it absorbs every path longer than about 1e-37 m, as Geant4's at-once absorption does, but a path of 0 still
 attenuates by 1 and the derivative of a scaled 0 is 0, where inf gave inf * 0 = NaN (measured on that toy: the
 table's forward derivative was NaN at 1.5, 2 and 8 eV with 1 / 0, and 0 with the finite rate).
-**Where.** `_core/domains.py` (`LENGTH`), `media/bulk.py` (`rate`), `media/laws.py`, `tools/space.py`;
+One exception: a scattering length (`RAYLEIGH`, `MIEHG`) of 0 where the light evaluates the table is refused at the
+load (`bulk.validate`). Geant4 has no answer there to follow: it scatters the photon where it stands, step after step
+of length 0 (`G4VDiscreteProcess` makes the step n_left x 0), and never ends it. Measured with g4ref on the same box
+with `RAYLEIGH` (or `MIEHG`) 0 at 2 and 7 eV: at 1.5, 2, 7 and 8 eV every photon, under Geant4 10.7.4 and 11.3 alike,
+ran to g4ref's cap of 10^6 steps, and no Geant4 exception was raised. lumen scattered it until its vertex guard
+stopped it and reported it truncated: with the guard at 10^6 vertices, 93 s for 64 photons on an RTX 2080 Ti (the
+default guard is 2^22). A WLS length of 0 stays a value: the photon is shifted at once, and lumen's detected fraction
+on that box with `WLSABSLENGTH` 0 at 2 and 7 eV agrees with Geant4 at every energy (0.999 to 1.009, each within 1
+sigma), at the zeros and beyond the table too.
+**Where.** `_core/domains.py` (`LENGTH`), `media/bulk.py` (`rate`, `validate`), `media/laws.py`, `tools/space.py`;
 `tests/unit/test_laws.py`, `tests/unit/test_validate.py`.

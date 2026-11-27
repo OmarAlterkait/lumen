@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lumen.media import laws
+from lumen.media import laws, phase
 from lumen.units import HC
 
 F32 = jnp.float32
@@ -213,6 +213,24 @@ def test_a_length_of_zero_gives_a_finite_rate_with_a_derivative_of_zero():
             assert float(dm) == 0.0 and float(jnp.exp(-m * 0.0)) == 1.0 and float(jnp.exp(-m * 1e-30)) == 0.0
         else:
             assert float(m) == pytest.approx(1.0) and float(dm) == pytest.approx(-1.0)
+
+
+def test_a_scattering_length_of_zero_where_light_reaches_is_refused():
+    """Geant4 (10.7.4 and 11.3, g4ref) scatters a photon whose RAYLEIGH or MIEHG length is 0 where it stands, step after
+    step of length 0, without end: every photon ran to g4ref's cap of 10^6 steps. Such a medium is refused where the
+    light evaluates the table (at a 0 knot inside the light's domain, or a 0 its end reaches); a 0 outside the light,
+    and an absorption length of 0 (absorbed at once), are values."""
+    from lumen.media import bulk
+
+    e, v = np.array([2.0, 3.0, 5.0, 7.0]), np.array([0.0, 1.0, 0.5, 0.0])
+    tab, flat = {"energy": e, "value": v}, {"value": 1.4}
+    for ch in (bulk.Channel("rayleigh", phase.RAYLEIGH, laws.tabulated("length")), bulk.mie(laws.tabulated("length"))):
+        m = bulk.Medium("gel", laws.constant("index"), laws.tabulated("length"), (ch,))
+        p = {"index": flat, "absorption": tab, ch.name: {"length": tab}}
+        with pytest.raises(laws.LawError, match=f"gel.{ch.name}.length: a scattering length of 0 at 619.9 nm"):
+            bulk.validate(m, p, domain=((1.0, 12.0),))
+        bulk.validate(m, p, domain=((2.5, 6.0),))  # the zeros outside the light
+        bulk.validate(m, dict(p, **{ch.name: {"length": dict(tab, value=v + 0.1)}}), domain=((1.0, 12.0),))
 
 
 def test_one_admissibility_predicate_for_the_file_the_parameters_and_every_run():

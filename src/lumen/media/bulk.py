@@ -112,7 +112,12 @@ def evaluate(medium, p, lam):
 
 def validate(medium, p, domain=None):
     """Check every law of the medium where light evaluates it (``laws.validate``: a table's knots inside the light's
-    ``domain``, and its ends), failing closed."""  # noqa: D205, D209
+    ``domain``, and its ends), failing closed.
+
+    A scattering length (a channel without emission: Rayleigh, Mie) of 0 there is refused: Geant4 scatters such a photon
+    where it stands, step after step of length 0, and never ends it. A WLS length of 0 is a value (the photon is
+    shifted at once), as is an absorption length of 0.
+    """  # noqa: D205
     if medium.index is not None:
         laws.validate(medium.index, p["index"], name=f"{medium.name}.index", domain=domain)
     if medium.absorption is not None:
@@ -120,4 +125,8 @@ def validate(medium, p, domain=None):
     for c in medium.channels:
         if c.length.out != "length":
             raise laws.LawError(f"{medium.name}.{c.name}: a channel length law must output a length")
-        laws.validate(c.length, p[c.name]["length"], name=f"{medium.name}.{c.name}.length", domain=domain)
+        name = f"{medium.name}.{c.name}.length"
+        lam, v = laws.validate(c.length, p[c.name]["length"], name=name, domain=domain)
+        if c.emission is None and (v == 0.0).any():
+            raise laws.LawError(f"{name}: a scattering length of 0 at {lam[(v == 0.0).argmax()]:.1f} nm, where light "
+                                "reaches: Geant4 scatters such a photon where it stands and never ends it")  # fmt: skip
