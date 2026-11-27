@@ -159,7 +159,7 @@ def at(params, fam, th):
 def groups(c):
     """Return (..., 2, G + 1) of per-photon outputs c (..., N, G, 2): each group's Q and Tw over the photons, and the
     totals last."""  # noqa: D205, D209
-    s = np.swapaxes(np.asarray(c, np.float64).sum(axis=-3), -1, -2)
+    s = np.swapaxes(np.asarray(c).sum(axis=-3, dtype=np.float64), -1, -2)
     return np.concatenate([s, s.sum(-1, keepdims=True)], -1)
 
 
@@ -243,7 +243,7 @@ class _Runs:
         out, n = [], self.o["photons"]
         for j in range(-(-seeds // self.per_launch)):
             m = min(self.per_launch, seeds - j * self.per_launch)
-            out.append([np.asarray(x, np.float64).reshape(m, n, -1, 2) for x in f(j, m)])
+            out.append([np.asarray(x).reshape(m, n, -1, 2) for x in f(j, m)])
         return [np.concatenate(x) for x in zip(*out, strict=True)]
 
     def value(self, p, seeds, reference=None, eps=None):
@@ -304,15 +304,14 @@ def _seeds(runs, fam) -> tuple:
     edge, p = fam[1] == "edge", runs.p0
     fp = lambda t: at(p, fam, t)  # noqa: E731
     k = runs.o["seeds"]
-    flat = lambda c: c.reshape(-1, *c.shape[2:])  # noqa: E731 -- every seed's photons: their sums add over seeds
     f0, c = runs.jvp(fp, max(k, runs.o.get("production", k)))
     _, ct = runs.jvp(fp, max(k, runs.o.get("production", k)), eps=TINY)
     ladder = runs.ladder(lambda t: groups(runs.value(fp(t), k, reference=p)), edge)
     cr = runs.value(fp(F32(H_VALUE)), k, reference=p, eps=TINY)  # the same seeds: F's own seed fluctuation cancels
     co = runs.value(fp(F32(H_VALUE)), k, eps=TINY)
     g = dict(ad=groups(c), tiny=groups(ct), f0=groups(f0[:k]), v_ref=groups(cr), v_own=groups(co))
-    sums = {n: photon_sums(flat(v)) for n, v in (("ad", c), ("tiny", ct), ("v_ref", cr), ("v_own", co))}
-    sums["disagree"] = disagreement(flat(cr), flat(co))
+    sums = {n: sum(map(photon_sums, v)) for n, v in (("ad", c), ("tiny", ct), ("v_ref", cr), ("v_own", co))}
+    sums["disagree"] = sum(map(disagreement, cr, co))  # over the seeds (seed by seed: small arrays, fast)
     return g, ladder, sums
 
 
